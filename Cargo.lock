@@ -1587,6 +1587,15 @@ version = "0.1.0"
 [[package]]
 name = "polyph-core"
 version = "0.1.0"
+dependencies = [
+ "polyph-proto",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
+ "yrs",
+]
 
 [[package]]
 name = "polyph-daemon"

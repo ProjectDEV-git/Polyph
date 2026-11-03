@@ -353,8 +353,17 @@ pub struct Knock {
     pub member: MemberId,
     pub device: DeviceId,
     pub requested_role: Role,
+    /// The device running the join handshake, which forwards the result.
     pub via: DeviceId,
     pub at: i64,
+    /// Joiner's X25519 key, so any Owner or Maintainer can seal the room key.
+    #[serde(default, with = "crate::bytes::vec")]
+    pub kx: Vec<u8>,
+    /// Salt for the joiner's display-name commitment.
+    #[serde(default, with = "crate::bytes::vec")]
+    pub name_salt: Vec<u8>,
+    #[serde(default)]
+    pub surface: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

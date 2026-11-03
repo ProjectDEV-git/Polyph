@@ -1,5 +1,6 @@
 [package]
 name = "polyph-core"
+description = "Polyph room engine: membership, election, claims, voices and shared state"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,3 +11,12 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+polyph-proto = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+yrs = "0.28"
+
+[dev-dependencies]
+proptest = { workspace = true }
