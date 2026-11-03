@@ -2,6 +2,7 @@
 //! relay connections, and serves the local API used by the CLI, TUI, desktop
 //! app, VS Code extension and status pill.
 
+pub mod agents;
 pub mod api;
 pub mod clock;
 pub mod config;

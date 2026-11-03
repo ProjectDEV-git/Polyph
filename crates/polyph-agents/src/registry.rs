@@ -184,15 +184,15 @@ pub fn doctor(defs: &[AgentDef]) -> Vec<DoctorItem> {
                 )
             };
             let mut fixes = vec![];
-            if !adapter_installed || cli_installed == Some(false) {
-                if let Some(h) = &d.install_hint {
-                    fixes.push(h.clone());
-                }
+            if (!adapter_installed || cli_installed == Some(false))
+                && let Some(h) = &d.install_hint
+            {
+                fixes.push(h.clone());
             }
-            if logged_in == Some(false) {
-                if let Some(h) = &d.login_hint {
-                    fixes.push(h.clone());
-                }
+            if logged_in == Some(false)
+                && let Some(h) = &d.login_hint
+            {
+                fixes.push(h.clone());
             }
             DoctorItem { name: d.name.clone(), adapter_installed, cli_installed, logged_in, fixes }
         })

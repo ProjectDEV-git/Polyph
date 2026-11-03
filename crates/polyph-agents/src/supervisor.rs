@@ -42,6 +42,8 @@ pub enum Request {
 pub enum Output {
     Event(AgentEventKind),
     Request(Request),
+    /// Answered once every earlier output has been handled.
+    Barrier(oneshot::Sender<()>),
 }
 
 /// Wraps a command for the sandbox, the same way the agent itself was wrapped.
@@ -203,10 +205,27 @@ impl AgentProcess {
             let mut buf = [0u8; 8192];
             while matches!(stderr.read(&mut buf).await, Ok(n) if n > 0) {}
         });
-        let (peer, incoming, mut tasks) = rpc::connect(stdout, stdin);
+        let conv = Arc::new(Mutex::new(Converter::default()));
+        let on_notify: rpc::NotificationHandler = {
+            let (conv, out) = (conv.clone(), out.clone());
+            Arc::new(move |m: String, params: Value| {
+                let (conv, out) = (conv.clone(), out.clone());
+                Box::pin(async move {
+                    if m != method::SESSION_UPDATE {
+                        return;
+                    }
+                    if let Ok(n) = serde_json::from_value::<SessionNotification>(params) {
+                        let events = conv.lock().await.update(&n.update);
+                        for e in events {
+                            let _ = out.send(Output::Event(e)).await;
+                        }
+                    }
+                })
+            })
+        };
+        let (peer, incoming, mut tasks) = rpc::connect_with(stdout, stdin, Some(on_notify));
         tasks.push(drain);
 
-        let conv = Arc::new(Mutex::new(Converter::default()));
         let terminals: Terminals = Arc::new(Mutex::new(HashMap::new()));
         tasks.push(tokio::spawn(serve_incoming(
             incoming,
@@ -249,6 +268,11 @@ impl AgentProcess {
         let r: Result<PromptResponse, RpcError> = self.peer.request(method::SESSION_PROMPT, &req).await;
         for ev in self.conv.lock().await.flush() {
             let _ = self.out.send(Output::Event(ev)).await;
+        }
+        // Wait until the daemon has handled everything from this turn.
+        let (tx, rx) = oneshot::channel();
+        if self.out.send(Output::Barrier(tx)).await.is_ok() {
+            let _ = rx.await;
         }
         r
     }
@@ -367,15 +391,14 @@ async fn read_file(params: Value, worktree: &Path, out: &mpsc::Sender<Output>) -
         return err(-32602, "invalid read request");
     };
     let (abs, inside) = resolve(worktree, &p.path);
-    if !inside {
-        if let Answer::Deny { note } =
+    if !inside
+        && let Answer::Deny { note } =
             ask(out, Action::Read { path: abs.clone() }, file_tool("fs-read", ToolKind::Read, &p.path)).await
-        {
-            return err(
-                -32000,
-                note.unwrap_or_else(|| format!("reading {} outside the worktree was not approved", p.path)),
-            );
-        }
+    {
+        return err(
+            -32000,
+            note.unwrap_or_else(|| format!("reading {} outside the worktree was not approved", p.path)),
+        );
     }
     let text = tokio::fs::read_to_string(&abs).await.map_err(|e| (-32000, format!("cannot read {}: {e}", p.path)))?;
     let content = match (p.line, p.limit) {

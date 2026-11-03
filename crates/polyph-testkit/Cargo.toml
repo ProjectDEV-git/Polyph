@@ -15,11 +15,22 @@ workspace = true
 name = "polyph-loadtest"
 path = "src/bin/loadtest.rs"
 
+[[bin]]
+name = "polyph-fake-agent"
+path = "src/bin/fake_agent.rs"
+
+[[bin]]
+name = "polyph-test-sandbox-exec"
+path = "src/bin/sandbox_exec.rs"
+
 [dependencies]
 polyph-proto = { workspace = true }
 polyph-relay = { workspace = true }
 polyph-daemon = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "process", "sync"] }
+polyph-agents = { workspace = true }
+polyph-sandbox = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "process", "sync", "io-std", "io-util", "fs"] }
 anyhow = { workspace = true }
 clap = { workspace = true }
 serde_json = { workspace = true }

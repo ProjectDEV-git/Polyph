@@ -84,7 +84,7 @@ pub fn parse_test_counts(out: &str) -> Option<(u32, u32)> {
     }
 }
 
-fn str_field<'a>(v: &'a Option<Value>, keys: &[&str]) -> Option<String> {
+fn str_field(v: &Option<Value>, keys: &[&str]) -> Option<String> {
     let v = v.as_ref()?;
     for k in keys {
         match v.get(*k) {
@@ -157,10 +157,10 @@ impl Converter {
         if let Some(q) = str_field(&f.raw_input, &["pattern", "query", "regex"]) {
             entry.query = Some(q);
         }
-        if let Some(p) = str_field(&f.raw_input, &["file_path", "path", "filePath"]) {
-            if !entry.paths.contains(&p) {
-                entry.paths.push(p);
-            }
+        if let Some(p) = str_field(&f.raw_input, &["file_path", "path", "filePath"])
+            && !entry.paths.contains(&p)
+        {
+            entry.paths.push(p);
         }
         if let Some(Value::Number(n)) =
             f.raw_output.as_ref().and_then(|o| o.get("numMatches").or_else(|| o.get("matches")))

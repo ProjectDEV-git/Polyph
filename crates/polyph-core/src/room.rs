@@ -174,6 +174,10 @@ pub enum RoomEvent {
         by: MemberId,
         for_me: bool,
     },
+    /// A transcript event from an agent (ours or a teammate's).
+    Agent {
+        event: Box<polyph_proto::messages::AgentEvent>,
+    },
     RoomEnded,
 }
 
@@ -431,6 +435,9 @@ impl RoomCore {
             })));
         }
         out.extend(self.sync_requests());
+        // Re-run the election now rather than waiting a heartbeat; a better
+        // candidate that is online will reassert and win.
+        out.extend(self.elect(now));
         out
     }
 
@@ -598,6 +605,10 @@ impl RoomCore {
                 }
             }
             RoomMessage::Claim(c) if writer => out.extend(self.on_claim(from, c, now)),
+            // Only the device running an agent may speak for it.
+            RoomMessage::Agent(ev) if writer && ev.agent.device == from => {
+                out.push(Effect::Event(RoomEvent::Agent { event: ev }));
+            }
             RoomMessage::Approval(a) => out.extend(self.on_approval(from, role, a, now)),
             _ => {}
         }
@@ -1069,6 +1080,9 @@ impl RoomCore {
         let mut out = vec![];
         match c {
             ClaimMsg::Request { request, agent, targets, reason, task, lease_secs, at: _ } => {
+                if self.host.device.is_none() {
+                    out.extend(self.elect(now));
+                }
                 if self.is_acting_host() && agent.device == from {
                     out.extend(self.arbitrate(request, &agent, &targets, &reason, task, lease_secs, now));
                 }

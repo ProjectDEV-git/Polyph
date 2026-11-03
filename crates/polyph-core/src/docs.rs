@@ -84,3 +84,35 @@ pub fn setting(doc: &Doc, key: &str) -> Option<serde_json::Value> {
         _ => None,
     }
 }
+
+pub const USAGE: &str = "usage";
+
+/// One agent turn's usage, shared through the Activity document so every
+/// member computes the same ledger. `usage` is None when the agent reported nothing.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UsageRecord {
+    pub id: String,
+    pub member: String,
+    pub agent: String,
+    pub task: Option<String>,
+    pub usage: Option<polyph_proto::messages::Usage>,
+    pub at: i64,
+}
+
+pub fn append_usage(doc: &Doc, r: &UsageRecord) {
+    let arr = doc.get_or_insert_array(USAGE);
+    let json = serde_json::to_string(r).unwrap_or_default();
+    let mut txn = doc.transact_mut();
+    arr.push_back(&mut txn, json);
+}
+
+pub fn usage_records(doc: &Doc) -> Vec<UsageRecord> {
+    let arr = doc.get_or_insert_array(USAGE);
+    let txn = doc.transact();
+    arr.iter(&txn)
+        .filter_map(|o| match o {
+            Out::Any(Any::String(s)) => serde_json::from_str(&s).ok(),
+            _ => None,
+        })
+        .collect()
+}

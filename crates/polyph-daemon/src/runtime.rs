@@ -28,6 +28,8 @@ const OUTBOX_MAX: usize = 2000;
 /// mirroring the relay's own limit.
 const HOST_MAX_FAILURES: u32 = 5;
 const SNAPSHOT_EVERY: i64 = 300;
+/// Transcript events kept in memory per agent.
+pub const TRANSCRIPT_KEEP: usize = 5000;
 
 /// A relay URL plus an optional pinned certificate fingerprint, written as
 /// `wss://host:port/ws#sha256=<hex>` in saved state.
@@ -99,6 +101,11 @@ pub struct RoomCtx {
     joins: HashMap<u64, HostJoin>,
     outbox: VecDeque<Vec<u8>>,
     pub claim_waiters: HashMap<ObjectId, ClaimWaiter>,
+    /// Agent tasks waiting for a human to answer an approval.
+    pub approval_waiters: HashMap<ObjectId, oneshot::Sender<polyph_proto::messages::Decision>>,
+    /// Recent transcript events per agent (ours and teammates'), for follow mode.
+    pub transcripts: HashMap<ObjectId, VecDeque<polyph_proto::messages::AgentEvent>>,
+    pub agent_seq: u64,
     /// Invites waiting for the relay to confirm (or refuse) a hosted code.
     pub code_waiters: VecDeque<(RendezvousId, oneshot::Sender<bool>)>,
     pub last_snapshot: i64,
@@ -144,6 +151,9 @@ impl RoomRuntime {
                 outbox: VecDeque::new(),
                 claim_waiters: HashMap::new(),
                 code_waiters: VecDeque::new(),
+                approval_waiters: HashMap::new(),
+                transcripts: HashMap::new(),
+                agent_seq: 0,
                 last_snapshot: 0,
                 needs_snapshot: true,
                 connected_at: None,
@@ -192,6 +202,18 @@ pub async fn apply(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, effects
                     RoomEvent::ClaimDecision { request, granted, denied } => {
                         if let Some(tx) = ctx.claim_waiters.remove(request) {
                             let _ = tx.send((granted.clone(), denied.clone()));
+                        }
+                    }
+                    RoomEvent::ApprovalResolved { id, decision, .. } => {
+                        if let Some(tx) = ctx.approval_waiters.remove(id) {
+                            let _ = tx.send(decision.clone());
+                        }
+                    }
+                    RoomEvent::Agent { event } => {
+                        let log = ctx.transcripts.entry(event.agent.id).or_default();
+                        log.push_back((**event).clone());
+                        while log.len() > TRANSCRIPT_KEEP {
+                            log.pop_front();
                         }
                     }
                     RoomEvent::YouWereRemoved | RoomEvent::RoomEnded => {

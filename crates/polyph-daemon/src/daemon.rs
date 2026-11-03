@@ -56,6 +56,12 @@ impl ApiError {
     }
 }
 
+impl From<std::io::Error> for ApiError {
+    fn from(e: std::io::Error) -> Self {
+        ApiError::Failed(e.to_string())
+    }
+}
+
 impl From<anyhow::Error> for ApiError {
     fn from(e: anyhow::Error) -> Self {
         ApiError::Failed(e.to_string())
@@ -88,6 +94,12 @@ pub struct DaemonOptions {
     pub surface: Surface,
     /// Keep the storage key in a private file instead of the OS keychain.
     pub file_keystore: bool,
+    /// Command line of the sandbox helper (`polyph __sandbox` by default).
+    pub sandbox_helper: Vec<String>,
+    /// Force a sandbox mechanism instead of picking the best available.
+    pub sandbox: Option<polyph_sandbox::Mechanism>,
+    /// Agents defined by the embedding program (tests add the fake agent).
+    pub extra_agents: std::collections::BTreeMap<String, polyph_agents::registry::AgentConfig>,
 }
 
 impl DaemonOptions {
@@ -100,6 +112,11 @@ impl DaemonOptions {
             mdns: true,
             surface: Surface::Cli,
             file_keystore: false,
+            sandbox_helper: std::env::current_exe()
+                .map(|p| vec![p.to_string_lossy().into_owned(), "__sandbox".into()])
+                .unwrap_or_default(),
+            sandbox: None,
+            extra_agents: Default::default(),
         }
     }
 }
@@ -188,6 +205,7 @@ pub struct MemberInfo {
 
 pub struct Daemon {
     pub shared: Arc<Shared>,
+    pub agents: crate::agents::Agents,
     rooms: Mutex<HashMap<RoomId, Arc<RoomRuntime>>>,
     open: Mutex<Vec<RoomId>>,
     pub shutdown: tokio::sync::Notify,
@@ -233,6 +251,7 @@ impl Daemon {
         });
         let d = Arc::new(Self {
             shared: shared.clone(),
+            agents: Default::default(),
             rooms: Mutex::new(HashMap::new()),
             open: Mutex::new(vec![]),
             shutdown: tokio::sync::Notify::new(),
@@ -499,7 +518,7 @@ impl Daemon {
                 let p: P = param(&params)?;
                 let rt = self.find(&p.room).await?;
                 rt.ctx.lock().await.offline = p.offline;
-                rt.kick.notify_waiters();
+                rt.kick.notify_one();
                 ok(json!({}))
             }
             "room.delete" => {
@@ -889,6 +908,144 @@ impl Daemon {
                 let found = crate::lan::discover(Duration::from_millis(p.timeout_ms.unwrap_or(2000))).await?;
                 ok(found)
             }
+            "agent.start" => {
+                let p: crate::agents::StartParams = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                crate::agents::start(self.shared.clone(), &self.agents, rt, p).await
+            }
+            "agent.prompt" => {
+                #[derive(Deserialize)]
+                struct P {
+                    agent: String,
+                    text: String,
+                }
+                let p: P = param(&params)?;
+                let h = self.agent(&p.agent).await?;
+                let rt = self
+                    .rooms
+                    .lock()
+                    .await
+                    .get(&h.room)
+                    .cloned()
+                    .ok_or_else(|| ApiError::NotFound("room closed".into()))?;
+                crate::agents::prompt(&self.shared, &rt, &h, &p.text).await
+            }
+            "agent.stop" => {
+                #[derive(Deserialize)]
+                struct P {
+                    agent: String,
+                }
+                let p: P = param(&params)?;
+                let h = self.agent(&p.agent).await?;
+                let rt = self
+                    .rooms
+                    .lock()
+                    .await
+                    .get(&h.room)
+                    .cloned()
+                    .ok_or_else(|| ApiError::NotFound("room closed".into()))?;
+                crate::agents::stop(&self.shared, &self.agents, &rt, h.agent.id).await
+            }
+            "agent.list" => {
+                let p: RoomParam = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let local = self.agents.map.lock().await.clone();
+                let c = rt.ctx.lock().await;
+                let mut out = vec![];
+                for (id, log) in &c.transcripts {
+                    let Some(first) = log.front() else { continue };
+                    let state = log.iter().rev().find_map(|e| match &e.kind {
+                        polyph_proto::messages::AgentEventKind::State { state, .. } => Some(*state),
+                        polyph_proto::messages::AgentEventKind::Stopped { .. } => {
+                            Some(polyph_proto::messages::AgentState::Stopped)
+                        }
+                        _ => None,
+                    });
+                    out.push(json!({ "id": id.to_hex(), "label": first.agent.label, "kind": first.agent.kind, "member": first.agent.member.to_hex(), "mine": local.contains_key(id), "state": state }));
+                }
+                ok(out)
+            }
+            "agent.transcript" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    agent: String,
+                    after: Option<u64>,
+                }
+                let p: P = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let c = rt.ctx.lock().await;
+                let id = c
+                    .transcripts
+                    .keys()
+                    .find(|k| k.to_hex().starts_with(&p.agent.to_lowercase()))
+                    .copied()
+                    .ok_or_else(|| ApiError::NotFound("no such agent".into()))?;
+                let events: Vec<_> =
+                    c.transcripts[&id].iter().filter(|e| p.after.is_none_or(|a| e.seq > a)).cloned().collect();
+                let calls: Vec<polyph_proto::messages::ToolCall> = {
+                    let mut by_id: Vec<polyph_proto::messages::ToolCall> = vec![];
+                    for e in &events {
+                        if let polyph_proto::messages::AgentEventKind::Tool(t) = &e.kind {
+                            match by_id.iter_mut().find(|x| x.id == t.id) {
+                                Some(x) => *x = (**t).clone(),
+                                None => by_id.push((**t).clone()),
+                            }
+                        }
+                    }
+                    by_id
+                };
+                ok(json!({ "events": events, "summary": polyph_agents::summary::summarize(&calls) }))
+            }
+            "agents.doctor" => {
+                #[derive(Deserialize)]
+                struct P {
+                    cwd: Option<PathBuf>,
+                }
+                let p: P = param(&params)?;
+                crate::agents::doctor(&self.shared, &p.cwd.unwrap_or_else(|| PathBuf::from(".")))
+            }
+            "sandbox.test" => {
+                let r = polyph_sandbox::selftest::run_all(self.shared.opts.sandbox_helper.clone()).await?;
+                ok(r)
+            }
+            "usage.get" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    cwd: Option<PathBuf>,
+                }
+                let p: P = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let prices = p
+                    .cwd
+                    .as_deref()
+                    .map(polyph_agents::project::ProjectConfig::load)
+                    .transpose()?
+                    .unwrap_or_default()
+                    .prices;
+                let (l, budgets) = crate::agents::ledger(&rt, &prices).await;
+                let states: Vec<Value> =
+                    budgets.iter().map(|b| json!({ "budget": b, "used": b.used(&l), "state": b.state(&l) })).collect();
+                ok(json!({ "ledger": l, "budgets": states }))
+            }
+            "budget.set" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    budgets: Vec<polyph_agents::usage::Budget>,
+                }
+                let p: P = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let mut c = rt.ctx.lock().await;
+                if !c.core.role().can_approve_joins() {
+                    return Err(ApiError::Forbidden("only Owners and Maintainers set budgets".into()));
+                }
+                let v = serde_json::to_value(&p.budgets).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+                let fx = c.core.change_doc(DocName::Settings, |d| polyph_core::docs::set_setting(d, "budgets", &v))?;
+                apply(&rt, &mut c, &self.shared, fx).await;
+                ok(json!({}))
+            }
             "room.snapshot" => {
                 let p: RoomParam = param(&params)?;
                 let rt = self.find(&p.room).await?;
@@ -897,6 +1054,22 @@ impl Daemon {
                 ok(json!({}))
             }
             other => Err(ApiError::NotFound(format!("unknown method {other}"))),
+        }
+    }
+
+    /// Finds a running agent on this device by id prefix or label.
+    pub async fn agent(&self, q: &str) -> Result<Arc<crate::agents::AgentHandle>, ApiError> {
+        let ql = q.to_lowercase();
+        let map = self.agents.map.lock().await;
+        let hits: Vec<_> = map
+            .values()
+            .filter(|h| h.agent.id.to_hex().starts_with(&ql) || h.agent.label.to_lowercase() == ql)
+            .cloned()
+            .collect();
+        match hits.len() {
+            1 => Ok(hits[0].clone()),
+            0 => Err(ApiError::NotFound(format!("no agent matches \"{q}\" on this device; see `polyph agent list`"))),
+            _ => Err(ApiError::BadRequest(format!("\"{q}\" matches several agents; use more of the id"))),
         }
     }
 

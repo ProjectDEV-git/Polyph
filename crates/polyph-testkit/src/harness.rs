@@ -47,11 +47,19 @@ impl Node {
     }
 }
 
+/// Binaries for running agents in tests (paths from `env!("CARGO_BIN_EXE_...")`).
+#[derive(Debug, Clone)]
+pub struct AgentBins {
+    pub fake_agent: String,
+    pub sandbox_helper: String,
+}
+
 #[derive(Debug)]
 pub struct Harness {
     pub relay: RelayHandle,
     pub clock: Clock,
     pub nodes: Vec<Node>,
+    pub agents: Option<AgentBins>,
 }
 
 impl Harness {
@@ -63,7 +71,7 @@ impl Harness {
         let relay = polyph_relay::serve(cfg, ServeOptions::default()).await?;
         // Start at real time: the relay checks expiries and certificate times
         // against its own clock.
-        Ok(Self { relay, clock: Clock::manual(polyph_proto::now()), nodes: vec![] })
+        Ok(Self { relay, clock: Clock::manual(polyph_proto::now()), nodes: vec![], agents: None })
     }
 
     pub async fn add(&mut self, name: &str) -> anyhow::Result<usize> {
@@ -80,6 +88,18 @@ impl Harness {
         opts.lan_bind = std::net::IpAddr::from([127, 0, 0, 1]);
         opts.mdns = false;
         opts.file_keystore = true;
+        if let Some(b) = &self.agents {
+            opts.sandbox_helper = vec![b.sandbox_helper.clone()];
+            opts.extra_agents.insert(
+                "fake".into(),
+                polyph_agents::registry::AgentConfig { command: b.fake_agent.clone(), ..Default::default() },
+            );
+            // Use the best sandbox here, or none when the machine has none, so
+            // policy tests still run; sandbox tests check availability themselves.
+            if polyph_sandbox::best(&opts.sandbox_helper, false) == polyph_sandbox::Mechanism::None {
+                opts.sandbox = Some(polyph_sandbox::Mechanism::None);
+            }
+        }
         let daemon = Daemon::start(opts).await?;
         let events = daemon.subscribe();
         daemon

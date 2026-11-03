@@ -77,9 +77,26 @@ impl Peer {
     }
 }
 
-/// Starts reading and writing. Incoming requests and notifications arrive on
-/// the returned receiver; the caller must answer requests.
+/// Handles a notification inline, before the next message is read, so
+/// notifications sent before a response are always processed before it.
+pub type NotificationHandler =
+    Arc<dyn Fn(String, Value) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync>;
+
+/// Starts reading and writing. Incoming requests (and notifications, when no
+/// handler is given) arrive on the returned receiver; the caller must answer requests.
 pub fn connect<R, W>(read: R, write: W) -> (Peer, mpsc::Receiver<Incoming>, Vec<JoinHandle<()>>)
+where
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    connect_with(read, write, None)
+}
+
+pub fn connect_with<R, W>(
+    read: R,
+    write: W,
+    on_notify: Option<NotificationHandler>,
+) -> (Peer, mpsc::Receiver<Incoming>, Vec<JoinHandle<()>>)
 where
     R: AsyncRead + Unpin + Send + 'static,
     W: AsyncWrite + Unpin + Send + 'static,
@@ -115,6 +132,12 @@ where
             let id = v.get("id").cloned();
             if let Some(method) = v.get("method").and_then(|m| m.as_str()) {
                 let params = v.get("params").cloned().unwrap_or(Value::Null);
+                if id.as_ref().is_none_or(|i| i.is_null())
+                    && let Some(h) = &on_notify
+                {
+                    h(method.to_string(), params).await;
+                    continue;
+                }
                 let reply = match id {
                     Some(id) if !id.is_null() => {
                         let (tx, rx) = oneshot::channel::<Result<Value, (i64, String)>>();
