@@ -56,6 +56,13 @@ pub enum ClientFrame {
         #[serde(with = "crate::bytes::vec")]
         envelope: Vec<u8>,
     },
+    /// Re-publishes an envelope signed by another member. Used by a LAN host
+    /// bridging its LAN relay to an internet relay. Requires a writer
+    /// subscription; clients' replay windows drop duplicates.
+    Forward {
+        #[serde(with = "crate::bytes::vec")]
+        envelope: Vec<u8>,
+    },
     PutSnapshot {
         room: RoomId,
         epoch: u64,

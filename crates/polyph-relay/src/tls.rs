@@ -53,11 +53,14 @@ pub fn load_pem(cert_path: &std::path::Path, key_path: &std::path::Path) -> anyh
     Ok(Arc::new(config))
 }
 
-/// Accepts exactly one certificate, identified by fingerprint. Signatures
-/// are still verified so the server must hold the matching private key.
+/// Accepts exactly one certificate, identified by fingerprint, or (when
+/// `fp` is `None`) any certificate while recording its fingerprint so the
+/// caller can bind it into the join PAKE. Signatures are still verified so
+/// the server must hold the matching private key.
 #[derive(Debug)]
 struct Pinned {
-    fp: [u8; 32],
+    fp: Option<[u8; 32]>,
+    seen: Arc<std::sync::Mutex<Option<[u8; 32]>>>,
     provider: Arc<CryptoProvider>,
 }
 
@@ -71,10 +74,14 @@ impl ServerCertVerifier for Pinned {
         _now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
         use subtle_eq::ct_eq;
-        if ct_eq(&fingerprint(end_entity), &self.fp) {
-            Ok(ServerCertVerified::assertion())
-        } else {
-            Err(rustls::Error::General("relay certificate does not match the pinned fingerprint".into()))
+        let got = fingerprint(end_entity);
+        if let Ok(mut s) = self.seen.lock() {
+            *s = Some(got);
+        }
+        match self.fp {
+            None => Ok(ServerCertVerified::assertion()),
+            Some(fp) if ct_eq(&got, &fp) => Ok(ServerCertVerified::assertion()),
+            Some(_) => Err(rustls::Error::General("relay certificate does not match the pinned fingerprint".into())),
         }
     }
 
@@ -108,11 +115,24 @@ mod subtle_eq {
 }
 
 pub fn pinned_client(fp: [u8; 32]) -> anyhow::Result<Arc<ClientConfig>> {
+    verifier_client(Some(fp), Arc::new(std::sync::Mutex::new(None)))
+}
+
+/// Accepts any certificate and records its fingerprint in `seen`. Only for
+/// joining a LAN room, where the fingerprint is then bound into the PAKE
+/// transcript so a substituted certificate makes the join fail.
+pub fn recording_client(seen: Seen) -> anyhow::Result<Arc<ClientConfig>> {
+    verifier_client(None, seen)
+}
+
+pub type Seen = Arc<std::sync::Mutex<Option<[u8; 32]>>>;
+
+fn verifier_client(fp: Option<[u8; 32]>, seen: Seen) -> anyhow::Result<Arc<ClientConfig>> {
     let p = provider();
     let cfg = ClientConfig::builder_with_provider(p.clone())
         .with_safe_default_protocol_versions()?
         .dangerous()
-        .with_custom_certificate_verifier(Arc::new(Pinned { fp, provider: p }))
+        .with_custom_certificate_verifier(Arc::new(Pinned { fp, seen, provider: p }))
         .with_no_client_auth();
     Ok(Arc::new(cfg))
 }

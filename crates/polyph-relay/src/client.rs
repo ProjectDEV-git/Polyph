@@ -1,6 +1,7 @@
 //! A relay client: connects, authenticates the device, then exchanges frames
 //! over channels. Used by the daemon, the test kit and LAN mode.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -27,6 +28,19 @@ pub enum ClientError {
 }
 
 type Ws = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// How to verify the relay's TLS certificate.
+#[derive(Debug, Clone, Default)]
+pub enum TlsMode {
+    /// Public certificate authorities (normal relays).
+    #[default]
+    Public,
+    /// A LAN relay's self-signed certificate, pinned by SHA-256 fingerprint.
+    Pinned([u8; 32]),
+    /// Accept any certificate and record its fingerprint (first contact with a
+    /// LAN relay while joining; the fingerprint is then bound into the PAKE).
+    Record(Arc<std::sync::Mutex<Option<[u8; 32]>>>),
+}
 
 #[derive(Debug, Clone)]
 pub struct RelaySender {
@@ -78,15 +92,22 @@ impl RelayClient {
     /// Connects and authenticates. `pin` is the SHA-256 fingerprint of a LAN
     /// relay's self-signed certificate; normal relays use public CAs.
     pub async fn connect(url: &str, identity: &DeviceIdentity, pin: Option<[u8; 32]>) -> Result<Self, ClientError> {
+        let mode = match pin {
+            Some(fp) => TlsMode::Pinned(fp),
+            None => TlsMode::Public,
+        };
+        Self::connect_with(url, identity, mode).await
+    }
+
+    pub async fn connect_with(url: &str, identity: &DeviceIdentity, mode: TlsMode) -> Result<Self, ClientError> {
         let mut wscfg = WebSocketConfig::default();
         wscfg.max_message_size = Some(MAX_FRAME);
         wscfg.max_frame_size = Some(MAX_FRAME);
-        let connector = match pin {
-            Some(fp) => Some(Connector::Rustls(
-                crate::tls::pinned_client(fp)
-                    .map_err(|e| ClientError::Connect { url: url.into(), reason: e.to_string() })?,
-            )),
-            None => None,
+        let cerr = |e: anyhow::Error| ClientError::Connect { url: url.into(), reason: e.to_string() };
+        let connector = match mode {
+            TlsMode::Public => None,
+            TlsMode::Pinned(fp) => Some(Connector::Rustls(crate::tls::pinned_client(fp).map_err(cerr)?)),
+            TlsMode::Record(slot) => Some(Connector::Rustls(crate::tls::recording_client(slot).map_err(cerr)?)),
         };
         let connect = tokio_tungstenite::connect_async_tls_with_config(url, Some(wscfg), false, connector);
         let (mut ws, _) = tokio::time::timeout(Duration::from_secs(15), connect)

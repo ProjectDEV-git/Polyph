@@ -217,7 +217,8 @@ impl Hub {
                     r.subs.remove(&conn.id);
                 }
             }
-            ClientFrame::Publish { envelope } => self.publish(conn, device, envelope),
+            ClientFrame::Publish { envelope } => self.publish(conn, device, envelope, false),
+            ClientFrame::Forward { envelope } => self.publish(conn, device, envelope, true),
             ClientFrame::PutSnapshot { room, epoch, blob } => {
                 if blob.len() > MAX_SNAPSHOT {
                     self.send(conn, &error(ErrorCode::TooLarge, "snapshot too large"));
@@ -329,7 +330,7 @@ impl Hub {
         debug!(conn = conn.id, room = %room.short(), writer, "subscribed");
     }
 
-    fn publish(&self, conn: &Arc<Conn>, device: DeviceId, bytes: Vec<u8>) {
+    fn publish(&self, conn: &Arc<Conn>, device: DeviceId, bytes: Vec<u8>, forwarded: bool) {
         let env = match Envelope::decode(&bytes) {
             Ok(e) => e,
             Err(_) => {
@@ -338,7 +339,7 @@ impl Hub {
                 return;
             }
         };
-        if env.sender != device {
+        if env.sender != device && !forwarded {
             inc(&self.metrics.rejected_frames_total);
             self.send(conn, &error(ErrorCode::Forbidden, "envelope sender is not this device"));
             return;

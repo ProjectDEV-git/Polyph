@@ -18,7 +18,12 @@ path = "src/bin/loadtest.rs"
 [dependencies]
 polyph-proto = { workspace = true }
 polyph-relay = { workspace = true }
+polyph-daemon = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "process", "sync"] }
 anyhow = { workspace = true }
 clap = { workspace = true }
 serde_json = { workspace = true }
+tempfile = { workspace = true }
+
+[dev-dependencies]
+polyph-relay = { workspace = true }
