@@ -102,8 +102,10 @@ fn proxy_env(url: &str) -> Vec<(String, String)> {
     for k in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"] {
         v.push((k.to_string(), url.to_string()));
     }
-    v.push(("NO_PROXY".into(), "localhost,127.0.0.1,::1".into()));
-    v.push(("no_proxy".into(), "localhost,127.0.0.1,::1".into()));
+    // Everything, local services included, goes through the proxy so the
+    // allowlist applies (and inside a private namespace localhost is empty).
+    v.push(("NO_PROXY".into(), String::new()));
+    v.push(("no_proxy".into(), String::new()));
     v
 }
 

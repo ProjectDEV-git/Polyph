@@ -223,3 +223,42 @@ async fn sandbox_blocks_writes_outside_the_worktree() {
     assert!(!escape.exists());
     assert!(dir.path().join("src/inside.txt").exists());
 }
+
+/// Opt-in smoke tests against real agents. Run with POLYPH_SMOKE=1 when
+/// claude-agent-acp (logged in) and/or codex-acp (logged in) are installed.
+async fn smoke(kind: &str, adapter: &str) {
+    if std::env::var("POLYPH_SMOKE").is_err() || polyph_agents::registry::resolve_command(adapter).is_none() {
+        eprintln!("skipped {kind}: set POLYPH_SMOKE=1 and install {adapter}");
+        return;
+    }
+    let mut h = Harness::new().await.unwrap();
+    h.agents = Some(bins());
+    let a = h.add("Ann").await.unwrap();
+    let room = h.nodes[a].call("room.create", json!({ "name": "smoke" })).await.unwrap();
+    let rid = room["id"].as_str().unwrap().to_string();
+    let dir = tempfile::tempdir().unwrap();
+    let r = h.nodes[a]
+        .call("agent.start", json!({ "room": rid, "kind": kind, "cwd": dir.path(), "preset": "auto" }))
+        .await
+        .unwrap();
+    let id = r["id"].as_str().unwrap().to_string();
+    let p = h.nodes[a]
+        .call(
+            "agent.prompt",
+            json!({ "agent": id, "text": "Create a file named hello.txt containing the word hello, then stop." }),
+        )
+        .await
+        .unwrap();
+    eprintln!("{kind} smoke: {p}");
+    assert!(dir.path().join("hello.txt").exists());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn smoke_claude_code() {
+    smoke("claude", "claude-agent-acp").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn smoke_codex() {
+    smoke("codex", "codex-acp").await;
+}

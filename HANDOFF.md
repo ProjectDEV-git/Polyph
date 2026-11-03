@@ -12,7 +12,9 @@ brief is the source of all requirements.
   `polyph-relay` complete with tests; load test measured.
 - **Milestone 2 (daemon, rooms, sessions): done**, with gaps listed in
   `STUBS.md` (LAN bridge joins, mDNS untested in CI).
-- **Milestone 3 (agents and sandbox): next.**
+- **Milestone 3 (agents and sandbox): done**, with gaps in `STUBS.md`
+  (Windows isolation, seccomp, late-joiner transcripts).
+- **Milestone 4 (coordination): next.**
 
 ## How to build and test
 
@@ -52,6 +54,25 @@ pnpm install && pnpm check:i18n
 - `polyph-daemon`: identity and storage key, encrypted room files, room
   runtimes with relay connections, joins (both sides), LAN mode, local API.
 - `polyph-i18n` and `polyph` (CLI): see `polyph --help` in any locale.
+- `polyph-sandbox`: bubblewrap/Landlock/Seatbelt/job-object wrapping, the
+  allowlisting proxy, the in-sandbox helper and `polyph sandbox test`.
+- `polyph-agents`: ACP client and supervisor, policy presets, usage and
+  budgets, summaries, registry and `agents doctor`.
+- `polyph-localagent`: the built-in agent for OpenAI-compatible endpoints.
+- Daemon methods `agent.*`, `agents.doctor`, `sandbox.test`, `usage.get`,
+  `budget.set`; CLI `polyph agent start|list|stop|follow|prompt`,
+  `agents doctor`, `sandbox test`, `usage`, `budget set`.
+- Tests: `polyph-testkit/tests/m3.rs` (fake ACP agent through daemons and
+  the sandbox) and `tests/localagent.rs` (local agent against a scripted
+  model).
+
+Smoke tests against real agents (`POLYPH_SMOKE=1`): **not run** — Claude
+Code, Codex and Ollama are not installed in the build environment. Run them
+on a developer machine:
+
+```bash
+POLYPH_SMOKE=1 cargo test -p polyph-testkit smoke_ -- --nocapture
+```
 - `polyph-testkit::harness`: relay + several daemons sharing a manual clock;
   `tests/m2.rs` holds the milestone 2 acceptance tests.
 
@@ -72,9 +93,11 @@ target/debug/polyph --home /tmp/a room knocks     # then: polyph --home /tmp/a a
 
 ## Next steps
 
-1. M3: ACP client and supervisor (`polyph-agents`), scripted fake ACP agent
-   in `polyph-testkit`, autonomy presets wired to `RoomCore::request_approval`,
-   sandbox crate, usage and budgets, tool-call summaries, `polyph-localagent`.
+1. M4: `polyph-mcp` (rmcp server with claim/memory/inbox/whiteboard tools,
+   registered in `session/new`), `polyph-git` worktrees and merge queue,
+   layer-3 file watcher, team-state digest, planner, memory anchoring, inboxes
+   and loop guard, handoff, `polyph-merge`, reviewer, secrets redaction
+   (gitleaks rules) applied before anything leaves the daemon.
 
 ## Known issues
 

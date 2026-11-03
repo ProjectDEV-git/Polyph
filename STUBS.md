@@ -6,16 +6,16 @@ here should be described as done anywhere else.
 ## Not started (later milestones)
 
 Crates that currently contain only a placeholder `lib.rs`:
-`polyph-agents`, `polyph-localagent`, `polyph-sandbox`, `polyph-mcp`,
+`polyph-mcp`,
 `polyph-git`, `polyph-merge`, `polyph-term`, `polyph-plugins`. Directories
 `apps/`, `packages/`, `integrations/`, `deploy/` and `cloud/` (except its
 LICENSE) are not built. The TUI does not exist yet: `polyph` with no
 arguments prints help.
 
 CLI commands not implemented yet (they arrive with their milestones):
-`login`, `logout`, `agent *`, `agents doctor`, `sandbox test`, `cloud *`,
-`plan`, `task *`, `memory *`, `term *`, `sync`, `usage`, `spectate-link *`,
-`template *`, `skills *`, `plugin *`, `mcp`. `polyph host --mode hosted` is
+`login`, `logout`, `cloud *` (and `agent start --on cloud`), `plan`,
+`task *`, `memory *`, `term *`, `sync`, `spectate-link *`, `template *`,
+`skills *`, `plugin *`, `mcp`. `polyph host --mode hosted` is
 accepted but hosted mode is M4.
 
 ## Partial work in finished milestones
@@ -49,6 +49,29 @@ accepted but hosted mode is M4.
   domain (`polyph.dev`) are placeholders set at build time with
   `POLYPH_DEFAULT_RELAY` and `POLYPH_DOMAIN`; the real domain is undecided.
 - **Display-name changes** need a re-issued certificate and are not exposed.
+- **Windows sandbox.** Only a job object (agents die with the daemon) plus
+  proxy variables; no AppContainer or restricted token yet, so files and
+  network are not isolated on Windows. Documented in `docs/sandbox.md`.
+- **seccomp.** The Landlock fallback restricts files and TCP connects but adds
+  no seccomp filter (for example against raw sockets or UDP). bubblewrap mode
+  isolates the network with a namespace instead.
+- **Sandbox mechanisms tested only on Linux.** Seatbelt and Windows code is
+  type-checked for those targets but has not run; CI on macOS and Windows will
+  exercise `available_mechanisms_block_escapes`.
+- **Container mode** generates the podman/docker command but has no test (needs
+  an image with the agent installed).
+- **Codex native app-server protocol** is not implemented; Codex runs through
+  the `codex-acp` adapter.
+- **Agent transcripts for late joiners.** Transcripts are kept in memory per
+  device (last 5,000 events per agent) and reach teammates live through the
+  relay buffer; a member who joins later does not get older transcript events.
+- **Budgets are not tamper-proof.** They live in the shared Settings
+  document; the API only lets Owners and Maintainers change them, but a
+  modified client with the Member role could write that document directly.
+- **Prices.** The price table starts empty (no invented prices); cost
+  estimates appear once prices are filled in `[prices]` in `polyph.toml`.
+- **Smoke tests against real agents** (`POLYPH_SMOKE=1`) exist for Claude
+  Code, Codex and Ollama but have not been run: none is installed here.
 - **Security contact address** in `docs/security.md` is not set.
 - **Relay self-hosting docs** for EC2, LAN and cloud agents come with M11.
 

@@ -144,3 +144,54 @@ when-days = { $n ->
     [one] in 1 day
    *[other] in { $n } days
 }
+
+help-agent = Start, follow and stop agents.
+help-agent-start = Start an agent in the current directory.
+help-agent-list = List agents in the room.
+help-agent-stop = Stop one of your agents.
+help-agent-follow = Follow an agent's transcript live.
+help-agent-prompt = Send one of your agents a prompt.
+help-agents = Check installed agents.
+help-agents-doctor = Check which agents are installed and logged in, and how to fix problems.
+help-sandbox = Agent sandbox tools.
+help-sandbox-test = Try forbidden writes and network calls and report what is blocked.
+help-usage = Show token usage and cost estimates.
+help-budget = Manage budgets.
+help-budget-set = Set a budget for the room or one member.
+
+agent-started = Started { $label } (sandbox: { $sandbox }).
+agent-stopped = Stopped.
+agents-empty = No agents are running in this room.
+agent-line = { $label }  { $state }
+agent-prompted = { $label } finished ({ $reason }).
+agent-cloud-unavailable = Cloud agents arrive in a later version.
+follow-prompt = { $who } → { $text }
+follow-state = { $label } is { $state }.
+doctor-ok = { $name }: ready
+doctor-missing = { $name }: not installed
+doctor-logged-out = { $name }: installed, not logged in
+doctor-install-npm = Install with: { $cmd }
+doctor-install-local = Install with: { $cmd }
+doctor-login = Log in with: { $cmd }
+doctor-sandbox = Sandbox: { $mechanism } — { $detail }
+sandbox-mechanism = { $mechanism }: { $detail }
+sandbox-check-write-inside = writes inside the worktree work
+sandbox-check-write-outside = writes outside the worktree are blocked
+sandbox-check-direct-network = direct network access is blocked
+sandbox-check-proxy-unlisted = hosts not on the allowlist are refused
+sandbox-pass = ok
+sandbox-fail = FAILED
+sandbox-none = No sandbox mechanism works on this machine. Agents will not start until one does; install bubblewrap on Linux.
+usage-room = Room: { $tokens } tokens, ${ $cost } estimated
+usage-line = { $who }: { $tokens } tokens, ${ $cost } estimated
+usage-unknown = { $count ->
+    [one] 1 turn reported no usage.
+   *[other] { $count } turns reported no usage.
+}
+usage-subscription = Some usage is on a subscription plan; per-token prices do not apply to it.
+budget-saved = Budget saved.
+budget-line = { $scope }: { $used } of { $limit } { $unit } ({ $state })
+budget-room = room
+budget-state-ok = ok
+budget-state-warning = warning
+budget-state-exceeded = used up

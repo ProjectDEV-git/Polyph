@@ -332,7 +332,10 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
         container_image: project.sandbox.image.clone(),
     };
     std::fs::create_dir_all(tmp.join("tmp"))?;
-    let mut wrapped = polyph_sandbox::wrap(mech, &policy, &def.config.command, &def.config.args)?;
+    let command = registry::resolve_command(&def.config.command)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| def.config.command.clone());
+    let mut wrapped = polyph_sandbox::wrap(mech, &policy, &command, &def.config.args)?;
     wrapped.env.extend(def.config.env.iter().map(|(k, v)| (k.clone(), v.clone())));
     let wrap: CommandWrapper = {
         let policy = policy.clone();

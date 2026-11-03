@@ -1,5 +1,6 @@
 [package]
 name = "polyph-localagent"
+description = "Polyph's built-in ACP coding agent for OpenAI-compatible local model endpoints"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,4 +10,19 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[[bin]]
+name = "polyph-localagent"
+path = "src/main.rs"
+
 [dependencies]
+polyph-agents = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-std", "io-util", "sync", "time", "fs"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+futures-util = { workspace = true }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "stream"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+globset = "0.4"
+walkdir = "2"
+regex = "1"

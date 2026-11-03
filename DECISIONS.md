@@ -90,6 +90,43 @@ could not be followed exactly. Newest at the bottom of each section.
 - **CLI help is localized at runtime** by walking clap's command tree and
   replacing `about` texts from `help-*` Fluent keys.
 
+## Agents and sandbox
+
+- **ACP types are our own lean serde structs**, checked against the official
+  `agent-client-protocol-schema` crate in both directions in
+  `crates/polyph-agents/tests/acp_compat.rs`. The official types are
+  builder-based and `#[non_exhaustive]`, which makes them heavy to construct
+  on both the client and agent side.
+- **Notifications are processed inline by the JSON-RPC reader** so every
+  `session/update` sent before a prompt's response is handled before the
+  response resolves; `agent.prompt` also waits for the daemon to publish the
+  turn's events before returning.
+- **Linux sandbox follows Claude Code's approach**: bubblewrap with a network
+  namespace and an in-namespace forwarder to the daemon's proxy over a Unix
+  socket. Without bubblewrap, Landlock limits writes and TCP connects to the
+  proxy port. The helper is the `polyph` binary itself (`polyph __sandbox`),
+  so no extra executable ships.
+- **Agents get a private TMPDIR**; shared `/tmp` is not writable, because a
+  writable `/tmp` would let one agent write into another's worktree when
+  worktrees live there.
+- **`NO_PROXY` is empty** in sandboxes so local services also pass the
+  allowlist.
+- **One proxy per agent**, so network approvals are attributed to the agent
+  that asked.
+- **Network approvals apply in every preset**, including `auto`: the
+  allowlist is a sandbox boundary, not an autonomy setting.
+- **No default prices.** Model prices change and must not be invented; the
+  table is empty until configured, and costs show as unestimated.
+- **Usage records and budgets live in shared documents** (Activity `usage`,
+  Settings `budgets`) so every member computes the same ledger.
+- **Agents found next to `polyph`** (`resolve_command`) so installers can ship
+  `polyph-localagent` beside the main binary without touching `PATH`.
+- **The local agent writes and runs commands only through ACP** client
+  requests, so it gets claims, approvals and the sandbox like any other agent.
+  It retries once after invalid tool JSON, switches to a text protocol when
+  the endpoint rejects native tools, and summarizes old turns at 75% of the
+  context window.
+
 ## Process
 
 - **Design skills.** Impeccable, Emil Kowalski's design-engineering skill,

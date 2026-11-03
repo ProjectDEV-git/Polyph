@@ -201,9 +201,20 @@ impl AgentProcess {
         };
         // Drain stderr so a chatty agent never blocks; it is not logged
         // because it can contain content.
+        // POLYPH_DEBUG_AGENT_STDERR=<file> copies it to a local file for debugging.
+        let debug_file = std::env::var_os("POLYPH_DEBUG_AGENT_STDERR");
         let drain = tokio::spawn(async move {
             let mut buf = [0u8; 8192];
-            while matches!(stderr.read(&mut buf).await, Ok(n) if n > 0) {}
+            let mut sink = debug_file.and_then(|p| std::fs::OpenOptions::new().create(true).append(true).open(p).ok());
+            while let Ok(n) = stderr.read(&mut buf).await {
+                if n == 0 {
+                    break;
+                }
+                if let Some(f) = sink.as_mut() {
+                    use std::io::Write;
+                    let _ = f.write_all(&buf[..n]);
+                }
+            }
         });
         let conv = Arc::new(Mutex::new(Converter::default()));
         let on_notify: rpc::NotificationHandler = {

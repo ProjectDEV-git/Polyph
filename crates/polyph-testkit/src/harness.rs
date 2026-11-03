@@ -60,6 +60,8 @@ pub struct Harness {
     pub clock: Clock,
     pub nodes: Vec<Node>,
     pub agents: Option<AgentBins>,
+    /// More agent definitions for every node (for example the local agent).
+    pub extra_agents: std::collections::BTreeMap<String, polyph_agents::registry::AgentConfig>,
 }
 
 impl Harness {
@@ -71,7 +73,13 @@ impl Harness {
         let relay = polyph_relay::serve(cfg, ServeOptions::default()).await?;
         // Start at real time: the relay checks expiries and certificate times
         // against its own clock.
-        Ok(Self { relay, clock: Clock::manual(polyph_proto::now()), nodes: vec![], agents: None })
+        Ok(Self {
+            relay,
+            clock: Clock::manual(polyph_proto::now()),
+            nodes: vec![],
+            agents: None,
+            extra_agents: Default::default(),
+        })
     }
 
     pub async fn add(&mut self, name: &str) -> anyhow::Result<usize> {
@@ -94,6 +102,7 @@ impl Harness {
                 "fake".into(),
                 polyph_agents::registry::AgentConfig { command: b.fake_agent.clone(), ..Default::default() },
             );
+            opts.extra_agents.extend(self.extra_agents.clone());
             // Use the best sandbox here, or none when the machine has none, so
             // policy tests still run; sandbox tests check availability themselves.
             if polyph_sandbox::best(&opts.sandbox_helper, false) == polyph_sandbox::Mechanism::None {

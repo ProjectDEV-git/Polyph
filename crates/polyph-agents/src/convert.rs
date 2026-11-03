@@ -138,7 +138,8 @@ impl Converter {
         if let Some(t) = &f.title {
             entry.title = t.clone();
         }
-        if f.kind.is_some() || !f.title.as_deref().unwrap_or_default().is_empty() {
+        // Updates often carry only a new title; keep the kind unless one is given.
+        if f.kind.is_some() || entry.title.starts_with("mcp__") {
             entry.kind = tool_kind(f.kind.as_deref(), &entry.title);
         }
         if let Some(s) = status(f.status.as_deref()) {

@@ -129,6 +129,90 @@ enum Cmd {
     Completions {
         shell: clap_complete::Shell,
     },
+    Agent {
+        #[command(subcommand)]
+        cmd: AgentCmd,
+    },
+    Agents {
+        #[command(subcommand)]
+        cmd: AgentsCmd,
+    },
+    Sandbox {
+        #[command(subcommand)]
+        cmd: SandboxCmd,
+    },
+    Usage {
+        #[arg(long)]
+        room: Option<String>,
+    },
+    Budget {
+        #[command(subcommand)]
+        cmd: BudgetCmd,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum AgentCmd {
+    Start {
+        /// Agent name: claude, codex, gemini, opencode, local, or one from polyph.toml.
+        name: String,
+        #[arg(long)]
+        task: Option<String>,
+        /// Run on your cloud agent host.
+        #[arg(long)]
+        on: Option<String>,
+        /// Autonomy preset: ask-all, default or auto.
+        #[arg(long)]
+        preset: Option<String>,
+        /// First prompt to send.
+        #[arg(long)]
+        prompt: Option<String>,
+        #[arg(long)]
+        room: Option<String>,
+    },
+    List {
+        #[arg(long)]
+        room: Option<String>,
+    },
+    Stop {
+        id: String,
+    },
+    Follow {
+        id: String,
+        #[arg(long)]
+        room: Option<String>,
+    },
+    Prompt {
+        id: String,
+        text: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum AgentsCmd {
+    Doctor,
+}
+
+#[derive(Subcommand, Debug)]
+enum SandboxCmd {
+    Test,
+}
+
+#[derive(Subcommand, Debug)]
+enum BudgetCmd {
+    Set {
+        /// Limit in tokens.
+        #[arg(long)]
+        tokens: Option<u64>,
+        /// Limit in estimated dollars.
+        #[arg(long)]
+        dollars: Option<f64>,
+        /// Member id or name; omit for the whole room.
+        #[arg(long)]
+        member: Option<String>,
+        #[arg(long)]
+        room: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -284,6 +368,11 @@ async fn call(api: &mut Api, method: &str, params: Value) -> anyhow::Result<Valu
 }
 
 fn main() {
+    // The sandbox helper re-enters this binary before anything else runs.
+    let raw: Vec<String> = std::env::args().collect();
+    if raw.get(1).map(String::as_str) == Some("__sandbox") {
+        std::process::exit(polyph_sandbox::helper::main_with_args(raw[2..].to_vec()));
+    }
     let l0 = Localizer::new(&polyph_i18n::detect(None));
     let matches = localize(Cli::command(), &l0, "").get_matches();
     let cli = match Cli::from_arg_matches(&matches) {
@@ -578,7 +667,293 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                 }
             }
         },
+        Cmd::Agent { cmd } => agent_cmd(ctx, &mut api, cmd).await?,
+        Cmd::Agents { cmd: AgentsCmd::Doctor } => {
+            let cwd = std::env::current_dir()?;
+            let v = call(&mut api, "agents.doctor", json!({ "cwd": cwd })).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else {
+                for a in v["agents"].as_array().into_iter().flatten() {
+                    let name = a["name"].as_str().unwrap_or_default();
+                    let line = if a["adapter_installed"] != true || a["cli_installed"] == false {
+                        tr!(l, "doctor-missing", name = name)
+                    } else if a["logged_in"] == false {
+                        tr!(l, "doctor-logged-out", name = name)
+                    } else {
+                        tr!(l, "doctor-ok", name = name)
+                    };
+                    ctx.out(line);
+                    for f in a["fixes"].as_array().into_iter().flatten() {
+                        let key = f[0].as_str().unwrap_or_default();
+                        ctx.out(format!("  {}", tr!(l, key, cmd = f[1].as_str().unwrap_or_default())));
+                    }
+                }
+                for s in v["sandbox"].as_array().into_iter().flatten().filter(|s| s["available"] == true).take(1) {
+                    ctx.out(tr!(
+                        l,
+                        "doctor-sandbox",
+                        mechanism = s["mechanism"].as_str().unwrap_or_default(),
+                        detail = s["detail"].as_str().unwrap_or_default()
+                    ));
+                }
+            }
+        }
+        Cmd::Sandbox { cmd: SandboxCmd::Test } => {
+            let v = call(&mut api, "sandbox.test", json!({})).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else {
+                let mut any = false;
+                for m in v.as_array().into_iter().flatten() {
+                    ctx.out(tr!(
+                        l,
+                        "sandbox-mechanism",
+                        mechanism = m["mechanism"].as_str().unwrap_or_default(),
+                        detail = m["detail"].as_str().unwrap_or_default()
+                    ));
+                    for c in m["checks"].as_array().into_iter().flatten() {
+                        any = true;
+                        let mark = if c["passed"] == true { l.t("sandbox-pass") } else { l.t("sandbox-fail") };
+                        ctx.out(format!("  {mark}  {}", l.t(c["key"].as_str().unwrap_or_default())));
+                    }
+                }
+                if !any {
+                    ctx.out(l.t("sandbox-none"));
+                }
+            }
+        }
+        Cmd::Usage { room } => {
+            let room = ctx.room(&mut api, room).await?;
+            let cwd = std::env::current_dir()?;
+            let v = call(&mut api, "usage.get", json!({ "room": room, "cwd": cwd })).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else {
+                let tot = |t: &Value| {
+                    ["input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"]
+                        .iter()
+                        .map(|k| t[*k].as_u64().unwrap_or(0))
+                        .sum::<u64>()
+                };
+                let cost = |t: &Value| format!("{:.2}", t["cost"].as_f64().unwrap_or(0.0));
+                let r = &v["ledger"]["room"];
+                ctx.out(tr!(l, "usage-room", tokens = tot(r), cost = cost(r)));
+                for (who, t) in v["ledger"]["by_agent"].as_object().into_iter().flatten() {
+                    ctx.out(format!("  {}", tr!(l, "usage-line", who = who.as_str(), tokens = tot(t), cost = cost(t))));
+                }
+                let unknown = r["unknown_turns"].as_u64().unwrap_or(0);
+                if unknown > 0 {
+                    ctx.out(tr!(l, "usage-unknown", count = unknown));
+                }
+                if r["subscription"] == true {
+                    ctx.out(l.t("usage-subscription"));
+                }
+                for b in v["budgets"].as_array().into_iter().flatten() {
+                    let scope = b["budget"]["scope"]
+                        .as_object()
+                        .and_then(|o| o.get("member"))
+                        .and_then(|m| m.as_str())
+                        .map(|m| m.chars().take(8).collect())
+                        .unwrap_or_else(|| l.t("budget-room"));
+                    let state = match b["state"]
+                        .as_str()
+                        .unwrap_or_else(|| if b["state"].is_object() { "warning" } else { "ok" })
+                    {
+                        "exceeded" => l.t("budget-state-exceeded"),
+                        "ok" => l.t("budget-state-ok"),
+                        _ => l.t("budget-state-warning"),
+                    };
+                    ctx.out(tr!(
+                        l,
+                        "budget-line",
+                        scope = scope,
+                        used = format!("{:.0}", b["used"].as_f64().unwrap_or(0.0)),
+                        limit = b["budget"]["limit"]["amount"].to_string(),
+                        unit = b["budget"]["limit"]["unit"].as_str().unwrap_or_default(),
+                        state = state
+                    ));
+                }
+            }
+        }
+        Cmd::Budget { cmd: BudgetCmd::Set { tokens, dollars, member, room } } => {
+            let room = ctx.room(&mut api, room).await?;
+            let limit = match (tokens, dollars) {
+                (Some(t), _) => json!({ "unit": "tokens", "amount": t }),
+                (None, Some(d)) => json!({ "unit": "dollars", "amount": d }),
+                (None, None) => anyhow::bail!("give --tokens or --dollars"),
+            };
+            let scope = match member {
+                Some(m) => {
+                    let members = call(&mut api, "room.members", json!({ "room": room })).await?;
+                    let id = members
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .find(|x| {
+                            x["name"].as_str() == Some(m.as_str())
+                                || x["member"].as_str().is_some_and(|i| i.starts_with(&m))
+                        })
+                        .and_then(|x| x["member"].as_str())
+                        .map(str::to_string)
+                        .unwrap_or(m);
+                    json!({ "member": id })
+                }
+                None => json!("room"),
+            };
+            let current = call(&mut api, "usage.get", json!({ "room": room })).await?;
+            let mut budgets: Vec<Value> = current["budgets"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|b| b["budget"].clone())
+                .filter(|b| b["scope"] != scope)
+                .collect();
+            budgets.push(json!({ "scope": scope, "limit": limit }));
+            call(&mut api, "budget.set", json!({ "room": room, "budgets": budgets })).await?;
+            ctx.out(l.t("budget-saved"));
+        }
         Cmd::Daemon { .. } | Cmd::Relay { .. } | Cmd::Completions { .. } => {}
+    }
+    Ok(())
+}
+
+/// Renders a summary line (translation key + JSON args) with the localizer.
+fn render_summary(l: &Localizer, line: &Value) -> String {
+    let key = line["key"].as_str().unwrap_or_default();
+    let mut args: Vec<(String, polyph_i18n::FluentValue<'static>)> = vec![];
+    for (k, v) in line["args"].as_object().into_iter().flatten() {
+        let fv = match v {
+            Value::Number(n) => polyph_i18n::FluentValue::from(n.as_f64().unwrap_or(0.0)),
+            Value::String(s) => polyph_i18n::FluentValue::from(s.clone()),
+            other => polyph_i18n::FluentValue::from(other.to_string()),
+        };
+        args.push((k.clone(), fv));
+    }
+    let refs: Vec<(&str, polyph_i18n::FluentValue<'_>)> = args.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
+    l.t_args(key, &refs)
+}
+
+fn render_event(ctx: &Ctx, e: &Value) -> Option<String> {
+    let l = &ctx.l;
+    let label = e["agent"]["label"].as_str().unwrap_or_default();
+    let kind = &e["kind"];
+    match kind["t"].as_str()? {
+        "prompt" => Some(tr!(
+            l,
+            "follow-prompt",
+            who = label.split('/').next().unwrap_or_default(),
+            text = kind["c"]["text"].as_str().unwrap_or_default()
+        )),
+        "message" => Some(kind["c"]["text"].as_str().unwrap_or_default().trim_end().to_string()),
+        "thought" => Some(format!("  … {}", kind["c"]["text"].as_str().unwrap_or_default().trim())),
+        "tool" => {
+            let t = &kind["c"];
+            if !matches!(t["status"].as_str(), Some("completed" | "failed")) {
+                return None;
+            }
+            let lines = render_tools(l, std::slice::from_ref(t));
+            Some(format!("  • {}", lines.join(" · ")))
+        }
+        "state" => Some(tr!(
+            l,
+            "follow-state",
+            label = label,
+            state = l.t(&format!("state-{}", kind["c"]["state"].as_str().unwrap_or("idle").replace('_', "-")))
+        )),
+        _ => None,
+    }
+}
+
+fn render_tools(l: &Localizer, calls: &[Value]) -> Vec<String> {
+    let parsed: Vec<polyph_proto::messages::ToolCall> =
+        calls.iter().filter_map(|c| serde_json::from_value(c.clone()).ok()).collect();
+    let lines = polyph_agents::summary::summarize(&parsed);
+    lines.iter().map(|ln| render_summary(l, &serde_json::to_value(ln).unwrap_or(Value::Null))).collect()
+}
+
+async fn agent_cmd(ctx: &Ctx, api: &mut Api, cmd: AgentCmd) -> anyhow::Result<()> {
+    let l = &ctx.l;
+    match cmd {
+        AgentCmd::Start { name, task, on, preset, prompt, room } => {
+            if on.is_some() {
+                anyhow::bail!(l.t("agent-cloud-unavailable"));
+            }
+            let room = ctx.room(api, room).await?;
+            let cwd = std::env::current_dir()?;
+            let v = call(
+                api,
+                "agent.start",
+                json!({ "room": room, "kind": name, "cwd": cwd, "preset": preset, "task": task, "prompt": prompt }),
+            )
+            .await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else {
+                ctx.out(tr!(
+                    l,
+                    "agent-started",
+                    label = v["label"].as_str().unwrap_or_default(),
+                    sandbox = v["sandbox"].as_str().unwrap_or_default()
+                ));
+            }
+        }
+        AgentCmd::List { room } => {
+            let room = ctx.room(api, room).await?;
+            let v = call(api, "agent.list", json!({ "room": room })).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else if v.as_array().is_none_or(|a| a.is_empty()) {
+                ctx.out(l.t("agents-empty"));
+            } else {
+                for a in v.as_array().into_iter().flatten() {
+                    let state = l.t(&format!("state-{}", a["state"].as_str().unwrap_or("idle").replace('_', "-")));
+                    ctx.out(format!(
+                        "{}  {}",
+                        a["id"].as_str().unwrap_or_default().chars().take(8).collect::<String>(),
+                        tr!(l, "agent-line", label = a["label"].as_str().unwrap_or_default(), state = state)
+                    ));
+                }
+            }
+        }
+        AgentCmd::Stop { id } => {
+            call(api, "agent.stop", json!({ "agent": id })).await?;
+            ctx.out(l.t("agent-stopped"));
+        }
+        AgentCmd::Prompt { id, text } => {
+            let v = call(api, "agent.prompt", json!({ "agent": id, "text": text })).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else {
+                ctx.out(tr!(l, "agent-prompted", label = id, reason = v["stop_reason"].as_str().unwrap_or_default()));
+            }
+        }
+        AgentCmd::Follow { id, room } => {
+            let room = ctx.room(api, room).await?;
+            let t = call(api, "agent.transcript", json!({ "room": room, "agent": id })).await?;
+            let agent_id = t["events"]
+                .as_array()
+                .and_then(|e| e.first())
+                .map(|e| e["agent"]["id"].as_str().unwrap_or_default().to_string())
+                .unwrap_or_default();
+            for e in t["events"].as_array().into_iter().flatten() {
+                if ctx.json {
+                    println!("{e}");
+                } else if let Some(line) = render_event(ctx, e) {
+                    ctx.out(line);
+                }
+            }
+            while let Some(n) = api.next_notification().await {
+                let ev = &n["params"]["event"];
+                if ev["type"] == "agent" && ev["event"]["agent"]["id"] == agent_id.as_str() {
+                    if ctx.json {
+                        println!("{}", ev["event"]);
+                    } else if let Some(line) = render_event(ctx, &ev["event"]) {
+                        ctx.out(line);
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }

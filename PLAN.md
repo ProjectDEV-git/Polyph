@@ -43,12 +43,12 @@ commit and an updated `HANDOFF.md`. Stubs go in `STUBS.md`.
 - [x] `polyph-i18n` (Fluent, embedded locales, negotiation) and the `polyph` CLI for M2 commands in four locales
 
 ## M3 — agents and sandbox
-- [ ] ACP client + supervisor; Claude Code, Codex, generic adapters; `agents doctor`
-- [ ] `polyph-localagent` (OpenAI-compatible, tools, text-protocol fallback, context budget)
-- [ ] autonomy presets and approval routing (owner first, escalation)
-- [ ] sandbox: bubblewrap / Landlock+seccomp, Seatbelt, Windows restricted token + job; container mode; network proxy with allowlist; `sandbox test`
-- [ ] usage accounting, price table, budgets; tool-call summaries
-- [ ] testkit fake ACP agent; tests; opt-in smoke tests
+- [x] ACP client + supervisor; Claude Code, Codex, generic adapters; `agents doctor`
+- [x] `polyph-localagent` (OpenAI-compatible, tools, text-protocol fallback, context budget)
+- [x] autonomy presets and approval routing (owner first, escalation)
+- [x] sandbox: bubblewrap, Landlock (fs + TCP port), Seatbelt, Windows job object; container mode; network proxy with allowlist; `sandbox test` (Windows AppContainer and seccomp: see STUBS)
+- [x] usage accounting, price table, budgets; tool-call summaries
+- [x] testkit fake ACP agent; tests; opt-in smoke tests
 
 ## M4 — coordination
 - [ ] MCP server (rmcp) with all tools; claims three layers; worktrees; merge queue

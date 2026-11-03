@@ -170,10 +170,21 @@ pub struct DoctorItem {
     pub fixes: Vec<(String, String)>,
 }
 
+/// Finds an agent command on PATH or next to the running executable (where
+/// installers put `polyph-localagent` beside `polyph`).
+pub fn resolve_command(cmd: &str) -> Option<PathBuf> {
+    if let Ok(p) = which::which(cmd) {
+        return Some(p);
+    }
+    let exe = std::env::current_exe().ok()?;
+    let sibling = exe.parent()?.join(if cfg!(windows) { format!("{cmd}.exe") } else { cmd.to_string() });
+    sibling.exists().then_some(sibling)
+}
+
 pub fn doctor(defs: &[AgentDef]) -> Vec<DoctorItem> {
     defs.iter()
         .map(|d| {
-            let adapter_installed = which::which(&d.config.command).is_ok();
+            let adapter_installed = resolve_command(&d.config.command).is_some();
             let cli_installed = d.cli.as_ref().map(|c| which::which(c).is_ok());
             let logged_in = if d.login_files.is_empty() && d.login_env.is_empty() {
                 None
