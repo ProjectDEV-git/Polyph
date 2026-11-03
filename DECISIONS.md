@@ -6,7 +6,7 @@ could not be followed exactly. Newest at the bottom of each section.
 ## Toolchain and dependencies
 
 - **Rust 1.97 stable, edition 2024, workspace resolver 3.** Minimum supported
-  Rust is declared as 1.88 so recent-but-not-newest distro toolchains build it.
+  Rust is 1.94 because `sqlx 0.9` (relay storage) requires it.
 - **Crypto crates pinned to one generation:** `ed25519-dalek 2.2`,
   `x25519-dalek 2`, `curve25519-dalek 4`, `chacha20poly1305 0.10`,
   `hpke 0.13`, `spake2 0.4`, `hkdf 0.12`, `sha2 0.10`. The newest RustCrypto

@@ -19,12 +19,15 @@ commit and an updated `HANDOFF.md`. Stubs go in `STUBS.md`.
 - [x] proto: join codes, SPAKE2 handshake with confirmation and channel binding
 - [x] proto: relay frames, join messages, room messages, status feed, plan schema, CRDT layouts
 - [x] proto: wasm32 build with wasm-bindgen exports
-- [ ] relay: auth, rooms, fan-out, buffer (time, count, bytes), cursors and gaps
-- [ ] relay: snapshots per device with retention, quick-session GC
-- [ ] relay: code rendezvous, PAKE forwarding, attempt limits and lockout, per-IP limits
-- [ ] relay: health, Prometheus metrics (off by default), content-free logs, TOML/env config, plan limits hook
-- [ ] relay: embeddable API (for LAN mode and tests)
-- [ ] tests: plaintext never reaches the relay; forged and replayed messages; rotation; wrong codes lock
+- [x] relay: auth, rooms, fan-out, buffer (time, count, bytes), cursors and gaps
+- [x] relay: snapshots per device with retention, quick-session GC
+- [x] relay: code rendezvous, PAKE forwarding, attempt limits and lockout, per-IP limits
+- [x] relay: health, Prometheus metrics (off by default), content-free logs, TOML/env config, plan limits hook
+- [x] relay: embeddable API (for LAN mode and tests)
+- [x] tests: plaintext never reaches the relay; forged and replayed messages; rotation; wrong codes lock
+
+- [x] load test in testkit; results in docs/self-hosting.md (peak 71 MB normal, 118 MB worst case)
+- [x] docs/protocol.md, docs/security.md
 
 ## M2 — daemon, rooms and sessions
 - [ ] identity storage (keyring with encrypted-file fallback), config dirs, local API token (0600 / ACL)

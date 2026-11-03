@@ -1,0 +1,376 @@
+# Polyph protocol
+
+Version 1.0 (`PROTOCOL_VERSION = 0x0100`). The reference implementation is
+`crates/polyph-proto`; where this document and the code disagree, the code is
+a bug or this document is, and both get fixed together.
+
+## 1. Versioning
+
+A version is `major << 8 | minor`. A peer accepts messages whose major equals
+its own and whose minor equals its own or the one before it. Every public
+protocol change bumps the minor version and keeps decoding the previous one.
+Unknown room message kinds decode as `Unknown` and are ignored, so new message
+kinds do not need a major bump.
+
+## 2. Encodings
+
+- **Envelope**: fixed binary layout (section 5), the only structure the relay
+  inspects besides relay frames.
+- **Everything else**: CBOR (RFC 8949) via serde. Decoders enforce a size
+  limit before parsing and a nesting limit of 64.
+- **JSON** (browser bridge, status feed, local API): ids are lowercase hex,
+  byte strings are standard base64.
+
+## 3. Identities and signatures
+
+Each device has:
+
+- an Ed25519 signing key; its 32-byte public key **is** the `DeviceId`;
+- an X25519 key for receiving HPKE-sealed room keys.
+
+Keys live in the OS keychain (`keyring` crate) or, where no keychain service
+exists, in a file encrypted with a key derived from a local secret (M2).
+Browsers keep non-extractable WebCrypto keys in IndexedDB where the algorithm
+allows; Ed25519/X25519 are generated in the WASM module and stored wrapped by
+a non-extractable AES-GCM key.
+
+All signatures are domain separated:
+
+```
+Ed25519.sign( "polyph/v1/sig/" || context || 0x00 || message )
+```
+
+Contexts: `envelope`, `genesis`, `cert`, `key-delivery`, `relay-auth`,
+`room-end`, `usage-summary`, `spectator`. Verification uses `verify_strict`.
+
+`Signed<T>` stores the CBOR body bytes, the signer and the signature. The
+signature covers the stored bytes; receivers verify before decoding.
+
+## 4. Rooms, genesis and membership
+
+### 4.1 Genesis and room id
+
+The owner creates a `RoomGenesis { protocol, owner: DevicePublic, owner_member,
+created_at, quick, nonce }`, signs it, and derives
+
+```
+room_id = BLAKE3-derive_key("polyph v1 room id", signed_genesis.body)[0..16]
+```
+
+Because the genesis names the owner device and the id is its hash, the root of
+trust for a room id cannot be replaced.
+
+### 4.2 Certificates
+
+`MembershipCert { room, member, device, name_commit, role, issued_at,
+expires_at, capabilities }` signed with context `cert`.
+
+- `name_commit = BLAKE3-derive_key("polyph v1 display name", salt || name)`.
+  The display name and 16-byte salt travel only in the encrypted `Profile`
+  message; clients check them against the commitment.
+- `capabilities` marks special devices, e.g. `agent-host` for cloud agent servers.
+
+A `CertChain` is the signed genesis plus certificates `c[0..n]`:
+
+1. `1 ≤ n ≤ 8`.
+2. `c[0]` is signed by the genesis owner device.
+3. `c[i]` (i > 0) is signed by the device certified in `c[i-1]`, whose role
+   must be Maintainer or Owner.
+4. Each `c[i].role` is at most its issuer's role (the owner counts as Owner).
+5. Every certificate names this room, is unexpired, was not issued more than
+   five minutes in the future, and no device in the chain has been removed.
+
+The member's role is `c[n-1].role`. Clients drop envelopes from any sender
+whose chain they have not verified.
+
+### 4.3 Roles
+
+| Role | Can |
+|---|---|
+| Owner | everything; issue Owner certificates; end the room |
+| Maintainer | approve joins, issue certificates up to Maintainer, remove members, rotate keys, change settings, approve anyone's agent after escalation |
+| Member | chat, edit the board, run agents, approve agents after escalation |
+| Viewer | read; messages that change state are ignored by every client |
+
+Removal is a `MemberRemoved` message from an Owner or Maintainer. Every client
+adds the member's devices to the room's revocation set (stored in room state)
+and the acting host rotates the epoch (section 6.3).
+
+## 5. Envelopes and group encryption
+
+### 5.1 Layout
+
+```
+offset size
+0      2   magic "PY"
+2      2   version (u16 BE)
+4      16  room id
+20     32  sender device id
+52     8   epoch (u64 BE)
+60     8   sequence number (u64 BE)
+68     24  nonce
+92     4   ciphertext length (u32 BE)
+96     n   ciphertext
+96+n   64  Ed25519 signature
+```
+
+Header = bytes `0..92`. Maximum envelope size: 1 MiB.
+
+### 5.2 Sealing
+
+```
+k_msg = HKDF-SHA256(salt = "polyph/v1/msg-key", ikm = epoch_key,
+                    info = room_id || epoch_be, L = 32)
+ct    = XChaCha20-Poly1305(k_msg, nonce = random 24 bytes, aad = header, pt)
+sig   = sign("envelope", header || ct)
+```
+
+### 5.3 Opening
+
+1. Parse with size checks; reject unknown major versions.
+2. Verify the signature against `sender` (strict Ed25519).
+3. Check that `sender` has a verified, unrevoked certificate chain in this room.
+4. Look up the epoch key; decrypt with the header as associated data.
+5. Replay check: per `(sender, epoch)` a 1024-entry sliding window over `seq`.
+   Duplicates and anything older than the window are dropped. Reordering
+   inside the window is accepted.
+
+Senders use a strictly increasing `seq` per epoch, persisted across restarts.
+
+## 6. Room keys
+
+### 6.1 Epochs
+
+Each room has a 32-byte key per epoch. Epoch 1 is created by the owner at
+genesis. A new epoch starts when a member is removed, and after a network
+split heals with diverged epochs (6.4).
+
+### 6.2 Delivery
+
+The acting host seals the epoch key to each member device with HPKE (RFC
+9180), base mode, `DHKEM(X25519, HKDF-SHA256)`, `HKDF-SHA256`,
+`ChaCha20Poly1305`:
+
+```
+info = "polyph/v1/epoch-key" || room_id || epoch_be
+aad  = recipient device id
+```
+
+The result is wrapped in `Signed<EpochKeyDelivery>` (context `key-delivery`).
+A receiver accepts a delivery only if the signer has a verified chain with
+role Maintainer or Owner. New members receive their first delivery inside the
+join channel (section 7).
+
+### 6.3 Rotation
+
+On removal: the acting host (if Owner or Maintainer; otherwise the
+highest-ranked online Owner or Maintainer) generates epoch `e+1` and sends one
+`EpochRotated { epoch, deliveries }` under epoch `e`, with a delivery for
+every remaining device and none for removed devices. Senders switch to the new
+epoch as soon as they hold its key. Old keys are kept for 10 minutes to read
+in-flight messages, then discarded.
+
+### 6.4 Epochs after a split
+
+If two partitions each rotated, epoch numbers may collide with different keys.
+Keys are stored per `(epoch, issuer)`. After the split heals, the acting host
+rotates to `max(epoch) + 1` for everyone, and CRDT sync (section 9) re-sends
+any state one side could not read.
+
+## 7. Joining
+
+### 7.1 Codes
+
+8 characters from Crockford base32 (`0-9 A-Z` without I, L, O, U), shown as
+`XXXX-XXXX`. Input is case-insensitive; `I`/`L` read as `1`, `O` as `0`.
+
+```
+rendezvous_id = BLAKE3-derive_key("polyph v1 rendezvous", first 4 characters)[0..16]
+```
+
+The relay only ever sees `rendezvous_id`. The full code is the PAKE password.
+
+### 7.2 Handshake
+
+Symmetric SPAKE2 over Ed25519 (`spake2` crate), identity
+`"polyph/v1/join/" || rendezvous_id`, password = the 8 normalized characters.
+
+```
+transcript = lp(rendezvous_id) || lp(host_msg) || lp(joiner_msg) || lp(binding)
+K          = SPAKE2 shared secret
+HK         = HKDF-SHA256(salt = transcript, ikm = K)
+confirm_h  = HMAC-SHA256(HK("polyph/v1/join/confirm/host"), transcript)
+confirm_j  = HMAC-SHA256(HK("polyph/v1/join/confirm/joiner"), transcript)
+k_h2j, k_j2h = HK("polyph/v1/join/channel/h2j"), HK(".../j2h")
+```
+
+`lp(x)` is a 4-byte big-endian length followed by `x`. `binding` is empty for
+relays with public certificates and is the SHA-256 fingerprint of the LAN
+relay's self-signed certificate in LAN mode, so a joiner verifies the LAN
+relay's identity with the code alone.
+
+Both sides exchange confirmation tags and compare in constant time. Then they
+use an ordered XChaCha20-Poly1305 channel with counter nonces
+(`nonce = 0^16 || counter_be`, aad `"polyph/v1/join"`).
+
+### 7.3 Flow over the relay
+
+```
+host   → relay  HostCode { rendezvous, kind, expires_at }
+joiner → relay  JoinCode { rendezvous }
+relay  → host   JoinerArrived { session }      relay → joiner  JoinStarted { session }
+host  ⇄ joiner  Pake { session, data }  (SPAKE2 messages, then confirmation tags)
+host   → relay  PakeResult { session, ok }
+joiner → host   Pake: JoinRequest  (sealed in the channel)
+host   → joiner Pake: JoinReply::Pending
+  ... an Owner or Maintainer approves the knock (it may be another device) ...
+host   → joiner Pake: JoinReply::Approved { chain, key delivery, room name, relay }
+```
+
+With "Require approval to join" on (the default) the host publishes a `Knock`
+to the room and waits for `KnockDecided` from an Owner or Maintainer device.
+The approver issues the certificate; the host forwards it.
+
+### 7.4 Attempt limits
+
+Enforced by the relay, and independently by the host daemon:
+
+- Each `JoinCode` on a code is one attempt. It fails when the host reports
+  `ok = false` or the joiner disconnects before the host reports a result.
+- After 5 failures a one-time code is deleted (`CodeClosed::Failed`); a
+  reusable code is locked for 10 minutes and the host is told (`CodeLocked`),
+  which the daemon shows to the room owner.
+- Per IP: 20 join attempts per 10 minutes across all codes; 120 connections per minute.
+- One-time codes expire after 15 minutes by default. Reusable codes have the
+  owner's expiry and use limit. A host revokes a code with `RevokeCode`.
+- A second device cannot host a rendezvous id already in use (`CodeInUse`);
+  the daemon generates a new code.
+
+## 8. Relay protocol
+
+WebSocket at `/ws`, binary frames, CBOR `ClientFrame` / `RelayFrame`
+(`crates/polyph-proto/src/relay_wire.rs`). Maximum frame 8 MiB.
+
+1. Client sends `Hello { protocol, device }`.
+2. Relay sends `Challenge { nonce }`.
+3. Client sends `Auth { sig = sign("relay-auth", nonce || device) }`.
+4. Relay sends `Welcome`.
+
+Then:
+
+- `Subscribe { room, chain?, after? }`. With a chain that verifies for this
+  room and this device the subscription may publish (`writer = true`);
+  without one it is read-only (spectators). The relay replays buffered
+  envelopes after cursor `after` and ends with `CaughtUp`. If `after` is older
+  than the buffer, or newer than anything the relay has (it restarted), it
+  sends `Gap` and the client fetches snapshots and runs CRDT sync.
+- `Publish { envelope }`: the relay checks the envelope parses, that
+  `sender` is the authenticated device, and that this connection is a writer
+  in the room; assigns the next cursor; fans out `Deliver { cursor }` to other
+  subscribers; and buffers it.
+- Buffer: 10 minutes, at most 5,000 envelopes and 2 MiB per room, and 64 MiB
+  across all rooms (the room being written to sheds oldest first).
+- `PutSnapshot { epoch, blob }` (writers only): one opaque snapshot per device
+  per room; the 10 newest devices' snapshots are kept. `GetSnapshots` returns
+  them newest first. Retention is per plan; unlimited when self-hosted.
+- `RegisterRoom { genesis }` tells the relay the owner device;
+  `EndRoom { room, at, sig = sign("room-end", room || at) }` from that device
+  deletes the room's buffer, snapshots and member records and sends
+  `RoomEnded` to subscribers. Quick sessions end this way.
+- Plan limits: when a member limit applies, the relay counts distinct
+  `MemberId`s from verified chains and refuses new ones with `RoomFull`.
+
+## 9. Room state
+
+Shared state is a set of Yjs documents (`yrs` in Rust, `yjs` in TypeScript):
+`Board`, `Threads`, `Activity`, `Memory`, `Settings`, and one per whiteboard.
+Layouts are in `crates/polyph-proto/src/crdt.rs`.
+
+- Local changes are broadcast as `Crdt { doc, update }`.
+- On connect, after a `Gap`, and every 60 s while online, a daemon sends
+  `CrdtSyncRequest { doc, state_vector }`; peers answer with the diff since
+  that state vector as a `Crdt` message.
+- Each daemon keeps the full state encrypted at rest and uploads an encrypted
+  snapshot (all documents plus room metadata, sealed under the current epoch
+  with the same construction as envelopes) at most every 5 minutes and when
+  the last local client leaves.
+- A member returning when nobody is online fetches snapshots, decrypts the
+  newest one it can, merges it, then syncs with peers when they appear.
+
+## 10. Acting host
+
+One online device per room is the **acting host**. It arbitrates claims,
+rotates keys (if its role allows), republishes spectator views, and
+announces itself.
+
+### 10.1 Candidates and ranking
+
+Candidates are online daemon devices (not browser or phone clients) with a
+verified chain and role Member or higher. "Online" means a `Hello`,
+`Presence` or `ActingHost` heartbeat was received from it in the last 30 s;
+every daemon sends a presence heartbeat every 10 s.
+
+Rank, highest first:
+
+1. role (Owner > Maintainer > Member);
+2. earliest join time: `issued_at` of the last certificate in its chain;
+3. lowest `DeviceId` (bytewise), as a deterministic tiebreak.
+
+### 10.2 Election
+
+Every daemon computes the top-ranked candidate from its own view.
+
+- If it is itself the top candidate and the current acting host is offline
+  (no heartbeat for 30 s) or ranks lower, it takes over: `term = highest term
+  seen + 1`, and publishes `ActingHost { term, device, member, role,
+  joined_at }`, then repeats it every 10 s.
+- A daemon accepts an `ActingHost` announcement if the announcer is a valid
+  candidate and its `(term, rank)` is greater than the current acting host's.
+  When two announcements share a term, the higher rank wins.
+- An acting host that sees a higher-ranked candidate's announcement steps
+  down immediately and sends its claim table (`Claim::Table`).
+
+### 10.3 Claim arbitration
+
+- Agents' daemons send `ClaimMsg::Request`; only the acting host answers with
+  `Decision`. A request with no answer in 5 s is retried; after 3 tries the
+  daemon treats the room as having no arbiter and grants **local provisional
+  claims**, marked as such.
+- The acting host broadcasts the full `Table` on election and every 30 s.
+  Every daemon caches it.
+- A new acting host starts from the union of cached tables. Leases continue;
+  expired claims are dropped.
+
+### 10.4 Network splits
+
+During a split each side elects its own acting host and grants claims
+independently. When the split heals, both acting hosts see each other's
+announcements; the lower one steps down and sends its table. The surviving
+host merges:
+
+- Two claims conflict if they name the same file, if one is a directory that
+  contains the other's file, or if they name the same `path#symbol` (a
+  whole-file claim conflicts with any symbol claim in that file).
+- For each conflicting pair, the claim with the **earlier `granted_at`** wins
+  (ties: lower claim id). The loser is removed and its owner receives
+  `ClaimMsg::Revoked { claim, winner }`. The losing agent is told at its next
+  turn boundary, and the overlap goes onto the board as a warning so a human
+  can decide whether work done during the split needs reconciling.
+- Provisional local claims are reconciled the same way.
+
+## 11. Spectators
+
+A spectator link is `https://{DOMAIN}/watch/<room id>#<link id>.<view key>`.
+The fragment never reaches a server. The view key is a random 32-byte key; the
+acting host republishes a filtered view (default: board, activity, follow
+mode; chat and terminals off) as envelopes in the same room, sealed with
+`EpochKey(view key)` under the reserved epoch `2^63 + link number`. Spectators
+subscribe read-only and can decrypt only those envelopes. Revoking a link
+stops the republishing. See `DECISIONS.md` for why links do not carry the room
+key.
+
+## 12. Status feed
+
+`polyph status --watch --json` and the D-Bus service `dev.polyph.Status1`
+emit `StatusEvent` (`crates/polyph-proto/src/status.rs`), versioned by
+`v`. See `docs/status-feed.md`.

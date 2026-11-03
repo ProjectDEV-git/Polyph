@@ -1,12 +1,24 @@
 [package]
 name = "polyph-testkit"
+description = "Test harnesses for Polyph: relay load test, multi-daemon harness, fake ACP agent"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+publish = false
 
 [lints]
 workspace = true
 
+[[bin]]
+name = "polyph-loadtest"
+path = "src/bin/loadtest.rs"
+
 [dependencies]
+polyph-proto = { workspace = true }
+polyph-relay = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "process", "sync"] }
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde_json = { workspace = true }
