@@ -1,0 +1,125 @@
+help-root = 人とエージェントが一緒に働くチームのためのマルチプレイヤー開発環境。
+help-daemon = バックグラウンドのデーモンを管理します。
+help-daemon-run = デーモンをフォアグラウンドで実行します。
+help-daemon-start = デーモンをバックグラウンドで起動します。
+help-daemon-stop = デーモンを停止します。
+help-daemon-status = デーモンが動いているか表示します。
+help-daemon-logs = デーモンのログを表示します。
+help-whoami = このデバイス、あなたの名前、使用中のリレーを表示します。
+help-room = ルームの作成・オープン・管理を行います。
+help-room-create = 永続的なルームを作成します。
+help-room-open = ルームを開いて接続します。
+help-room-close = このデバイスでルームを閉じます（一覧には残ります）。
+help-room-list = ルームの一覧を表示します。
+help-room-invite = ルームへの参加コードを作成します。
+help-room-members = ルームのメンバーを表示します。
+help-room-settings = ルームの設定を表示・変更します。
+help-room-delete = このデバイスからルームを削除します。
+help-room-role = メンバーのロールを変更します。
+help-room-remove = メンバーを外し、ルームの鍵を更新します。
+help-room-knocks = 参加を待っている人を表示します。
+help-host = ルーム（またはクイックセッション）を作成し、参加コードを表示します。
+help-join = コードを使ってルームに参加します。
+help-discover = ローカルネットワーク上のルームを探します。
+help-leave = このデバイスで現在のルームから退出します。
+help-end = クイックセッションや自分のルームを終了し、全員から削除します。
+help-chat = チャットメッセージを送ります。
+help-approve = エージェントのリクエストや参加希望を承認します。
+help-deny = エージェントのリクエストや参加希望を拒否します。
+help-claims = 現在確保されているファイルを表示します。
+help-board = ボードを表示します。
+help-status = ルームの状態を表示します。--watch でステータスを流し続けます。
+help-config = 設定を読み取り・変更します。
+help-config-get = 設定値を表示します。
+help-config-set = 設定値を変更します。
+help-config-edit = 設定ファイルをエディタで開きます。
+help-relay = リレーを実行します。
+help-relay-serve = リレーをフォアグラウンドで実行します（セルフホスト・LAN・テスト用）。
+help-completions = シェル補完スクリプトを出力します。
+
+daemon-starting = Polyph デーモンを起動しています…
+daemon-started = デーモンはポート { $port } で動作中です。
+daemon-not-running = デーモンが動いていません。`polyph daemon start` で起動してください。
+daemon-running = デーモンは動作中です（バージョン { $version }、ポート { $port }）。
+daemon-stopped = デーモンを停止しました。
+daemon-start-failed = デーモンを起動できませんでした。`polyph daemon logs` でログを確認してください。
+daemon-no-log = デーモンのログはまだありません。
+api-unreachable = Polyph デーモンに接続できません: { $reason }
+api-error = { $message }
+
+whoami-device = デバイス: { $device }
+whoami-name = 名前: { $name }
+whoami-member = メンバー: { $member }
+whoami-relay = リレー: { $relay }
+whoami-keystore = 鍵の保存先: { $store }
+name-unset = （未設定 — `polyph config set name "あなたの名前"` で設定）
+
+room-created = ルーム { $name } を作成しました。
+quick-created = クイックセッションを開始しました。
+room-opened = { $name } を開きました。
+room-closed = このデバイスで { $name } を閉じました。
+room-deleted = このデバイスから { $name } を削除しました。
+room-ended = { $name } を終了しました。全員のもとから削除されています。
+room-exported = ボードとチャットを { $path } に保存しました。
+rooms-empty = ルームはまだありません。`polyph room create <名前>` で作成するか、`polyph join <コード>` で参加してください。
+room-line = { $name }  { $role }  { $state }  { $online } 人オンライン
+room-state-connected = 接続中
+room-state-connecting = 接続しています
+room-state-closed = 閉じています
+quick-session-name = クイックセッション
+no-current-room = 開いているルームがありません。`polyph room open <名前>` で開いてください。
+invite-code = 参加コード: { $code }
+invite-link = リンク: { $link }
+invite-expires = 有効期限: { $when }
+invite-one-time = このコードは 1 人だけ使えます。
+invite-reusable = このコードは何度でも使えます。
+invite-pending = ルームはまだ接続されていません。接続後にコードが使えるようになります。
+invite-lan = このネットワーク内では: polyph join { $code } --relay { $url }
+members-header = { $room } のメンバー
+member-line = { $name }  { $role }  { $state }
+member-online = オンライン
+member-offline = オフライン
+member-you = （あなた）
+knocks-empty = 参加を待っている人はいません。
+knock-line = { $id }  { $name } さんが参加を希望しています
+knock-hint = `polyph approve { $id }` で承認、`polyph deny { $id }` で拒否できます。
+settings-approval-on = 参加には承認が必要です。
+settings-approval-off = コードを持っていれば承認なしで参加できます。
+role-changed = ロールを変更しました。
+member-removed = メンバーを外し、ルームの鍵を更新しました。
+
+join-connecting = 接続しています…
+join-waiting = ルームのメンバーによる承認を待っています…
+joined = { $role }として { $name } に参加しました。
+discover-searching = このネットワーク上のルームを探しています…
+discover-empty = このネットワークにはルームが見つかりませんでした。
+discover-line = { $name }  { $url }
+discover-hint = `polyph join <コード> --relay <url>` で参加できます。
+
+chat-sent = 送信しました。
+approved = 承認しました。
+denied = 拒否しました。
+admitted = 参加を許可しました。
+not-admitted = 参加を断りました。
+nothing-matches = { $id } に一致する待機中の項目はありません。
+claims-empty = 確保されているファイルはありません。
+claim-line = { $target }  { $agent }  { $reason }
+board-empty-column = （なし）
+
+status-room = ルーム: { $name }
+status-connected = リレーに接続しています。
+status-disconnected = リレーに接続していません。
+status-members = { $count } 人がオンライン
+status-approvals = { $count ->
+    [0] 承認待ちはありません。
+   *[other] 承認待ちが { $count } 件あります。
+}
+
+config-set = 保存しました。
+config-unknown = 不明な設定です。
+relay-listening = リレーは { $addr } で待ち受けています。
+editor-failed = エディタを開けませんでした。設定ファイルは { $path } にあります。
+
+when-minutes = { $n } 分後
+when-hours = { $n } 時間後
+when-days = { $n } 日後

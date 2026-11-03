@@ -10,7 +10,9 @@ brief is the source of all requirements.
 - **Milestone 0 (scaffold): done.**
 - **Milestone 1 (protocol and relay): done.** `polyph-proto` and
   `polyph-relay` complete with tests; load test measured.
-- **Milestone 2 (daemon): next.**
+- **Milestone 2 (daemon, rooms, sessions): done**, with gaps listed in
+  `STUBS.md` (LAN bridge joins, mDNS untested in CI).
+- **Milestone 3 (agents and sandbox): next.**
 
 ## How to build and test
 
@@ -43,13 +45,36 @@ pnpm install && pnpm check:i18n
 - `polyph-testkit`: `polyph-loadtest` (see `docs/self-hosting.md`).
 - Docs: `docs/protocol.md`, `docs/security.md`, `docs/self-hosting.md`.
 
-Run the relay locally: `cargo run -p polyph-relay -- --bind 127.0.0.1:8787`.
+- `polyph-core`: the room engine (no I/O): membership, knocks, key rotation,
+  CRDT chat/board sync, acting-host election, claims with split
+  reconciliation, approvals, voices, persistence and relay snapshots.
+  `tests/sim.rs` runs multi-device simulations.
+- `polyph-daemon`: identity and storage key, encrypted room files, room
+  runtimes with relay connections, joins (both sides), LAN mode, local API.
+- `polyph-i18n` and `polyph` (CLI): see `polyph --help` in any locale.
+- `polyph-testkit::harness`: relay + several daemons sharing a manual clock;
+  `tests/m2.rs` holds the milestone 2 acceptance tests.
+
+Try it locally with two homes:
+
+```bash
+cargo build -p polyph-cli
+export POLYPH_KEYSTORE=file
+target/debug/polyph relay serve --bind 127.0.0.1:18900 &
+target/debug/polyph --home /tmp/a config set relay ws://127.0.0.1:18900/ws
+target/debug/polyph --home /tmp/a config set api_port 0
+target/debug/polyph --home /tmp/b config set relay ws://127.0.0.1:18900/ws
+target/debug/polyph --home /tmp/b config set api_port 0
+target/debug/polyph --home /tmp/a host --name payments
+target/debug/polyph --home /tmp/b join <CODE> --name Bo
+target/debug/polyph --home /tmp/a room knocks     # then: polyph --home /tmp/a approve <id>
+```
 
 ## Next steps
 
-1. M2 daemon: see PLAN.md. Start with identity storage and the local API,
-   then rooms and the join flow using `RelayClient`, then sync and election.
-   Implement the election exactly as `docs/protocol.md` section 10 says.
+1. M3: ACP client and supervisor (`polyph-agents`), scripted fake ACP agent
+   in `polyph-testkit`, autonomy presets wired to `RoomCore::request_approval`,
+   sandbox crate, usage and budgets, tool-call summaries, `polyph-localagent`.
 
 ## Known issues
 

@@ -1,5 +1,6 @@
 [package]
 name = "polyph-cli"
+description = "The polyph command: CLI and terminal UI for Polyph"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,3 +15,19 @@ name = "polyph"
 path = "src/main.rs"
 
 [dependencies]
+polyph-proto = { workspace = true }
+polyph-daemon = { workspace = true }
+polyph-relay = { workspace = true }
+polyph-i18n = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "signal", "process", "io-std", "io-util"] }
+tokio-tungstenite = { workspace = true, features = ["connect"] }
+futures-util = { workspace = true }
+clap = { workspace = true }
+clap_complete = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

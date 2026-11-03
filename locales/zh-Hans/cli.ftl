@@ -1,0 +1,125 @@
+help-root = 面向人与智能体协作团队的多人编程工具。
+help-daemon = 管理后台守护进程。
+help-daemon-run = 在前台运行守护进程。
+help-daemon-start = 在后台启动守护进程。
+help-daemon-stop = 停止守护进程。
+help-daemon-status = 查看守护进程是否在运行。
+help-daemon-logs = 显示守护进程日志。
+help-whoami = 显示本设备、你的名字和所用的中继。
+help-room = 创建、打开和管理房间。
+help-room-create = 创建一个持久房间。
+help-room-open = 打开房间并连接。
+help-room-close = 在本设备上关闭房间（房间仍保留在列表中）。
+help-room-list = 列出你的房间。
+help-room-invite = 为房间生成加入码。
+help-room-members = 列出房间成员。
+help-room-settings = 查看或修改房间设置。
+help-room-delete = 从本设备删除房间。
+help-room-role = 修改成员的角色。
+help-room-remove = 移除成员并轮换房间密钥。
+help-room-knocks = 列出等待加入的人。
+help-host = 创建房间（或快速会话）并显示加入码。
+help-join = 用加入码加入房间。
+help-discover = 查找局域网中的房间。
+help-leave = 在本设备上离开当前房间。
+help-end = 结束快速会话或你拥有的房间，并为所有人删除它。
+help-chat = 发送聊天消息。
+help-approve = 批准智能体的请求或等待加入的人。
+help-deny = 拒绝智能体的请求或等待加入的人。
+help-claims = 列出当前已认领的文件。
+help-board = 显示看板。
+help-status = 显示房间状态；加上 --watch 持续输出状态流。
+help-config = 读取或修改设置。
+help-config-get = 显示某项设置。
+help-config-set = 修改某项设置。
+help-config-edit = 用编辑器打开设置文件。
+help-relay = 运行中继。
+help-relay-serve = 在前台运行中继（自托管、局域网或测试）。
+help-completions = 输出 Shell 补全脚本。
+
+daemon-starting = 正在启动 Polyph 守护进程…
+daemon-started = 守护进程运行在端口 { $port }。
+daemon-not-running = 守护进程未运行。用 `polyph daemon start` 启动。
+daemon-running = 守护进程正在运行（版本 { $version }，端口 { $port }）。
+daemon-stopped = 守护进程已停止。
+daemon-start-failed = 守护进程未能启动。用 `polyph daemon logs` 查看日志。
+daemon-no-log = 还没有守护进程日志。
+api-unreachable = 无法连接 Polyph 守护进程：{ $reason }
+api-error = { $message }
+
+whoami-device = 设备：{ $device }
+whoami-name = 名字：{ $name }
+whoami-member = 成员：{ $member }
+whoami-relay = 中继：{ $relay }
+whoami-keystore = 密钥保存在：{ $store }
+name-unset = （未设置 — 运行 `polyph config set name "你的名字"`）
+
+room-created = 已创建房间 { $name }。
+quick-created = 已开始快速会话。
+room-opened = 已打开 { $name }。
+room-closed = 已在本设备上关闭 { $name }。
+room-deleted = 已从本设备删除 { $name }。
+room-ended = 已结束 { $name }，所有人都无法再访问。
+room-exported = 看板和聊天已保存到 { $path }。
+rooms-empty = 还没有房间。用 `polyph room create <名称>` 创建，或用 `polyph join <加入码>` 加入。
+room-line = { $name }  { $role }  { $state }  { $online } 人在线
+room-state-connected = 已连接
+room-state-connecting = 正在连接
+room-state-closed = 已关闭
+quick-session-name = 快速会话
+no-current-room = 没有打开的房间。用 `polyph room open <名称>` 打开。
+invite-code = 加入码：{ $code }
+invite-link = 链接：{ $link }
+invite-expires = 过期时间：{ $when }
+invite-one-time = 此加入码只能使用一次。
+invite-reusable = 此加入码可以多次使用。
+invite-pending = 房间尚未连接，连接后加入码即可使用。
+invite-lan = 在此网络中：polyph join { $code } --relay { $url }
+members-header = { $room } 的成员
+member-line = { $name }  { $role }  { $state }
+member-online = 在线
+member-offline = 离线
+member-you = （你）
+knocks-empty = 没有人在等待加入。
+knock-line = { $id }  { $name } 请求加入
+knock-hint = 用 `polyph approve { $id }` 批准，或用 `polyph deny { $id }` 拒绝。
+settings-approval-on = 加入需要批准。
+settings-approval-off = 持有加入码即可直接加入，无需批准。
+role-changed = 已修改角色。
+member-removed = 已移除成员并轮换房间密钥。
+
+join-connecting = 正在连接…
+join-waiting = 正在等待房间成员批准…
+joined = 已以{ $role }身份加入 { $name }。
+discover-searching = 正在查找此网络中的房间…
+discover-empty = 此网络中没有找到房间。
+discover-line = { $name }  { $url }
+discover-hint = 用 `polyph join <加入码> --relay <url>` 加入。
+
+chat-sent = 已发送。
+approved = 已批准。
+denied = 已拒绝。
+admitted = 已允许加入。
+not-admitted = 已拒绝加入。
+nothing-matches = 没有与 { $id } 匹配的待处理项。
+claims-empty = 没有已认领的文件。
+claim-line = { $target }  { $agent }  { $reason }
+board-empty-column = （空）
+
+status-room = 房间：{ $name }
+status-connected = 已连接到中继。
+status-disconnected = 未连接到中继。
+status-members = { $count } 人在线
+status-approvals = { $count ->
+    [0] 没有待批准的请求。
+   *[other] 有 { $count } 个请求待批准。
+}
+
+config-set = 已保存。
+config-unknown = 未知的设置项。
+relay-listening = 中继正在监听 { $addr }。
+editor-failed = 无法打开编辑器。设置文件位于 { $path }。
+
+when-minutes = { $n } 分钟后
+when-hours = { $n } 小时后
+when-days = { $n } 天后

@@ -1,12 +1,18 @@
 [package]
 name = "polyph-i18n"
+description = "Fluent localization for Polyph's Rust surfaces (CLI, TUI, daemon messages)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+build = "build.rs"
 
 [lints]
 workspace = true
 
 [dependencies]
+fluent-bundle = "0.16"
+fluent-langneg = "0.13"
+unic-langid = { version = "0.9", features = ["macros"] }
+sys-locale = "0.3"

@@ -30,15 +30,17 @@ commit and an updated `HANDOFF.md`. Stubs go in `STUBS.md`.
 - [x] docs/protocol.md, docs/security.md
 
 ## M2 — daemon, rooms and sessions
-- [ ] identity storage (keyring with encrypted-file fallback), config dirs, local API token (0600 / ACL)
-- [ ] local API over localhost WebSocket (JSON-RPC style)
-- [ ] rooms: create, open, list, invite codes (one-time, reusable), members, roles, delete; quick sessions + export
-- [ ] join flow: PAKE, knock, approval, certificate issue, key delivery
-- [ ] presence, chat, CRDT sync, snapshots, catch-up
-- [ ] acting host election and claim arbiter hand-over, split reconciliation
-- [ ] LAN mode: embedded relay with TLS, mDNS, fingerprint bound into PAKE, bridging
-- [ ] testkit: relay + N daemons harness, split simulator
-- [ ] tests per brief
+- [x] identity storage (keyring with encrypted-file fallback), config dirs, local API token (0600 / ACL)
+- [x] local API over localhost WebSocket (JSON-RPC style)
+- [x] rooms: create, open, list, invite codes (one-time, reusable), members, roles, delete; quick sessions + export
+- [x] join flow: PAKE, knock, approval, certificate issue, key delivery
+- [x] presence, chat, CRDT sync, snapshots, catch-up
+- [x] acting host election and claim arbiter hand-over, split reconciliation
+- [x] LAN mode: embedded relay with TLS, mDNS, fingerprint bound into PAKE, bridging
+- [x] testkit: relay + N daemons harness, split simulator
+- [x] tests per brief
+
+- [x] `polyph-i18n` (Fluent, embedded locales, negotiation) and the `polyph` CLI for M2 commands in four locales
 
 ## M3 — agents and sandbox
 - [ ] ACP client + supervisor; Claude Code, Codex, generic adapters; `agents doctor`

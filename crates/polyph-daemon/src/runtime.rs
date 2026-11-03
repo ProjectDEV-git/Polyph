@@ -432,9 +432,10 @@ async fn handle_frame(rt: &RoomRuntime, shared: &Shared, f: RelayFrame) {
         }
         RelayFrame::CodeHosted { rendezvous } => {
             if let Some(pos) = ctx.code_waiters.iter().position(|(r, _)| *r == rendezvous)
-                && let Some((_, tx)) = ctx.code_waiters.remove(pos) {
-                    let _ = tx.send(true);
-                }
+                && let Some((_, tx)) = ctx.code_waiters.remove(pos)
+            {
+                let _ = tx.send(true);
+            }
         }
         RelayFrame::Error { code: polyph_proto::relay_wire::ErrorCode::CodeInUse, .. } => {
             // The oldest outstanding invite collided with another room's code.

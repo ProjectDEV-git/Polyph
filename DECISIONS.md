@@ -61,6 +61,35 @@ could not be followed exactly. Newest at the bottom of each section.
 - **Protocol versions are `major << 8 | minor`.** A peer accepts its own minor
   and the one before it.
 
+## Daemon
+
+- **One storage key per Polyph home** in the OS keychain encrypts the device
+  identity and every room file (XChaCha20-Poly1305). Where no keychain is
+  reachable, the key is a 0600 file, like an SSH key; deriving it from a
+  passphrase would make a background daemon prompt, which it cannot. The
+  `keyring` crate uses the pure-Rust Secret Service backend so Linux builds
+  need no libdbus.
+- **Local API is JSON-RPC 2.0** over a localhost WebSocket (and single calls
+  over `POST /rpc`), authenticated by a bearer token, query parameter
+  accepted for webviews that cannot set headers. Events stream on the same
+  socket.
+- **The remover rotates keys.** `docs/protocol.md` 6.3 lets "the acting host"
+  rotate; in practice whoever removes a member (an Owner or Maintainer by
+  definition) rotates immediately, which is simpler and closes the window.
+- **Room key delivery to a new member** reuses `EpochRotated` with the
+  current epoch and one delivery, instead of a separate message type.
+- **Invites wait for the relay** to confirm the code (`CodeHosted`) before
+  returning, and wait up to 10 s for a just-opened room to connect, so a code
+  never reaches a person before it works.
+- **A device that reconnects forgets it was acting host** and resends its
+  claim table, so splits reconcile and stale hosts never keep an old term.
+- **Chat lives in the Threads CRDT** (`chat` array), not as transient
+  messages, so history survives with the room.
+- **Hue choice happens on the joiner** two seconds after connecting, once
+  other members' hues are known.
+- **CLI help is localized at runtime** by walking clap's command tree and
+  replacing `about` texts from `help-*` Fluent keys.
+
 ## Process
 
 - **Design skills.** Impeccable, Emil Kowalski's design-engineering skill,

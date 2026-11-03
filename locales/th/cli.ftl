@@ -1,0 +1,125 @@
+help-root = เขียนโค้ดร่วมกันหลายคน สำหรับทีมที่มีทั้งคนและเอเจนต์
+help-daemon = จัดการเดมอนที่ทำงานเบื้องหลัง
+help-daemon-run = รันเดมอนในหน้าต่างนี้
+help-daemon-start = เริ่มเดมอนให้ทำงานเบื้องหลัง
+help-daemon-stop = หยุดเดมอน
+help-daemon-status = ดูว่าเดมอนทำงานอยู่หรือไม่
+help-daemon-logs = แสดงบันทึกของเดมอน
+help-whoami = แสดงอุปกรณ์นี้ ชื่อของคุณ และรีเลย์ที่ใช้
+help-room = สร้าง เปิด และจัดการห้อง
+help-room-create = สร้างห้องถาวร
+help-room-open = เปิดห้องและเชื่อมต่อ
+help-room-close = ปิดห้องบนอุปกรณ์นี้ (ห้องยังอยู่ในรายการ)
+help-room-list = แสดงรายการห้องของคุณ
+help-room-invite = สร้างรหัสเข้าร่วมห้อง
+help-room-members = แสดงรายชื่อสมาชิกในห้อง
+help-room-settings = ดูหรือเปลี่ยนการตั้งค่าห้อง
+help-room-delete = ลบห้องออกจากอุปกรณ์นี้
+help-room-role = เปลี่ยนบทบาทของสมาชิก
+help-room-remove = นำสมาชิกออกและเปลี่ยนกุญแจของห้อง
+help-room-knocks = ดูรายชื่อคนที่รอเข้าห้อง
+help-host = สร้างห้อง (หรือเซสชันด่วน) และแสดงรหัสเข้าร่วม
+help-join = เข้าร่วมห้องด้วยรหัส
+help-discover = ค้นหาห้องในเครือข่ายเดียวกัน
+help-leave = ออกจากห้องปัจจุบันบนอุปกรณ์นี้
+help-end = ปิดเซสชันด่วนหรือห้องที่คุณเป็นเจ้าของ และลบห้องสำหรับทุกคน
+help-chat = ส่งข้อความแชต
+help-approve = อนุมัติคำขอของเอเจนต์ หรือคนที่รอเข้าห้อง
+help-deny = ปฏิเสธคำขอของเอเจนต์ หรือคนที่รอเข้าห้อง
+help-claims = แสดงไฟล์ที่มีผู้จองไว้
+help-board = แสดงบอร์ด
+help-status = แสดงสถานะห้อง ใส่ --watch เพื่อติดตามสถานะต่อเนื่อง
+help-config = อ่านหรือเปลี่ยนการตั้งค่า
+help-config-get = แสดงค่าการตั้งค่า
+help-config-set = เปลี่ยนค่าการตั้งค่า
+help-config-edit = เปิดไฟล์การตั้งค่าในโปรแกรมแก้ไข
+help-relay = รันรีเลย์
+help-relay-serve = รันรีเลย์ในหน้าต่างนี้ (โฮสต์เอง ใช้ใน LAN หรือทดสอบ)
+help-completions = แสดงสคริปต์เติมคำสั่งอัตโนมัติสำหรับเชลล์
+
+daemon-starting = กำลังเริ่มเดมอน Polyph…
+daemon-started = เดมอนทำงานอยู่ที่พอร์ต { $port }
+daemon-not-running = เดมอนไม่ได้ทำงาน เริ่มได้ด้วย `polyph daemon start`
+daemon-running = เดมอนทำงานอยู่ (เวอร์ชัน { $version } พอร์ต { $port })
+daemon-stopped = หยุดเดมอนแล้ว
+daemon-start-failed = เดมอนเริ่มไม่สำเร็จ ดูบันทึกได้ด้วย `polyph daemon logs`
+daemon-no-log = ยังไม่มีบันทึกของเดมอน
+api-unreachable = ติดต่อเดมอน Polyph ไม่ได้: { $reason }
+api-error = { $message }
+
+whoami-device = อุปกรณ์: { $device }
+whoami-name = ชื่อ: { $name }
+whoami-member = สมาชิก: { $member }
+whoami-relay = รีเลย์: { $relay }
+whoami-keystore = เก็บกุญแจไว้ใน: { $store }
+name-unset = (ยังไม่ได้ตั้ง — ใช้ `polyph config set name "ชื่อของคุณ"`)
+
+room-created = สร้างห้อง { $name } แล้ว
+quick-created = เริ่มเซสชันด่วนแล้ว
+room-opened = เปิด { $name } แล้ว
+room-closed = ปิด { $name } บนอุปกรณ์นี้แล้ว
+room-deleted = ลบ { $name } ออกจากอุปกรณ์นี้แล้ว
+room-ended = ปิด { $name } แล้ว ห้องนี้ถูกลบสำหรับทุกคน
+room-exported = บันทึกบอร์ดและแชตไว้ที่ { $path }
+rooms-empty = ยังไม่มีห้อง สร้างด้วย `polyph room create <ชื่อ>` หรือเข้าร่วมด้วย `polyph join <รหัส>`
+room-line = { $name }  { $role }  { $state }  ออนไลน์ { $online } คน
+room-state-connected = เชื่อมต่อแล้ว
+room-state-connecting = กำลังเชื่อมต่อ
+room-state-closed = ปิดอยู่
+quick-session-name = เซสชันด่วน
+no-current-room = ยังไม่มีห้องที่เปิดอยู่ เปิดด้วย `polyph room open <ชื่อ>`
+invite-code = รหัสเข้าร่วม: { $code }
+invite-link = ลิงก์: { $link }
+invite-expires = หมดอายุ { $when }
+invite-one-time = รหัสนี้ใช้ได้หนึ่งคน
+invite-reusable = รหัสนี้ใช้ได้หลายครั้ง
+invite-pending = ห้องยังไม่ได้เชื่อมต่อ รหัสจะใช้ได้เมื่อเชื่อมต่อแล้ว
+invite-lan = ในเครือข่ายนี้: polyph join { $code } --relay { $url }
+members-header = สมาชิกของ { $room }
+member-line = { $name }  { $role }  { $state }
+member-online = ออนไลน์
+member-offline = ออฟไลน์
+member-you = (คุณ)
+knocks-empty = ไม่มีใครรอเข้าห้อง
+knock-line = { $id }  { $name } ขอเข้าห้อง
+knock-hint = อนุมัติด้วย `polyph approve { $id }` หรือปฏิเสธด้วย `polyph deny { $id }`
+settings-approval-on = การเข้าห้องต้องได้รับอนุมัติ
+settings-approval-off = ใครมีรหัสก็เข้าห้องได้โดยไม่ต้องอนุมัติ
+role-changed = เปลี่ยนบทบาทแล้ว
+member-removed = นำสมาชิกออกและเปลี่ยนกุญแจของห้องแล้ว
+
+join-connecting = กำลังเชื่อมต่อ…
+join-waiting = กำลังรอให้คนในห้องอนุมัติ…
+joined = เข้าร่วม { $name } ในฐานะ{ $role }แล้ว
+discover-searching = กำลังค้นหาห้องในเครือข่ายนี้…
+discover-empty = ไม่พบห้องในเครือข่ายนี้
+discover-line = { $name }  { $url }
+discover-hint = เข้าร่วมด้วย `polyph join <รหัส> --relay <url>`
+
+chat-sent = ส่งแล้ว
+approved = อนุมัติแล้ว
+denied = ปฏิเสธแล้ว
+admitted = ให้เข้าห้องแล้ว
+not-admitted = ไม่ให้เข้าห้อง
+nothing-matches = ไม่มีรายการที่รออยู่ตรงกับ { $id }
+claims-empty = ยังไม่มีไฟล์ที่ถูกจอง
+claim-line = { $target }  { $agent }  { $reason }
+board-empty-column = (ว่าง)
+
+status-room = ห้อง: { $name }
+status-connected = เชื่อมต่อรีเลย์แล้ว
+status-disconnected = ยังไม่ได้เชื่อมต่อรีเลย์
+status-members = ออนไลน์ { $count } คน
+status-approvals = { $count ->
+    [0] ไม่มีคำขออนุมัติที่รออยู่
+   *[other] มีคำขออนุมัติรออยู่ { $count } รายการ
+}
+
+config-set = บันทึกแล้ว
+config-unknown = ไม่รู้จักการตั้งค่านี้
+relay-listening = รีเลย์รอรับการเชื่อมต่อที่ { $addr }
+editor-failed = เปิดโปรแกรมแก้ไขไม่ได้ ไฟล์การตั้งค่าอยู่ที่ { $path }
+
+when-minutes = ในอีก { $n } นาที
+when-hours = ในอีก { $n } ชั่วโมง
+when-days = ในอีก { $n } วัน
