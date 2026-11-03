@@ -1,0 +1,10 @@
+Copyright (c) 2026 Polyph. All rights reserved.
+
+The contents of this `cloud/` directory are proprietary and are not licensed
+under the Apache License 2.0 that covers the rest of this repository. No part
+of this directory may be copied, modified, distributed, sublicensed or used to
+operate a service without prior written permission from the copyright holder.
+
+This directory contains the hosted relay's account system, teams, billing,
+the team dashboard API, plan enforcement, extended encrypted room storage,
+web push delivery and usage analytics views.

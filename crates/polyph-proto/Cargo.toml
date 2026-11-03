@@ -1,0 +1,50 @@
+[package]
+name = "polyph-proto"
+description = "Polyph wire types, end-to-end encryption, join PAKE and CRDT schemas"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = ["crdt"]
+crdt = ["dep:yrs"]
+wasm = ["dep:wasm-bindgen", "dep:js-sys", "getrandom/js", "dep:getrandom_03"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+ciborium = { workspace = true }
+thiserror = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+ed25519-dalek = { version = "2.2", features = ["rand_core", "zeroize"] }
+x25519-dalek = { version = "2.0", features = ["static_secrets", "zeroize"] }
+curve25519-dalek = "4.1"
+chacha20poly1305 = "0.10"
+hpke = { version = "0.13", default-features = false, features = ["alloc", "x25519"] }
+spake2 = "0.4"
+blake3 = { version = "1.8", default-features = false }
+hkdf = "0.12"
+hmac = "0.12"
+sha2 = "0.10"
+rand_core = { version = "0.6", features = ["getrandom"] }
+rand_core_09 = { package = "rand_core", version = "0.9", features = ["os_rng"] }
+getrandom = "0.2"
+zeroize = { version = "1.8", features = ["derive"] }
+subtle = "2.6"
+yrs = { version = "0.28", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+# Only to switch on the browser backend for the getrandom 0.3 pulled in by hpke.
+getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"], optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

@@ -1,0 +1,2 @@
+# Paths exempt from the hard-coded string check. A trailing / exempts a directory.
+# Keep this short; prefer i18n-allow comments on single lines.

@@ -1,0 +1,16 @@
+[package]
+name = "polyph-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "polyph"
+path = "src/main.rs"
+
+[dependencies]
