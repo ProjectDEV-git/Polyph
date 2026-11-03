@@ -1,5 +1,6 @@
 [package]
 name = "polyph-agents"
+description = "ACP client and agent supervisor, autonomy policy, usage, budgets and tool-call summaries"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,3 +11,18 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+polyph-proto = { workspace = true }
+polyph-sandbox = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+which = "8"
+similar = "2"
+
+[dev-dependencies]
+agent-client-protocol-schema = "1.15"
+tempfile = { workspace = true }
