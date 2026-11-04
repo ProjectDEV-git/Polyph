@@ -297,6 +297,39 @@ could not be followed exactly. Newest at the bottom of each section.
 - **The keychain is read from a plain thread**: secret-service backends block
   on their own runtime, which panicked inside the daemon's async runtime.
 
+## Phone app and VS Code extension
+
+- **The phone engine is a state machine with no I/O** (`polyph-phone`),
+  like `polyph-core`: the page owns the WebSocket and the timers and passes
+  bytes in. The same code runs natively in `tests/m8.rs` against a real
+  relay and daemon, so the protocol is tested without a browser.
+- **It answers the daemon's API** (method names, parameters, reply shapes)
+  and `PhoneClient` implements the app's transport over it, so the phone
+  runs the same React app as the desktop and browser client; views a phone
+  cannot serve are hidden through `Platform.views`.
+- **A phone joins as its owner's member.** The pairing link carries the
+  person's member id, so the phone is another device of theirs and can
+  answer their agents' approvals at once (no escalation wait). It still
+  knocks and must be approved: a member id is visible to room members and
+  is not a credential; the one-time code and the approval are.
+- **The link keeps everything in the fragment** (`#join=…&member=…&relay=…`),
+  which browsers never send to the server hosting the page, and the page
+  removes it from the address bar at once (keeping Next.js's history state,
+  or the router reloads the page).
+- **Phone state is sealed in IndexedDB** with an AES-GCM key generated as
+  non-extractable, saved at once after joining and within a quarter second
+  of later changes (a page can be killed at any time).
+- **The engine loads at run time** from `/phone/engine.js` and `.wasm`
+  (built by `scripts/build-phone-wasm.mjs`, not committed), so the web
+  build and type-check do not need the wasm toolchain's output in source.
+- **The VS Code webview talks to the daemon through the extension**
+  (postMessage), not its own WebSocket: the API token stays in the
+  extension host and the daemon's origin checks stay strict.
+- **`@polyph/ui/core`** is the React-free part of the UI package (client,
+  strings, approval sentences) for the extension host.
+- **Manifest strings for VS Code** come from `locales/*/vscode.ftl` and are
+  written to `package.nls*.json` at build time, keeping one source of text.
+
 ## Process
 
 - **Design skills.** Impeccable, Emil Kowalski's design-engineering skill,

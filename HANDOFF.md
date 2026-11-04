@@ -22,7 +22,11 @@ brief is the source of all requirements.
 - **Milestone 6 (TUI): done**, with gaps in `STUBS.md` ("Milestone 6 gaps").
 - **Milestone 7 (desktop app, browser client, status pill): done**, with
   gaps in `STUBS.md` ("Milestone 7 gaps").
-- **Milestone 8 (PWA, VS Code extension, Nublet provider): next.**
+- **Milestone 8 (PWA, VS Code extension, Nublet provider): done except the
+  Nublet provider**, which waits for Nublet's provider interface (not in the
+  repository); gaps in `STUBS.md` ("Milestone 8 gaps").
+- **Milestone 9 (cloud agents and extensibility): next** (or the Nublet
+  provider first, once its interface is known).
 
 ## How to build and test
 
@@ -33,8 +37,14 @@ cargo build -p polyph-proto --target wasm32-unknown-unknown --no-default-feature
 pnpm install && pnpm check:i18n
 pnpm --filter @polyph/ui test && pnpm -r typecheck
 pnpm --filter @polyph/web build && cargo build -p polyph-cli && pnpm test:e2e
+(cd apps/vscode && pnpm build && pnpm test && xvfb-run -a node test/e2e/run.mjs && node test/e2e/webview.mjs)
 (cd apps/desktop && pnpm build && cd src-tauri && cargo clippy -- -D warnings)
 ```
+
+The web build compiles the phone engine to wasm (`scripts/build-phone-wasm.mjs`):
+it needs `rustup target add wasm32-unknown-unknown` and `cargo install
+wasm-bindgen-cli --version <the wasm-bindgen version in Cargo.lock>`. The
+VS Code smoke test downloads VS Code into `apps/vscode/.vscode-test` once.
 
 Build hygiene: `CARGO_INCREMENTAL=0` and `rm -rf target` when the disk
 fills; the desktop shell has its own `apps/desktop/src-tauri/target`.
@@ -195,14 +205,35 @@ target/debug/polyph --home /tmp/a room knocks     # then: polyph --home /tmp/a a
   src-tauri && cargo run --features tauri/custom-protocol` (with `polyph` on
   PATH).
 
+## Milestone 8 pieces
+
+- `polyph-phone`: `Phone` (relay auth, join, room), `api` (the daemon's
+  methods and shapes), `wasm` (exports). `polyph-core::room::approval_title`
+  moved there from the daemon.
+- `packages/ui`: `phone/client.ts` (`PhoneClient`), `AppClient` (what the
+  app runs on), `Platform.kind` `phone`/`vscode`, `Platform.views`,
+  `Platform.joinCode`, `core.ts` (React-free entry), `describe.ts`.
+- `apps/web`: `/phone/` (`src/phone/` engine loader, sealed `Vault`, the
+  page), `public/phone/` (manifest, icons, `sw.js`; `engine.*` generated).
+- Daemon: `phone.pair` (`src/phone.rs`: link and QR), the phone CSP in
+  `web.rs`; CLI `polyph phone`; Settings > Pair a phone.
+- `apps/vscode`: `daemon.ts` (find or start), `hub.ts` (one connection,
+  webview bridge host side), `bridge.ts` (webview side), `claims.ts`,
+  `extension.ts`, `webview/` (the shared app), `scripts/` (esbuild, nls).
+- Try it: `pnpm --filter @polyph/web build`, run a plain relay and a
+  daemon (see "Try it locally"), then `polyph phone --base
+  http://127.0.0.1:<api port>/phone/` with `POLYPH_WEB_DIR=$PWD/apps/web/out`
+  and open the link in a browser. VS Code: `cd apps/vscode && pnpm build`,
+  then open the folder in VS Code and run the extension (F5).
+
 ## Next steps
 
-1. M8: the installable phone PWA (with a browser-only room member on the wasm
-   engine), the VS Code extension (claims decorations, approvals, the shared
-   UI in webviews) and the Nublet provider.
-2. Give `polyph-localagent` the Polyph MCP tools.
-3. Run the real-agent smoke tests, including review, resolve and planning.
-4. Build and try the desktop app on macOS and Windows.
+1. The Nublet provider, once Nublet's provider interface is available.
+2. M9: cloud agents and extensibility.
+3. Give `polyph-localagent` the Polyph MCP tools.
+4. Run the real-agent smoke tests, including review, resolve and planning.
+5. Build and try the desktop app and VS Code extension on macOS and Windows;
+   try the phone app on real iOS and Android devices.
 
 ## Known issues
 

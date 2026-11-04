@@ -151,9 +151,8 @@ accepted but hosted mode is M4.
 
 ## Milestone 7 gaps
 
-- **Browser-only members** (joining a room from a browser with no daemon,
-  using the wasm engine over the relay) come with the phone PWA in M8. The
-  browser client today is a window onto the person's own daemon.
+- **Browser-only members** arrived in M8 as the phone app (`/phone/`). The
+  desktop browser client is still a window onto the person's own daemon.
 - **Desktop packaging** is configured (`tauri.conf.json`, icons) but no
   installers are built or signed yet; the app expects `polyph` next to it or
   on PATH. Release work is M11.
@@ -171,6 +170,41 @@ accepted but hosted mode is M4.
 - **The Impeccable passes** were done by hand with the design-taste
   inspector (`inspect.mjs --app`); its remaining warnings are the third
   typeface (DESIGN.md's serif for room names) and honest empty space.
+
+## Milestone 8 gaps
+
+- **Nublet provider: not built.** The brief names a Nublet provider, but
+  Nublet's provider interface is not in the repository and could not be
+  found. The status feed (`polyph status --watch`, NDJSON, versioned in
+  `polyph-proto::status`) is what it would read; the provider itself waits
+  for Nublet's interface.
+- **One room per phone.** The phone engine holds one room; joining another
+  means leaving the first on that phone (Settings > Leave this room).
+- **No push when the phone app is closed.** Approval alerts show while the
+  app is open or in the background with its page alive. Web Push needs the
+  hosted push service (proprietary, `cloud/`, M10).
+- **Phone transcripts start at join.** Like late-joining daemons, the phone
+  sees agents' transcript events from when it is online; it keeps the last
+  1,000 per agent in memory, not on disk.
+- **Daemon-only views and actions on the phone**: terminals, merges,
+  starting or prompting agents, planning, integrations and usage need a
+  computer running Polyph; the phone hides those views and says so for
+  calls that reach the engine.
+- **Phone storage** is sealed with a non-extractable WebCrypto key, which
+  stops copies of the stored bytes from being read elsewhere, not script
+  running on the same origin. The site must stay free of third-party script.
+- **The website's own headers** for `/phone/` (CSP with `wasm-unsafe-eval`
+  and `connect-src wss:`) are set by the daemon for local testing only; the
+  website's hosting (M10) must send the same policy.
+- **wasm size**: 4.9 MB (1.1 MB gzipped), built with `opt-level = "s"` and
+  LTO but no `wasm-opt` pass (not installed here).
+- **LAN rooms cannot pair a phone**: a LAN relay's self-signed certificate
+  cannot be pinned by a browser; `phone.pair` refuses with an explanation.
+- **VS Code extension** is not published or packaged into a `.vsix` yet
+  (release work, M11); it has been run in VS Code 1.144 on Linux under
+  Xvfb. Its webview uses Polyph's own theme rather than VS Code's colors.
+- **Claims in VS Code** are matched against workspace folders' git roots;
+  a workspace that is not the room's repository simply shows no claims.
 
 ## Process gaps
 
