@@ -22,6 +22,7 @@ pub mod mirror;
 pub mod notify;
 pub mod paths;
 pub mod plan;
+pub mod provider;
 pub mod runtime;
 pub mod secrets;
 pub mod status;

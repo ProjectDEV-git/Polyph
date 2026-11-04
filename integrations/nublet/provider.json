@@ -1,0 +1,18 @@
+{
+  "name": "Polyph",
+  "description": "Your Polyph room at a glance: what your agents are doing and what needs you.",
+  "version": 1,
+  "auth": { "type": "token", "in": "query", "name": "token", "hint": "polyph status --token" },
+  "endpoints": {
+    "summary": { "method": "GET", "url": "http://127.0.0.1:{port}/status/widget", "poll_seconds": 5, "format": "polyph-widget/1" },
+    "snapshot": { "method": "GET", "url": "http://127.0.0.1:{port}/status", "format": "polyph-status/1" },
+    "stream": { "method": "GET", "url": "http://127.0.0.1:{port}/status/events", "format": "text/event-stream; polyph-status/1" }
+  },
+  "fields": {
+    "title": "$.title",
+    "subtitle": "$.subtitle",
+    "state": "$.state",
+    "badge": "$.badge.text",
+    "items": "$.items[*].label"
+  }
+}

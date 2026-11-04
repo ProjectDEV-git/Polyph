@@ -129,6 +129,12 @@ enum Cmd {
     Status {
         #[arg(long)]
         watch: bool,
+        /// Print the read-only token and URLs for widgets (Nublet, dashboards).
+        #[arg(long)]
+        token: bool,
+        /// Replace the widget token; widgets using the old one stop working.
+        #[arg(long)]
+        rotate_token: bool,
     },
     Config {
         #[command(subcommand)]
@@ -778,7 +784,20 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                 }
             }
         }
-        Cmd::Status { watch } => {
+        Cmd::Status { token, rotate_token: rotate, .. } if token || rotate => {
+            let v = call(&mut api, "status.token", json!({ "rotate": rotate })).await?;
+            let t = v["token"].as_str().unwrap_or_default();
+            let port = client::daemon_port(&ctx.paths).unwrap_or(0);
+            let base = format!("http://127.0.0.1:{port}");
+            if ctx.json {
+                ctx.print_json(&json!({ "token": t, "snapshot": format!("{base}/status"), "events": format!("{base}/status/events"), "widget": format!("{base}/status/widget") }));
+            } else {
+                ctx.out(tr!(l, "status-token", token = t));
+                ctx.out(tr!(l, "status-urls", url = format!("{base}/status/widget?token={t}")));
+                ctx.out(l.t("status-token-note"));
+            }
+        }
+        Cmd::Status { watch, .. } => {
             if watch {
                 let first = call(&mut api, "status.watch", json!({})).await;
                 drop(first);

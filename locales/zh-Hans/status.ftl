@@ -1,0 +1,9 @@
+status-token = 小组件令牌（只读）：{ $token }
+status-urls = 小组件：{ $url }
+status-token-note = 它只显示状态、名称和数量，从不包含代码或聊天。可用 polyph status --rotate-token 更换。
+status-offline = 离线：未连接到中继。
+status-waiting = { $agent } 在等你：{ $title }
+status-running = { $n } 个智能体正在运行
+status-quiet = 没有正在运行的内容，也没有需要你处理的事项。
+status-no-room = 没有打开的房间。
+status-approvals = { $n } 项审批

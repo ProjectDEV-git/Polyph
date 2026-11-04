@@ -1,0 +1,9 @@
+status-token = โทเค็นสำหรับวิดเจ็ต (อ่านอย่างเดียว): { $token }
+status-urls = วิดเจ็ต: { $url }
+status-token-note = แสดงเฉพาะสถานะ ชื่อ และจำนวน ไม่มีโค้ดหรือแชต เปลี่ยนใหม่ได้ด้วย polyph status --rotate-token
+status-offline = ออฟไลน์: ไม่ได้เชื่อมต่อกับรีเลย์
+status-waiting = { $agent } รอคุณอยู่: { $title }
+status-running = เอเจนต์กำลังทำงาน { $n } ตัว
+status-quiet = ไม่มีอะไรทำงานอยู่ ไม่มีอะไรรอคุณ
+status-no-room = ไม่มีห้องที่เปิดอยู่
+status-approvals = คำขออนุมัติ { $n } รายการ

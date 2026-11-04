@@ -1,0 +1,7 @@
+{
+  "name": "@polyph/nublet",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "description": "Nublet provider description for Polyph's status provider (docs/status-feed.md)."
+}

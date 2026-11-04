@@ -1,0 +1,9 @@
+status-token = ウィジェット用トークン（読み取り専用）: { $token }
+status-urls = ウィジェット: { $url }
+status-token-note = 状態、名前、件数だけを示し、コードやチャットは含みません。polyph status --rotate-token で置き換えられます。
+status-offline = オフライン: リレーに接続していません。
+status-waiting = { $agent } があなたを待っています: { $title }
+status-running = { $n } 個のエージェントが実行中
+status-quiet = 実行中のものはなく、対応が必要なものもありません。
+status-no-room = 開いているルームはありません。
+status-approvals = { $n } 件の承認

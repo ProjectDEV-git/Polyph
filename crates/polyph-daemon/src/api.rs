@@ -107,6 +107,9 @@ pub async fn serve(daemon: Arc<Daemon>, port: u16) -> anyhow::Result<ApiServer> 
         .route("/rpc", post(rpc))
         .route("/healthz", get(|| async { "ok" }))
         .route("/web/session", post(web_session))
+        .route("/status", get(status_snapshot))
+        .route("/status/events", get(status_events))
+        .route("/status/widget", get(status_widget))
         .route("/", get(|| async { axum::response::Redirect::temporary("/app/") }))
         .route("/{*path}", get(web_file))
         .with_state(st);
@@ -147,6 +150,27 @@ async fn web_session(State(st): State<ApiState>, headers: HeaderMap, Json(req): 
     }
 }
 
+async fn status_snapshot(State(st): State<ApiState>, headers: HeaderMap, Query(q): Query<TokenQuery>) -> Response {
+    if !crate::provider::authorized(&st.daemon.shared.paths, &headers, q.token.as_deref()) {
+        return (StatusCode::UNAUTHORIZED, "missing or wrong status token").into_response();
+    }
+    crate::provider::snapshot(&st.daemon).await
+}
+
+async fn status_events(State(st): State<ApiState>, headers: HeaderMap, Query(q): Query<TokenQuery>) -> Response {
+    if !crate::provider::authorized(&st.daemon.shared.paths, &headers, q.token.as_deref()) {
+        return (StatusCode::UNAUTHORIZED, "missing or wrong status token").into_response();
+    }
+    crate::provider::events(st.daemon.clone()).await
+}
+
+async fn status_widget(State(st): State<ApiState>, headers: HeaderMap, Query(q): Query<TokenQuery>) -> Response {
+    if !crate::provider::authorized(&st.daemon.shared.paths, &headers, q.token.as_deref()) {
+        return (StatusCode::UNAUTHORIZED, "missing or wrong status token").into_response();
+    }
+    crate::provider::widget_response(&st.daemon).await
+}
+
 async fn web_file(State(st): State<ApiState>, headers: HeaderMap, UrlPath(path): UrlPath<String>) -> Response {
     if !crate::web::local_host(&headers) {
         return StatusCode::FORBIDDEN.into_response();
@@ -162,6 +186,19 @@ async fn dispatch(st: &ApiState, auth: Auth, req: Value) -> Value {
     let Some(method) = req.get("method").and_then(|m| m.as_str()) else {
         return json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32600, "message": "missing method" } });
     };
+    if method == "status.token" {
+        // The read-only token for widgets; only the API token's holder may see or change it.
+        if auth != Auth::Token {
+            return json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32001, "message": "not allowed from a browser session" } });
+        }
+        let rotate = req.pointer("/params/rotate").and_then(Value::as_bool).unwrap_or(false);
+        let paths = &st.daemon.shared.paths;
+        let t = if rotate { crate::provider::rotate(paths) } else { crate::provider::token(paths) };
+        return match t {
+            Ok(token) => json!({ "jsonrpc": "2.0", "id": id, "result": { "token": token } }),
+            Err(e) => json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32603, "message": e.to_string() } }),
+        };
+    }
     if method == "web.link" {
         // Only the API token's holder (the CLI, the desktop app) can sign in a browser.
         if auth != Auth::Token || st.web_dir.is_none() {

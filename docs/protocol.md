@@ -453,6 +453,6 @@ key.
 
 ## 12. Status feed
 
-`polyph status --watch --json` and the D-Bus service `dev.polyph.Status1`
+`polyph status --watch --json` and the D-Bus service `org.polyph.Status1`
 emit `StatusEvent` (`crates/polyph-proto/src/status.rs`), versioned by
 `v`. See `docs/status-feed.md`.

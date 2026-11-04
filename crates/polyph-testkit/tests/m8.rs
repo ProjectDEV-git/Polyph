@@ -253,3 +253,74 @@ async fn a_phone_with_no_daemon_links_chats_and_approves() {
     let id2 = polyph_proto::identity::DeviceIdentity::generate().unwrap();
     assert!(polyph_web::Member::load(id2, "Bo", &saved, now()).is_ok());
 }
+
+/// One HTTP/1.1 GET; returns the status line and as much body as arrives
+/// within `ms` (the event stream never ends).
+async fn http_get(port: u16, path: &str, host: &str, ms: u64) -> (String, String) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    s.write_all(format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+    let mut buf = vec![];
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(ms), s.read_to_end(&mut buf)).await;
+    let text = String::from_utf8_lossy(&buf).to_string();
+    let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
+    (head.lines().next().unwrap_or_default().to_string(), body.to_string())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn widgets_read_the_status_feed_with_their_own_token() {
+    let (h, rid) = room().await;
+    let d = h.nodes[0].daemon.clone();
+    let srv = polyph_daemon::api::serve(d.clone(), 0).await.unwrap();
+    let port = srv.addr.port();
+    let token = polyph_daemon::provider::token(&d.shared.paths).unwrap();
+    let host = format!("127.0.0.1:{port}");
+
+    // No token, a wrong one, or a foreign host name: refused.
+    assert!(http_get(port, "/status/widget", &host, 2000).await.0.contains("401"));
+    assert!(http_get(port, "/status/widget?token=st_nope", &host, 2000).await.0.contains("401"));
+    let api = std::fs::read_to_string(d.shared.paths.token()).unwrap();
+    assert!(
+        http_get(port, &format!("/status/widget?token={}", api.trim()), &host, 2000).await.0.contains("401"),
+        "the API token is not a widget token"
+    );
+    assert!(
+        http_get(port, &format!("/status/widget?token={token}"), &format!("evil.example:{port}"), 2000)
+            .await
+            .0
+            .contains("401")
+    );
+    // ...and the widget token opens nothing else.
+    let (st, _) = http_get(port, &format!("/rpc?token={token}"), &host, 2000).await;
+    assert!(!st.contains("200"), "{st}");
+
+    let (st, body) = http_get(port, &format!("/status/widget?token={token}"), &host, 2000).await;
+    assert!(st.contains("200"), "{st}");
+    let w: Value = serde_json::from_str(body.trim())
+        .unwrap_or_else(|_| serde_json::from_str(body.lines().nth(1).unwrap_or("{}")).unwrap());
+    assert_eq!(w["title"], "phones");
+    assert_eq!(w["v"], 1);
+
+    let (st, body) = http_get(port, &format!("/status?token={token}"), &host, 2000).await;
+    assert!(st.contains("200") && body.contains("\"type\":\"snapshot\""), "{st} {body}");
+
+    // The event stream starts with a snapshot and carries changes as they happen.
+    let rid2 = rid.clone();
+    let d2 = d.clone();
+    let sse = tokio::spawn(async move {
+        http_get(
+            port,
+            &format!("/status/events?token={}", polyph_daemon::provider::token(&d2.shared.paths).unwrap()),
+            &format!("127.0.0.1:{port}"),
+            3000,
+        )
+        .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    h.nodes[0].call("board.add", json!({ "room": rid2, "title": "Widget card", "column": "ready" })).await.unwrap();
+    let (st, body) = sse.await.unwrap();
+    assert!(st.contains("200"), "{st}");
+    assert!(body.contains("event: snapshot"), "{body}");
+    assert!(!body.contains("Widget card\",\"description"), "no card contents beyond titles");
+    srv.abort();
+}
