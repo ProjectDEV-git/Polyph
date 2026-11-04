@@ -11,6 +11,13 @@ pub const DEFAULT_RELAY: &str = match option_env!("POLYPH_DEFAULT_RELAY") {
     None => "wss://relay.polyph.dev/ws",
 };
 
+/// Polyph's hosted account service (`polyph login`). Set at build time with
+/// `POLYPH_DEFAULT_CLOUD`; the product domain is not final (see STUBS.md).
+pub const DEFAULT_CLOUD: &str = match option_env!("POLYPH_DEFAULT_CLOUD") {
+    Some(v) => v,
+    None => "https://api.polyph.dev",
+};
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct UserConfig {
@@ -30,6 +37,8 @@ pub struct UserConfig {
     pub host_workdir: Option<String>,
     /// Agent hosts: rooms this daemon joined as an agent host.
     pub host_rooms: Vec<String>,
+    /// The hosted account service `polyph login` signs in to.
+    pub cloud: String,
 }
 
 impl Default for UserConfig {
@@ -43,6 +52,7 @@ impl Default for UserConfig {
             api_port: 47_850,
             host_workdir: None,
             host_rooms: vec![],
+            cloud: DEFAULT_CLOUD.into(),
         }
     }
 }
@@ -79,6 +89,12 @@ impl UserConfig {
                 self.theme = value.to_string();
             }
             "api_port" => self.api_port = value.parse().map_err(|_| anyhow::anyhow!("api_port must be a number"))?,
+            "cloud" => {
+                if !(value.starts_with("https://") || value.starts_with("http://")) {
+                    anyhow::bail!("cloud must be an https:// URL, for example https://api.example.com");
+                }
+                self.cloud = value.trim_end_matches('/').to_string();
+            }
             "host_workdir" => {
                 let p = std::path::Path::new(value);
                 if !p.is_dir() {
@@ -87,7 +103,7 @@ impl UserConfig {
                 self.host_workdir = Some(p.canonicalize()?.to_string_lossy().into_owned());
             }
             other => {
-                anyhow::bail!("unknown setting {other}; known: name, relay, lang, theme, api_port, host_workdir")
+                anyhow::bail!("unknown setting {other}; known: name, relay, lang, theme, api_port, host_workdir, cloud")
             }
         }
         Ok(())
@@ -101,6 +117,7 @@ impl UserConfig {
             "lang" => self.lang.clone(),
             "theme" => Some(self.theme.clone()),
             "api_port" => Some(self.api_port.to_string()),
+            "cloud" => Some(self.cloud.clone()),
             "host_workdir" => self.host_workdir.clone(),
             _ => None,
         }

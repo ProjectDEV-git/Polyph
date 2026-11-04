@@ -1169,6 +1169,10 @@ impl Daemon {
                 let p: P = param(&params)?;
                 crate::linear::connect(&self.shared, p.token, p.api_url).await
             }
+            "cloud.login.start" => crate::cloud::login_start(&self.shared, param(&params)?).await,
+            "cloud.login.finish" => crate::cloud::login_finish(&self.shared, param(&params)?).await,
+            "cloud.status" => crate::cloud::status(&self.shared).await,
+            "cloud.logout" => crate::cloud::logout(&self.shared).await,
             "linear.disconnect" => {
                 crate::linear::disconnect(&self.shared)?;
                 ok(json!({}))

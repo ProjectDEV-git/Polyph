@@ -6,6 +6,7 @@ pub mod agents;
 pub mod api;
 pub mod boards;
 pub mod clock;
+pub mod cloud;
 pub mod config;
 pub mod coord;
 pub mod daemon;
