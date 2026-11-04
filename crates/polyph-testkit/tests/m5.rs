@@ -37,7 +37,7 @@ async fn call(h: &Harness, i: usize, m: &str, p: Value) -> Value {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn board_threads_and_activity_with_replay() {
-    let (mut h, rid) = room(async |_, _| {}).await;
+    let (h, rid) = room(async |_, _| {}).await;
     let (a, b) = (0, 1);
     h.clock.advance(10);
     let c = call(&h, a, "board.add", json!({ "room": rid, "title": "Add login", "column": "ready" })).await;

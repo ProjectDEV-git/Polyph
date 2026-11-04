@@ -65,8 +65,15 @@ commit and an updated `HANDOFF.md`. Stubs go in `STUBS.md`.
 - [x] tests: `polyph-testkit/tests/m4.rs`, `m4_merge.rs`, `m4_hosted.rs`
 
 ## M5 — board, terminals, integrations
-- [ ] kanban, threads, activity with replay, whiteboards + agent tools
-- [ ] shared terminals with input approval; GitHub; notifications, webhooks; Linear; status feed + D-Bus
+- [x] kanban edits (update/remove), threads, activity feed with replay (board checkpoints), all logged by author
+- [x] multiple whiteboards (Excalidraw elements, indexed for late joiners) + agent tools (list, read as text, draw diagrams)
+- [x] shared terminals (`polyph-term` PTYs) with input approval only the owner can grant
+- [x] notifications (localized) and outgoing webhooks (JSON signed, Slack, Discord)
+- [x] GitHub: connect, issue import, pull requests for tasks, PR state follows cards
+- [x] Linear: connect, issue import, issue state follows cards
+- [x] status feed (agents, budgets, task moves) + `org.polyph.Status1` D-Bus service (read-only)
+- [x] CLI: term, thread, activity, whiteboard, plan, task, merge, memory, github, linear, webhook (four locales)
+- [x] tests: `polyph-testkit/tests/m5.rs`, `m5_integrations.rs`
 
 ## M6 — TUI
 ## M7 — desktop app, browser client, status pill

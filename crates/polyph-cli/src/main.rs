@@ -3,6 +3,7 @@
 //! `locales/*/cli.ftl`.
 
 mod client;
+mod work;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -145,6 +146,54 @@ enum Cmd {
     Usage {
         #[arg(long)]
         room: Option<String>,
+    },
+    Term {
+        #[command(subcommand)]
+        cmd: work::TermCmd,
+    },
+    Thread {
+        #[command(subcommand)]
+        cmd: work::ThreadCmd,
+    },
+    Activity {
+        #[arg(long)]
+        room: Option<String>,
+        #[arg(long, default_value_t = 30)]
+        limit: usize,
+    },
+    Whiteboard {
+        #[command(subcommand)]
+        cmd: work::WhiteboardCmd,
+    },
+    Plan {
+        #[command(subcommand)]
+        cmd: work::PlanCmd,
+    },
+    Task {
+        #[command(subcommand)]
+        cmd: work::TaskCmd,
+    },
+    Merge {
+        #[arg(long)]
+        room: Option<String>,
+    },
+    Memory {
+        /// A file or directory (default: every note).
+        path: Option<String>,
+        #[arg(long)]
+        room: Option<String>,
+    },
+    Github {
+        #[command(subcommand)]
+        cmd: work::GithubCmd,
+    },
+    Linear {
+        #[command(subcommand)]
+        cmd: work::LinearCmd,
+    },
+    Webhook {
+        #[command(subcommand)]
+        cmd: work::WebhookCmd,
     },
     Mirror {
         /// Directory for your mirror of the room's shared working copy.
@@ -324,13 +373,24 @@ struct Ctx {
     paths: Paths,
 }
 
+/// Prints a line; a closed pipe (`polyph ... | head`) ends the program quietly.
+fn line(s: &str) {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    if let Err(e) = writeln!(out, "{s}")
+        && e.kind() == std::io::ErrorKind::BrokenPipe
+    {
+        std::process::exit(0);
+    }
+}
+
 impl Ctx {
     fn out(&self, s: impl AsRef<str>) {
-        println!("{}", s.as_ref());
+        line(s.as_ref());
     }
 
     fn print_json(&self, v: &Value) {
-        println!("{}", serde_json::to_string_pretty(v).unwrap_or_default());
+        line(&serde_json::to_string_pretty(v).unwrap_or_default());
     }
 
     async fn api(&self) -> anyhow::Result<Api> {
@@ -751,6 +811,17 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                 }
             }
         }
+        Cmd::Term { cmd } => work::term(ctx, &mut api, cmd).await?,
+        Cmd::Thread { cmd } => work::thread(ctx, &mut api, cmd).await?,
+        Cmd::Activity { room, limit } => work::activity(ctx, &mut api, room, limit).await?,
+        Cmd::Whiteboard { cmd } => work::whiteboard(ctx, &mut api, cmd).await?,
+        Cmd::Plan { cmd } => work::plan(ctx, &mut api, cmd).await?,
+        Cmd::Task { cmd } => work::task(ctx, &mut api, cmd).await?,
+        Cmd::Merge { room } => work::merge(ctx, &mut api, room).await?,
+        Cmd::Memory { path, room } => work::memory(ctx, &mut api, path, room).await?,
+        Cmd::Github { cmd } => work::github(ctx, &mut api, cmd).await?,
+        Cmd::Linear { cmd } => work::linear(ctx, &mut api, cmd).await?,
+        Cmd::Webhook { cmd } => work::webhook(ctx, &mut api, cmd).await?,
         Cmd::Mirror { dir, room } => {
             let room = ctx.room(&mut api, room).await?;
             let v = call(&mut api, "mirror.open", json!({ "room": room, "dir": dir })).await?;

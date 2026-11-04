@@ -13,3 +13,6 @@ activity-approval = { $approved ->
    *[other] { $title } を拒否しました
 }
 activity-overlap = { $agent } が { $path } を変更しましたが、このファイルは { $holder } がクレーム中です
+activity-thread-created = スレッド { $title } を開始しました
+activity-whiteboard-created = ホワイトボード { $name } を作成しました
+activity-terminal-opened = ターミナル { $title } を開きました

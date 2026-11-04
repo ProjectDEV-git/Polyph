@@ -17,7 +17,9 @@ brief is the source of all requirements.
 - **Milestone 4 (coordination): done**, with gaps in `STUBS.md`
   ("Milestone 4 gaps": local agent without MCP tools, per-device merges,
   hosted mode not persisted, no CLI for plan/task/merge yet).
-- **Milestone 5 (board, terminals, integrations): next.**
+- **Milestone 5 (board, terminals, integrations): done**, with gaps in
+  `STUBS.md` ("Milestone 5 gaps").
+- **Milestone 6 (TUI): next.**
 
 ## How to build and test
 
@@ -120,14 +122,29 @@ target/debug/polyph --home /tmp/b join <CODE> --name Bo
 target/debug/polyph --home /tmp/a room knocks     # then: polyph --home /tmp/a approve <id>
 ```
 
+## Milestone 5 pieces
+
+- `polyph-core::activity` (board diff, checkpoints, replay) and
+  `polyph-core::whiteboard` (layout, text description, diagram layout).
+- Daemon: `feed` (activity entries), `boards` (whiteboards), `terms` (shared
+  terminals), `notify` (notifications, webhooks), `integrations` (sealed
+  tokens), `github`, `linear`, `status` (feed) and `dbus` (Linux).
+- API: board.update/remove, thread.create/list/get, activity.list/replay,
+  whiteboard.*, term.*, webhook.*, github.*, linear.*, integrations.status.
+- MCP tools: list_whiteboards, read_whiteboard, draw_diagram.
+- CLI: term, thread, activity, whiteboard, plan, task, merge, memory, github,
+  linear, webhook. Texts in `locales/*/{activity,notify,work}.ftl`.
+- Tests: `m5.rs` (board/threads/replay, whiteboards and agents, terminals,
+  notifications and webhooks, D-Bus) and `m5_integrations.rs` (GitHub and
+  Linear against local stand-ins).
+
 ## Next steps
 
-1. M5: kanban UI data paths, threads, activity with replay, whiteboards and
-   their agent tools, shared terminals with input approval, GitHub,
-   notifications and webhooks, Linear, status feed and D-Bus.
+1. M6: the ratatui TUI on the local API: rooms, chat and threads, board,
+   agents with follow mode, approvals, merge queue, live terminals (attach),
+   activity with replay; honors `NO_COLOR`, works over SSH.
 2. Give `polyph-localagent` the Polyph MCP tools.
-3. CLI for `plan`, `task finish`, `merge queue`, `memory` and handoff.
-4. Run the real-agent smoke tests, including review, resolve and planning.
+3. Run the real-agent smoke tests, including review, resolve and planning.
 
 ## Known issues
 

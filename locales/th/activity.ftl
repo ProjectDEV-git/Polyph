@@ -13,3 +13,6 @@ activity-approval = { $approved ->
    *[other] ปฏิเสธ { $title }
 }
 activity-overlap = { $agent } แก้ไข { $path } ซึ่ง { $holder } จองไว้
+activity-thread-created = เริ่มเธรด { $title }
+activity-whiteboard-created = สร้างไวต์บอร์ด { $name }
+activity-terminal-opened = เปิดเทอร์มินัล { $title }

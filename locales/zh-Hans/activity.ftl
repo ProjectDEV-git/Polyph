@@ -13,3 +13,6 @@ activity-approval = { $approved ->
    *[other] 拒绝了 { $title }
 }
 activity-overlap = { $agent } 修改了 { $path }，该文件由 { $holder } 认领
+activity-thread-created = 发起了讨论串 { $title }
+activity-whiteboard-created = 创建了白板 { $name }
+activity-terminal-opened = 打开了终端 { $title }

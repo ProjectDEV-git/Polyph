@@ -197,6 +197,39 @@ could not be followed exactly. Newest at the bottom of each section.
   start reviewer agents, whose MCP handlers lead back to `finish_task`, and
   that cycle cannot be expressed as one `Send` future.
 
+## Board, terminals and integrations
+
+- **The room engine logs board changes itself**: every local change to the
+  Board document is diffed into card events in the Activity document, so
+  agents' tools, the merge queue, the planner and people are all covered
+  without logging at each call site. Agent tools pass their label.
+- **Board replay uses checkpoints**: every 50 card events an entry carries
+  the whole board (cards as JSON), and a replay folds later events onto the
+  latest checkpoint before the requested time.
+- **Activity entries keep document order for equal times** (stable sort), so
+  every member sees the same order.
+- **The room engine gets the daemon's clock** for activity timestamps; it
+  still performs no I/O.
+- **Whiteboards are indexed in Settings** (`whiteboard:<id>`), and the engine
+  requests listed boards it does not have, so late joiners get them.
+- **Agents draw diagrams, not raw Excalidraw**: `draw_diagram` takes boxes
+  and arrows and Polyph lays them out; drawing again with the same id
+  replaces the diagram.
+- **Terminal input is an approval only the terminal's owner can answer**; it
+  never escalates, so a requester can never approve their own access. The
+  keyboard holder can give it back; the owner can take it back.
+- **Notifications are derived per device** from daemon events and rendered in
+  the person's language; webhooks carry the same text and metadata, never
+  chat, code or file contents.
+- **Integration tokens are sealed with the storage key** on the device that
+  uses them and never enter a room.
+- **Pull requests replace the local merge** with `[merge] via = "github"`;
+  the PR's state is then the truth for the card.
+- **The D-Bus status service is read-only**: the session bus is reachable by
+  every process of the user, including sandboxed agents.
+- **`reqwest` 0.13 with rustls (ring)**, the same as the local agent, for all
+  outgoing HTTPS.
+
 ## Process
 
 - **Design skills.** Impeccable, Emil Kowalski's design-engineering skill,

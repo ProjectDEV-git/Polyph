@@ -6,7 +6,7 @@ here should be described as done anywhere else.
 ## Not started (later milestones)
 
 Crates that currently contain only a placeholder `lib.rs`:
-`polyph-term`, `polyph-plugins`. Directories
+`polyph-plugins`. Directories
 `apps/`, `packages/`, `integrations/`, `deploy/` and `cloud/` (except its
 LICENSE) are not built. The TUI does not exist yet: `polyph` with no
 arguments prints help.
@@ -107,12 +107,32 @@ accepted but hosted mode is M4.
   mirror has no `.git`, so members' agents do not get task worktrees there.
 - **Agents cannot pick up tasks themselves.** The board's `auto_pickup` field
   is not acted on; people start agents on cards.
-- **No CLI yet** for `plan`, `task`, `merge` and `memory` (the daemon API has
-  `plan.create`, `plan.accept`, `task.finish`, `merge.queue`,
-  `agent.handoff`, `memory.list`, `inbox.send`); they arrive with their
-  milestones' CLI work.
 - **Real-agent smoke tests** of the review, resolve and planner prompts have
   not run (no real agents installed here).
+
+## Milestone 5 gaps
+
+- **No interactive terminal attach in the CLI.** `polyph term send/read`
+  type lines and print output; a live full-screen attach comes with the TUI
+  (M6) and the apps (xterm.js).
+- **Late viewers of a terminal** see output from when their device came
+  online (plus what the relay buffer replays); the owner does not resend
+  scrollback to newcomers.
+- **Agents' own command terminals** are summarized in transcripts, not shared
+  as live terminals.
+- **Terminal output redaction** works per output batch; a secret split across
+  two batches can slip through.
+- **OS notifications** are not shown by the daemon itself: local apps receive
+  `notification` events and show them (M6/M7); Linux panels can use D-Bus.
+- **Webhook URLs and secrets** are per device and not synced between a
+  person's devices.
+- **GitHub and Linear** are followed by polling (every minute for pull
+  requests); no incoming webhooks from them yet. Linear only moves issues for
+  card moves made on the device holding the key.
+- **D-Bus** only on Linux; macOS and Windows status integrations come with
+  the status pill (M7).
+- **Activity checkpoints** cover cards (column and title); replaying other
+  card fields needs the full card history.
 
 ## Process gaps
 

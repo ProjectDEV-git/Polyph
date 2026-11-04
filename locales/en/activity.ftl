@@ -13,3 +13,6 @@ activity-approval = { $approved ->
    *[other] denied { $title }
 }
 activity-overlap = { $agent } changed { $path }, which { $holder } holds
+activity-thread-created = started the thread { $title }
+activity-whiteboard-created = created the whiteboard { $name }
+activity-terminal-opened = opened the terminal { $title }

@@ -1043,6 +1043,15 @@ impl Daemon {
                     let fx = c.core.send_chat(&text, Some(t.id.clone()), None, now)?;
                     apply(&rt, &mut c, &self.shared, fx).await;
                 }
+                crate::feed::log_locked(
+                    &rt,
+                    &mut c,
+                    &self.shared,
+                    "thread_created",
+                    None,
+                    json!({ "thread": t.id, "title": t.title }),
+                )
+                .await;
                 ok(json!({ "id": t.id }))
             }
             "thread.list" => {
@@ -1222,6 +1231,15 @@ impl Daemon {
                 let info = crate::boards::create(&mut c, &p.name, now)?;
                 let fx = crate::boards::create_effects(&mut c, &info)?;
                 apply(&rt, &mut c, &self.shared, fx).await;
+                crate::feed::log_locked(
+                    &rt,
+                    &mut c,
+                    &self.shared,
+                    "whiteboard_created",
+                    None,
+                    json!({ "board": info.id, "name": info.name }),
+                )
+                .await;
                 ok(info)
             }
             "whiteboard.list" => {

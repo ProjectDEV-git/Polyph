@@ -355,6 +355,30 @@ holds a claim covering the path; otherwise it answers `Rejected` and the
 member restores the host's version. Files over 512 KiB, gitignored files and
 build directories are not mirrored. `Files` messages stay under 700 KiB.
 
+### 9.5 Activity and whiteboards
+
+The Activity document's `events` array holds JSON entries (`id`, `at`,
+`kind`, `actor`, `agent`, `summary_key`, `args`, `checkpoint`). Each device
+logs its own board changes as `card_created`, `card_moved`, `card_updated`
+and `card_removed`; every 50 card events one entry's `checkpoint` holds all
+cards as a JSON array. Readers sort by `at`, keeping document order for equal
+times. `summary_key` names a Fluent message in `activity.ftl`.
+
+Whiteboards are listed in the Settings map under `whiteboard:<id>` (JSON with
+`id`, `name`, `created_by`, `created_at`); a device that sees a listed board
+it lacks sends a `CrdtSyncRequest` for `whiteboard/<id>`.
+
+### 9.6 Terminals
+
+`Terminal(TerminalMsg)` messages: the owner's device sends `Opened`,
+`Output`, `Resize`, `Control` and `Closed { exit }`; members send
+`RequestInput { member }` and, while they hold the keyboard, `Input`.
+Receivers accept `Input` and `RequestInput` only for the sender's own member,
+`Output`, `Resize` and `Closed` only from the owner's device, and `Control`
+from the owner's device or (to give it back) from the current holder. A
+request becomes an approval of kind `TerminalInput` that only the terminal's
+owner may answer.
+
 ## 10. Acting host
 
 One online device per room is the **acting host**. It arbitrates claims,

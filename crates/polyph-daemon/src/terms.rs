@@ -268,6 +268,15 @@ pub async fn open(d: &Arc<Daemon>, p: OpenParams) -> Result<Value, ApiError> {
     )
     .await;
     emit(&d.shared, &ctx, "terminal_opened", json!({ "terminal": info }));
+    crate::feed::log_locked(
+        &rt,
+        &mut ctx,
+        &d.shared,
+        "terminal_opened",
+        None,
+        json!({ "terminal": id.to_hex(), "title": info.title }),
+    )
+    .await;
     Ok(json!({ "id": id.to_hex(), "terminal": info }))
 }
 
