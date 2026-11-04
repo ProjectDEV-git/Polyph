@@ -85,6 +85,22 @@ pub fn setting(doc: &Doc, key: &str) -> Option<serde_json::Value> {
     }
 }
 
+/// Settings whose key starts with `prefix`, as (key, value).
+pub fn settings_with_prefix(doc: &Doc, prefix: &str) -> Vec<(String, serde_json::Value)> {
+    let m = doc.get_or_insert_map("settings");
+    let txn = doc.transact();
+    let mut v: Vec<(String, serde_json::Value)> = m
+        .iter(&txn)
+        .filter(|(k, _)| k.starts_with(prefix))
+        .filter_map(|(k, o)| match o {
+            Out::Any(Any::String(s)) => serde_json::from_str(&s).ok().map(|x| (k.to_string(), x)),
+            _ => None,
+        })
+        .collect();
+    v.sort_by(|a, b| a.0.cmp(&b.0));
+    v
+}
+
 pub const USAGE: &str = "usage";
 
 /// One agent turn's usage, shared through the Activity document so every

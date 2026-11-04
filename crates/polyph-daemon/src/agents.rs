@@ -529,6 +529,9 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
     }
     agents.map.lock().await.insert(id, handle.clone());
     publish(&rt, &shared, &agent, AgentEventKind::Started { task, model: None, cloud: false }).await;
+    if !p.helper {
+        crate::feed::log(&rt, &shared, "agent_started", Some(&agent.label), json!({ "kind": agent.kind, "card": task.map(|t| t.to_hex()), "branch": task_wt.as_ref().map(|w| w.branch.clone()) })).await;
+    }
     set_state(&handle, &rt, &shared, AgentState::Idle, None).await;
     if let Some(text) = p.prompt {
         let (shared, rt, h) = (shared.clone(), rt.clone(), handle.clone());
@@ -679,6 +682,16 @@ pub async fn stop(shared: &Shared, agents: &Agents, rt: &RoomRuntime, id: Object
         apply(rt, &mut ctx, shared, fx).await;
     }
     publish(rt, shared, &h.agent, AgentEventKind::Stopped { reason: "stopped".into() }).await;
+    if !h.helper {
+        crate::feed::log(
+            rt,
+            shared,
+            "agent_stopped",
+            Some(&h.agent.label),
+            json!({ "card": h.task.map(|t| t.to_hex()) }),
+        )
+        .await;
+    }
     Ok(json!({}))
 }
 

@@ -128,6 +128,21 @@ async fn set_state(rt: &RoomRuntime, shared: &Shared, e: &mut MergeEntry, state:
     e.updated_at = shared.clock.now();
     put_entry(rt, shared, e).await;
     shared.emit(crate::events::ApiEvent::room_kind(&rt.id, "merge_queue", json!({ "entry": e })));
+    if matches!(state, MergeState::Merged | MergeState::Failed | MergeState::ChangesRequested) {
+        let kind = match state {
+            MergeState::Merged => "merged",
+            MergeState::Failed => "merge_failed",
+            _ => "changes_requested",
+        };
+        crate::feed::log(
+            rt,
+            shared,
+            kind,
+            e.agent.as_deref(),
+            json!({ "branch": e.branch, "into": e.into, "card": e.card, "resolved": e.resolved, "commit": e.merge_commit }),
+        )
+        .await;
+    }
 }
 
 /// Commits the agent's work and queues it for merging.

@@ -149,6 +149,13 @@ impl std::fmt::Debug for Shared {
 }
 
 impl Shared {
+    /// Gives a room engine the daemon's clock.
+    pub fn with_clock(&self, mut core: RoomCore) -> RoomCore {
+        let c = self.clock.clone();
+        core.clock = Some(Arc::new(move || c.now()));
+        core
+    }
+
     pub fn emit(&self, e: ApiEvent) {
         let _ = self.events.send(e);
     }
@@ -235,6 +242,22 @@ struct RoomParam {
     room: String,
 }
 
+/// A card by id prefix.
+fn find_card(c: &mut crate::runtime::RoomCtx, q: &str) -> Result<String, ApiError> {
+    let q = q.to_lowercase();
+    let hits: Vec<String> = Board::new(c.core.doc(&DocName::Board))
+        .all_cards()
+        .into_iter()
+        .filter(|x| !q.is_empty() && x.id.starts_with(&q))
+        .map(|x| x.id)
+        .collect();
+    match hits.as_slice() {
+        [one] => Ok(one.clone()),
+        [] => Err(ApiError::NotFound("no such card".into())),
+        _ => Err(ApiError::BadRequest("that id matches several cards; give more of it".into())),
+    }
+}
+
 fn ok<T: Serialize>(v: T) -> ApiResult {
     serde_json::to_value(v).map_err(|e| ApiError::Failed(e.to_string()))
 }
@@ -298,7 +321,7 @@ impl Daemon {
                             core.surface = shared.opts.surface;
                             let relay = RelayAddr::parse(core.relay.as_deref().unwrap_or(&shared.config.lock().relay));
                             let id = core.id;
-                            let rt = RoomRuntime::new(core, relay);
+                            let rt = RoomRuntime::new(shared.with_clock(core), relay);
                             d.rooms.lock().await.insert(id, rt.clone());
                             if open_list.contains(&id.to_hex()) {
                                 rt.start(shared.clone());
@@ -382,7 +405,7 @@ impl Daemon {
 
     async fn add_and_open(&self, core: RoomCore, relay: RelayAddr) -> Arc<RoomRuntime> {
         let id = core.id;
-        let rt = RoomRuntime::new(core, relay);
+        let rt = RoomRuntime::new(self.shared.with_clock(core), relay);
         {
             let mut c = rt.ctx.lock().await;
             let _ = self.shared.save_room(&mut c.core);
@@ -887,6 +910,259 @@ impl Daemon {
                 apply(&rt, &mut c, &self.shared, fx).await;
                 ok(json!({}))
             }
+            "board.update" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    card: String,
+                    title: Option<String>,
+                    description: Option<String>,
+                    /// Empty string clears it.
+                    assignee: Option<String>,
+                    acceptance: Option<Vec<String>>,
+                    files: Option<Vec<String>>,
+                }
+                let p: P = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let mut c = rt.ctx.lock().await;
+                let card = find_card(&mut c, &p.card)?;
+                let red = |s: &str| polyph_core::redact::redact(s).into_owned();
+                let fx = c.core.change_doc(DocName::Board, |d| {
+                    let b = Board::new(d);
+                    let set = |k: &str, v: yrs::Any| {
+                        let _ = b.set_field(&card, k, v, now);
+                    };
+                    if let Some(t) = &p.title {
+                        set(polyph_proto::crdt::card::TITLE, yrs::Any::String(red(t).into()));
+                    }
+                    if let Some(t) = &p.description {
+                        set(polyph_proto::crdt::card::DESCRIPTION, yrs::Any::String(red(t).into()));
+                    }
+                    if let Some(a) = &p.assignee {
+                        set(
+                            polyph_proto::crdt::card::ASSIGNEE,
+                            if a.is_empty() { yrs::Any::Null } else { yrs::Any::String(a.as_str().into()) },
+                        );
+                    }
+                    if let Some(l) = &p.acceptance {
+                        let l: Vec<String> = l.iter().map(|x| red(x)).collect();
+                        set(
+                            polyph_proto::crdt::card::ACCEPTANCE,
+                            yrs::Any::String(serde_json::to_string(&l).unwrap_or_default().into()),
+                        );
+                    }
+                    if let Some(l) = &p.files {
+                        set(
+                            polyph_proto::crdt::card::FILES,
+                            yrs::Any::String(serde_json::to_string(l).unwrap_or_default().into()),
+                        );
+                    }
+                })?;
+                apply(&rt, &mut c, &self.shared, fx).await;
+                ok(json!({ "id": card }))
+            }
+            "board.remove" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    card: String,
+                }
+                let p: P = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let mut c = rt.ctx.lock().await;
+                let card = find_card(&mut c, &p.card)?;
+                let fx = c.core.change_doc(DocName::Board, |d| Board::new(d).remove_card(&card))?;
+                apply(&rt, &mut c, &self.shared, fx).await;
+                ok(json!({ "id": card }))
+            }
+            "thread.create" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    title: String,
+                    card: Option<String>,
+                    text: Option<String>,
+                }
+                let p: P = param(&params)?;
+                if p.title.trim().is_empty() {
+                    return Err(ApiError::BadRequest("a thread needs a title".into()));
+                }
+                let rt = self.find(&p.room).await?;
+                let mut c = rt.ctx.lock().await;
+                let card = match &p.card {
+                    Some(q) => Some(find_card(&mut c, q)?),
+                    None => None,
+                };
+                let t = polyph_core::docs::ThreadInfo {
+                    id: ObjectId::random().map_err(|e| ApiError::Failed(e.to_string()))?.to_hex(),
+                    title: polyph_core::redact::redact(p.title.trim()).into_owned(),
+                    card: card.clone(),
+                    created_by: c.core.my_member.to_hex(),
+                    created_at: now,
+                };
+                let fx = c.core.change_doc(DocName::Threads, |d| polyph_core::docs::create_thread(d, &t))?;
+                apply(&rt, &mut c, &self.shared, fx).await;
+                if let Some(card) = &card {
+                    let fx = c.core.change_doc(DocName::Board, |d| {
+                        let _ = Board::new(d).set_field(
+                            card,
+                            polyph_proto::crdt::card::THREAD,
+                            yrs::Any::String(t.id.as_str().into()),
+                            now,
+                        );
+                    })?;
+                    apply(&rt, &mut c, &self.shared, fx).await;
+                }
+                if let Some(text) = p.text.filter(|x| !x.trim().is_empty()) {
+                    let fx = c.core.send_chat(&text, Some(t.id.clone()), None, now)?;
+                    apply(&rt, &mut c, &self.shared, fx).await;
+                }
+                ok(json!({ "id": t.id }))
+            }
+            "thread.list" => {
+                let p: RoomParam = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let mut c = rt.ctx.lock().await;
+                let threads = polyph_core::docs::threads(c.core.doc(&DocName::Threads));
+                let chat = c.core.chat();
+                let out: Vec<Value> = threads
+                    .iter()
+                    .map(|t| {
+                        let posts: Vec<_> =
+                            chat.iter().filter(|m| m.thread.as_deref() == Some(t.id.as_str())).collect();
+                        json!({ "thread": t, "posts": posts.len(), "last_at": posts.last().map(|m| m.at) })
+                    })
+                    .collect();
+                ok(out)
+            }
+            "thread.get" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    thread: String,
+                }
+                let p: P = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let mut c = rt.ctx.lock().await;
+                let want = p.thread.to_lowercase();
+                let t = polyph_core::docs::threads(c.core.doc(&DocName::Threads))
+                    .into_iter()
+                    .find(|t| t.id.starts_with(&want))
+                    .ok_or_else(|| ApiError::NotFound("no such thread".into()))?;
+                let names = member_names(&c.core);
+                let posts: Vec<Value> = c
+                    .core
+                    .chat()
+                    .into_iter()
+                    .filter(|m| m.thread.as_deref() == Some(t.id.as_str()))
+                    .map(|m| {
+                        let name = names.get(&m.author).cloned().unwrap_or_default();
+                        json!({ "id": m.id, "author": m.author, "name": name, "agent": m.agent, "text": m.text, "at": m.at })
+                    })
+                    .collect();
+                ok(json!({ "thread": t, "posts": posts }))
+            }
+            "whiteboard.create" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    name: String,
+                }
+                let p: P = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let mut c = rt.ctx.lock().await;
+                let info = crate::boards::create(&mut c, &p.name, now)?;
+                let fx = crate::boards::create_effects(&mut c, &info)?;
+                apply(&rt, &mut c, &self.shared, fx).await;
+                ok(info)
+            }
+            "whiteboard.list" => {
+                let p: RoomParam = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let mut c = rt.ctx.lock().await;
+                ok(c.core.whiteboards())
+            }
+            "whiteboard.get" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    board: String,
+                }
+                let p: P = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let mut c = rt.ctx.lock().await;
+                let info = crate::boards::find(&mut c, &p.board)?;
+                let els = polyph_core::whiteboard::elements(c.core.doc(&DocName::Whiteboard(info.id.clone())));
+                let text = polyph_core::whiteboard::describe(&info.name, &els);
+                ok(json!({ "board": info, "elements": els, "text": text }))
+            }
+            "whiteboard.put" | "whiteboard.remove" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    board: String,
+                    #[serde(default)]
+                    elements: Vec<Value>,
+                    #[serde(default)]
+                    ids: Vec<String>,
+                }
+                let p: P = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let mut c = rt.ctx.lock().await;
+                let info = crate::boards::find(&mut c, &p.board)?;
+                let mut n = 0;
+                let fx = c.core.change_doc(DocName::Whiteboard(info.id.clone()), |d| {
+                    n = if method == "whiteboard.put" {
+                        polyph_core::whiteboard::put(d, &p.elements).len()
+                    } else {
+                        polyph_core::whiteboard::remove(d, &p.ids)
+                    };
+                })?;
+                apply(&rt, &mut c, &self.shared, fx).await;
+                ok(json!({ "changed": n }))
+            }
+            "activity.list" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    since: Option<i64>,
+                    #[serde(default)]
+                    kinds: Vec<String>,
+                    limit: Option<usize>,
+                }
+                let p: P = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let mut c = rt.ctx.lock().await;
+                let mut v: Vec<polyph_proto::crdt::ActivityEntry> =
+                    polyph_proto::crdt::Activity::new(c.core.doc(&DocName::Activity))
+                        .entries()
+                        .into_iter()
+                        .filter(|e| p.since.is_none_or(|s| e.at >= s))
+                        .filter(|e| p.kinds.is_empty() || p.kinds.contains(&e.kind))
+                        .map(|mut e| {
+                            // Checkpoints are for replay, not for reading.
+                            e.checkpoint = e.checkpoint.map(|_| String::new());
+                            e
+                        })
+                        .collect();
+                if let Some(l) = p.limit {
+                    let skip = v.len().saturating_sub(l);
+                    v.drain(..skip);
+                }
+                ok(v)
+            }
+            "activity.replay" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    at: i64,
+                }
+                let p: P = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let mut c = rt.ctx.lock().await;
+                let entries = polyph_proto::crdt::Activity::new(c.core.doc(&DocName::Activity)).entries();
+                ok(polyph_core::activity::replay(&entries, p.at))
+            }
             "claims.list" => {
                 let p: RoomParam = param(&params)?;
                 let rt = self.find(&p.room).await?;
@@ -1018,8 +1294,22 @@ impl Daemon {
                 } else {
                     Decision::Deny { note: p.note }
                 };
+                let what =
+                    c.core.approvals.get(&id).map(|a| (a.agent.label.clone(), crate::export::approval_title(&a.kind)));
+                let approved = matches!(decision, Decision::Approve { .. });
                 let fx = c.core.answer_approval(id, decision, now)?;
                 apply(&rt, &mut c, &self.shared, fx).await;
+                if let Some((agent, title)) = what {
+                    crate::feed::log_locked(
+                        &rt,
+                        &mut c,
+                        &self.shared,
+                        "approval",
+                        Some(&agent),
+                        json!({ "id": id.to_hex(), "approved": approved, "title": title }),
+                    )
+                    .await;
+                }
                 ok(json!({}))
             }
             "status" => ok(self.status().await),

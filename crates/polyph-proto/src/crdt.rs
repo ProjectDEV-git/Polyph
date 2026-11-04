@@ -367,7 +367,8 @@ pub struct ActivityEntry {
     /// Structured, translatable summary key plus arguments as JSON.
     pub summary_key: String,
     pub args: serde_json::Value,
-    /// Optional full board-state checkpoint for replay (encoded update, base64).
+    /// Every so many card events: all cards as a JSON array of `CardView`,
+    /// where board replay starts (see `polyph_core::activity`).
     pub checkpoint: Option<String>,
 }
 
@@ -399,7 +400,8 @@ impl<'a> Activity<'a> {
                 _ => None,
             })
             .collect();
-        v.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.id.cmp(&b.id)));
+        // Stable: equal times keep the document's order, which every peer shares.
+        v.sort_by_key(|e| e.at);
         v
     }
 }

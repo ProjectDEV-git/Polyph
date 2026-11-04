@@ -297,6 +297,10 @@ pub struct RoomCore {
     online_seen: BTreeSet<DeviceId>,
     /// Next epoch, installed by `commit_rotation` once the announcement is sealed.
     pending_rotation: Option<EpochKey>,
+    /// Latest time seen (ticks, messages), for activity entries.
+    pub last_now: i64,
+    /// The embedder's clock, when it has one (the daemon's).
+    pub clock: Option<Arc<dyn Fn() -> i64 + Send + Sync>>,
 }
 
 impl std::fmt::Debug for RoomCore {
@@ -411,6 +415,8 @@ impl RoomCore {
             last_sync_reply: 0,
             online_seen: BTreeSet::new(),
             pending_rotation: None,
+            last_now: now,
+            clock: None,
         })
     }
 
@@ -496,6 +502,7 @@ impl RoomCore {
 
     /// Opens and processes one envelope from the relay.
     pub fn receive(&mut self, bytes: &[u8], now: i64) -> Vec<Effect> {
+        self.last_now = self.last_now.max(now);
         let env = match Envelope::decode(bytes) {
             Ok(e) => e,
             Err(_) => return vec![],
@@ -570,7 +577,11 @@ impl RoomCore {
             }
             RoomMessage::Crdt { doc, update } if writer => {
                 if apply_update(self.doc(&doc), &update).is_ok() {
+                    let settings = doc == DocName::Settings;
                     out.push(Effect::Event(RoomEvent::DocChanged { doc }));
+                    if settings {
+                        out.extend(self.fetch_new_whiteboards());
+                    }
                 }
             }
             RoomMessage::CrdtSyncRequest { doc, state_vector } => {
@@ -941,17 +952,66 @@ impl RoomCore {
 
     /// Applies a local change to a document and returns the update to broadcast.
     pub fn change_doc(&mut self, name: DocName, f: impl FnOnce(&Doc)) -> Result<Vec<Effect>> {
+        self.change_doc_as(name, None, f)
+    }
+
+    /// Like [`RoomCore::change_doc`], crediting board changes in the activity
+    /// feed to `agent` (a label) as well as this member.
+    pub fn change_doc_as(&mut self, name: DocName, agent: Option<&str>, f: impl FnOnce(&Doc)) -> Result<Vec<Effect>> {
         if !self.role().can_write() {
             return Err(RoomError::Forbidden);
         }
         let doc = self.doc(&name);
+        let board_before = (name == DocName::Board).then(|| crate::activity::cards(doc));
         let before = state_vector(doc);
         f(doc);
         let update = diff_since(doc, &before)?;
-        Ok(vec![
+        let mut out = vec![
             Effect::Send(RoomMessage::Crdt { doc: name.clone(), update }),
             Effect::Event(RoomEvent::DocChanged { doc: name }),
-        ])
+        ];
+        // Every local board change is logged by its author.
+        if let Some(before) = board_before {
+            let after = crate::activity::cards(self.doc(&DocName::Board));
+            let changes = crate::activity::diff(&before, &after);
+            if !changes.is_empty() {
+                let actor = self.my_member.to_hex();
+                let now = self.clock.as_ref().map(|c| c()).unwrap_or(self.last_now).max(self.last_now);
+                let act = self.doc(&DocName::Activity);
+                let sv = state_vector(act);
+                let mut ids = || ObjectId::random().map(|o| o.to_hex()).unwrap_or_default();
+                crate::activity::record_board_change(act, &after, changes, &actor, agent, now, &mut ids);
+                let update = diff_since(act, &sv)?;
+                out.push(Effect::Send(RoomMessage::Crdt { doc: DocName::Activity, update }));
+                out.push(Effect::Event(RoomEvent::DocChanged { doc: DocName::Activity }));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Whiteboards listed in the Settings index.
+    pub fn whiteboards(&mut self) -> Vec<crate::whiteboard::WhiteboardInfo> {
+        docs::settings_with_prefix(self.doc(&DocName::Settings), crate::whiteboard::INDEX_PREFIX)
+            .into_iter()
+            .filter_map(|(_, v)| serde_json::from_value(v).ok())
+            .collect()
+    }
+
+    /// Asks peers for whiteboards that are listed but not here yet.
+    fn fetch_new_whiteboards(&mut self) -> Vec<Effect> {
+        let missing: Vec<DocName> = self
+            .whiteboards()
+            .into_iter()
+            .map(|w| DocName::Whiteboard(w.id))
+            .filter(|d| !self.docs.contains_key(d))
+            .collect();
+        missing
+            .into_iter()
+            .map(|d| {
+                let sv = state_vector(self.doc(&d));
+                Effect::Send(RoomMessage::CrdtSyncRequest { doc: d, state_vector: sv })
+            })
+            .collect()
     }
 
     pub fn send_chat(
@@ -1075,6 +1135,7 @@ impl RoomCore {
 
     /// Periodic work: heartbeat, election, claim table, lease expiry.
     pub fn tick(&mut self, now: i64) -> Vec<Effect> {
+        self.last_now = self.last_now.max(now);
         let mut out = vec![Effect::Send(RoomMessage::Presence(Presence {
             surface: self.surface,
             online: true,

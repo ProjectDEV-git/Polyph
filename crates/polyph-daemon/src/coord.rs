@@ -312,6 +312,22 @@ pub async fn call_tool(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, tool:
         tools::CREATE_TASK => create_task(h, rt, shared, args).await,
         tools::MOVE_TASK => move_task(h, rt, shared, args).await,
         tools::FINISH => finish_task(h, shared, args).await,
+        tools::WHITEBOARDS => {
+            let mut ctx = rt.ctx.lock().await;
+            let all = ctx.core.whiteboards();
+            let text = if all.is_empty() {
+                "No whiteboards yet.".to_string()
+            } else {
+                let mut t = String::from("Whiteboards:");
+                for w in &all {
+                    t.push_str(&format!("\n- [{}] {}", &w.id[..8.min(w.id.len())], w.name));
+                }
+                t
+            };
+            Ok(ToolOutput::ok(text, json!({ "whiteboards": all })))
+        }
+        tools::READ_WB => read_whiteboard(rt, args).await,
+        tools::DRAW => draw_diagram(h, rt, shared, args).await,
         _ => Err(ToolOutput::err(format!("unknown tool {tool}"))),
     };
     r.unwrap_or_else(|e| e)
@@ -859,7 +875,7 @@ async fn create_task(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, args: &
     let mut ctx = rt.ctx.lock().await;
     let fx = ctx
         .core
-        .change_doc(DocName::Board, |d| {
+        .change_doc_as(DocName::Board, Some(&h.agent.label), |d| {
             let _ = polyph_proto::crdt::Board::new(d).add_card(&card);
         })
         .map_err(|e| ToolOutput::err(e.to_string()))?;
@@ -895,7 +911,7 @@ async fn move_task(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, args: &Va
     }
     let fx = ctx
         .core
-        .change_doc(DocName::Board, |d| {
+        .change_doc_as(DocName::Board, Some(&h.agent.label), |d| {
             let b = polyph_proto::crdt::Board::new(d);
             let last = b.cards_in(&a.column).last().map(|x| x.id.clone());
             let _ = b.move_card(&c.id, &a.column, last.as_deref(), now);
@@ -938,4 +954,103 @@ pub struct FinishJob {
     pub agent: ObjectId,
     pub message: Option<String>,
     pub reply: oneshot::Sender<Result<Value, crate::daemon::ApiError>>,
+}
+
+async fn read_whiteboard(rt: &RoomRuntime, args: &Value) -> ToolResult {
+    #[derive(Deserialize)]
+    struct A {
+        board: String,
+    }
+    let a: A = arg(args)?;
+    let mut ctx = rt.ctx.lock().await;
+    let info = crate::boards::find(&mut ctx, &a.board).map_err(|e| ToolOutput::err(e.to_string()))?;
+    let els = polyph_core::whiteboard::elements(ctx.core.doc(&DocName::Whiteboard(info.id.clone())));
+    Ok(ToolOutput::ok(
+        polyph_core::whiteboard::describe(&info.name, &els),
+        json!({ "id": info.id, "elements": els.len() }),
+    ))
+}
+
+async fn draw_diagram(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {
+    #[derive(Deserialize)]
+    struct Node {
+        id: String,
+        label: String,
+    }
+    #[derive(Deserialize)]
+    struct Edge {
+        from: String,
+        to: String,
+        #[serde(default)]
+        label: String,
+    }
+    #[derive(Deserialize)]
+    struct A {
+        board: String,
+        diagram: String,
+        nodes: Vec<Node>,
+        #[serde(default)]
+        edges: Vec<Edge>,
+    }
+    let a: A = arg(args)?;
+    if a.nodes.is_empty() || a.nodes.len() > 60 || a.edges.len() > 120 {
+        return Err(ToolOutput::err("give 1 to 60 nodes and at most 120 edges"));
+    }
+    let slug: String = a.diagram.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(40).collect();
+    if slug.is_empty() {
+        return Err(ToolOutput::err("the diagram id needs letters or digits"));
+    }
+    let red = |s: &str| polyph_core::redact::redact(s).into_owned();
+    let nodes: Vec<(String, String)> = a.nodes.iter().map(|n| (n.id.clone(), red(&n.label))).collect();
+    let edges: Vec<(String, String, String)> =
+        a.edges.iter().map(|e| (e.from.clone(), e.to.clone(), red(&e.label))).collect();
+    let now = shared.clock.now();
+    let mut ctx = rt.ctx.lock().await;
+    let (info, created) = match crate::boards::find(&mut ctx, &a.board) {
+        Ok(i) => (i, false),
+        Err(_) => {
+            let info = crate::boards::create(&mut ctx, &a.board, now).map_err(|e| ToolOutput::err(e.to_string()))?;
+            let fx = crate::boards::create_effects(&mut ctx, &info).map_err(|e| ToolOutput::err(e.to_string()))?;
+            apply(rt, &mut ctx, shared, fx).await;
+            (info, true)
+        }
+    };
+    let doc = DocName::Whiteboard(info.id.clone());
+    let prefix = format!("{slug}-{}", h.agent.id.short());
+    // Place a new diagram below what is there; a redraw keeps its place.
+    let existing = polyph_core::whiteboard::elements(ctx.core.doc(&doc));
+    let old: Vec<String> = existing
+        .iter()
+        .filter_map(|e| e.get("id").and_then(|i| i.as_str()))
+        .filter(|i| i.starts_with(&format!("{prefix}-")))
+        .map(str::to_string)
+        .collect();
+    let origin = match existing
+        .iter()
+        .find(|e| e.get("id").and_then(|i| i.as_str()) == Some(&format!("{prefix}-{}", nodes[0].0)))
+    {
+        Some(e) => (e["x"].as_f64().unwrap_or(0.0), e["y"].as_f64().unwrap_or(0.0)),
+        None => {
+            let bottom = existing
+                .iter()
+                .map(|e| e["y"].as_f64().unwrap_or(0.0) + e["height"].as_f64().unwrap_or(0.0))
+                .fold(f64::NEG_INFINITY, f64::max);
+            (0.0, if bottom.is_finite() { bottom + 120.0 } else { 0.0 })
+        }
+    };
+    let els = polyph_core::whiteboard::diagram(&prefix, &nodes, &edges, origin, now as u64);
+    let fx = ctx
+        .core
+        .change_doc(doc, |d| {
+            polyph_core::whiteboard::remove(d, &old);
+            polyph_core::whiteboard::put(d, &els);
+        })
+        .map_err(|e| ToolOutput::err(e.to_string()))?;
+    apply(rt, &mut ctx, shared, fx).await;
+    let verb = if old.is_empty() { "Drew" } else { "Redrew" };
+    let board = if created { format!("a new whiteboard \"{}\"", info.name) } else { format!("\"{}\"", info.name) };
+    Ok(ToolOutput::ok(
+        format!("{verb} {} boxes and {} arrows on {board}.", nodes.len(), edges.len()),
+        json!({ "board": info.id, "elements": els.len() }),
+    ))
 }

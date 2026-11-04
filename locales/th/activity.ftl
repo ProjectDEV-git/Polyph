@@ -1,0 +1,15 @@
+# รายการในฟีดกิจกรรม ชื่อและสีของผู้ทำจะแสดงข้างแต่ละบรรทัด
+activity-card-created = สร้าง { $title } ใน { $column }
+activity-card-moved = ย้าย { $title } จาก { $from } ไป { $to }
+activity-card-updated = แก้ไข { $title }
+activity-card-removed = ลบ { $title }
+activity-merged = รวม { $branch } เข้า { $into }
+activity-merge-failed = รวม { $branch } เข้า { $into } ไม่สำเร็จ
+activity-changes-requested = ผู้รีวิวขอให้แก้ไข { $branch }
+activity-agent-started = เริ่มเอเจนต์ { $kind }
+activity-agent-stopped = หยุดเอเจนต์
+activity-approval = { $approved ->
+    [true] อนุมัติ { $title }
+   *[other] ปฏิเสธ { $title }
+}
+activity-overlap = { $agent } แก้ไข { $path } ซึ่ง { $holder } จองไว้

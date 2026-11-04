@@ -4,12 +4,14 @@
 
 pub mod agents;
 pub mod api;
+pub mod boards;
 pub mod clock;
 pub mod config;
 pub mod coord;
 pub mod daemon;
 pub mod events;
 pub mod export;
+pub mod feed;
 pub mod lan;
 pub mod mirror;
 pub mod paths;

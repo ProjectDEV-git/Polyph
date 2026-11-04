@@ -28,6 +28,9 @@ pub const TASKS: &str = "list_tasks";
 pub const CREATE_TASK: &str = "create_task";
 pub const MOVE_TASK: &str = "move_task";
 pub const FINISH: &str = "finish_task";
+pub const WHITEBOARDS: &str = "list_whiteboards";
+pub const READ_WB: &str = "read_whiteboard";
+pub const DRAW: &str = "draw_diagram";
 
 fn no_args() -> Value {
     json!({ "type": "object", "properties": {}, "additionalProperties": false })
@@ -208,6 +211,47 @@ queues the branch for review and merging. Call it once, at the end, with a one-l
                 "type": "object",
                 "properties": { "summary": { "type": "string" } },
                 "required": ["summary"],
+                "additionalProperties": false
+            })
+        },
+    },
+    ToolDef { name: WHITEBOARDS, description: "List the room's whiteboards (id and name).", schema: no_args },
+    ToolDef {
+        name: READ_WB,
+        description: "Read a whiteboard as text: every shape with its label and position, and which labelled \
+shapes the arrows connect. Use it to follow designs people sketched.",
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": { "board": { "type": "string", "description": "Whiteboard id or name." } },
+                "required": ["board"],
+                "additionalProperties": false
+            })
+        },
+    },
+    ToolDef {
+        name: DRAW,
+        description: "Draw a diagram of labelled boxes and arrows on a whiteboard, for people to read: an \
+architecture, a data flow, a plan. Polyph lays it out. Drawing again with the same `diagram` id replaces that \
+diagram. If no whiteboard has the given name, one is created.",
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "board": { "type": "string", "description": "Whiteboard id or name." },
+                    "diagram": { "type": "string", "description": "A short id for this diagram, e.g. \"auth-flow\"." },
+                    "nodes": { "type": "array", "maxItems": 60, "items": {
+                        "type": "object",
+                        "properties": { "id": { "type": "string" }, "label": { "type": "string" } },
+                        "required": ["id", "label"]
+                    } },
+                    "edges": { "type": "array", "maxItems": 120, "items": {
+                        "type": "object",
+                        "properties": { "from": { "type": "string" }, "to": { "type": "string" }, "label": { "type": "string" } },
+                        "required": ["from", "to"]
+                    } }
+                },
+                "required": ["board", "diagram", "nodes"],
                 "additionalProperties": false
             })
         },
