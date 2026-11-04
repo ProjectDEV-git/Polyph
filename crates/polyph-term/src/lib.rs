@@ -128,8 +128,11 @@ impl Scrollback {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+    #[cfg(unix)]
     use std::time::Duration;
 
+    // Only the Unix tests below use a real shell.
+    #[cfg(unix)]
     async fn read_until(rx: &mut mpsc::UnboundedReceiver<Vec<u8>>, want: &str) -> String {
         let mut got = String::new();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);

@@ -28,7 +28,7 @@ agents doctor` shows the mechanism in use.
 |---|---|---|---|
 | Linux (preferred) | bubblewrap: read-only root bind, writable binds for the paths above, tmpfs over hidden paths and `/tmp`, new PID, session and network namespaces | enforced | the agent's network namespace has only loopback; a helper inside it listens on `127.0.0.1:3128` and forwards to the proxy's Unix socket |
 | Linux (no bubblewrap) | Landlock, applied by a helper that then runs the agent | writes limited to the paths above; hidden paths are **not** hidden (Landlock can only allow) | TCP connects allowed only to the proxy's port (kernel 6.7+, Landlock ABI 4) |
-| macOS | Seatbelt profile run with `sandbox-exec` | writes limited; hidden paths denied for reading | outbound only to the proxy's port on localhost |
+| macOS | Seatbelt profile run with `sandbox-exec` | writes only to the worktree, writable paths and the agent's own TMPDIR (not the shared `/private/tmp` or `/private/var/folders`); hidden paths denied for reading | outbound only to the proxy's port on localhost |
 | Windows | job object (the agent and its children die with the daemon) | **not isolated** | proxy variables only; a program that ignores them is not stopped |
 | Any (opt-in) | rootless Podman or Docker, `[sandbox] mode = "container"` with an image | only the worktree is mounted | `--network none` plus the proxy helper |
 

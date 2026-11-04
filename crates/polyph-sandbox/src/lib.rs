@@ -273,9 +273,17 @@ fn sb_quote(p: &Path) -> String {
 /// the worktree, writable paths and temp; network only to the proxy.
 pub fn seatbelt_profile(policy: &Policy, proxy_port: u16) -> String {
     let mut s = String::from("(version 1)\n(allow default)\n(deny file-write*)\n");
-    s.push_str("(allow file-write* (literal \"/dev/null\") (literal \"/dev/tty\") (regex #\"^/dev/fd/\") (subpath \"/private/tmp\") (subpath \"/private/var/folders\"))\n");
+    // Device files only; shared temp folders (/private/tmp, /private/var/folders)
+    // stay read-only: the agent gets its own TMPDIR through the policy.
+    s.push_str("(allow file-write* (literal \"/dev/null\") (literal \"/dev/tty\") (regex #\"^/dev/fd/\"))\n");
     for w in policy.writable_all() {
         s.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", sb_quote(&w)));
+        // Seatbelt matches resolved paths (/var is /private/var on macOS).
+        if let Ok(real) = w.canonicalize()
+            && real != w
+        {
+            s.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", sb_quote(&real)));
+        }
     }
     for h in &policy.hidden {
         s.push_str(&format!("(deny file-read* (subpath \"{}\"))\n", sb_quote(h)));
@@ -383,4 +391,37 @@ pub fn contain_child(child: &tokio::process::Child) -> Option<win32job::Job> {
     let h = child.raw_handle()?;
     job.assign_process(h as isize).ok()?;
     Some(job)
+}
+
+#[cfg(test)]
+mod seatbelt_tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    #[test]
+    fn seatbelt_profile_allows_only_the_policys_folders() {
+        let t = tempfile::tempdir().unwrap();
+        let worktree = t.path().join("worktree");
+        let tmp = t.path().join("tmp");
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::create_dir_all(&tmp).unwrap();
+        let policy = Policy {
+            worktree: worktree.clone(),
+            writable: vec![],
+            tmp: Some(tmp.clone()),
+            hidden: vec![],
+            proxy_tcp: None,
+            proxy_unix: None,
+            helper: vec![],
+            container_image: None,
+        };
+        let p = seatbelt_profile(&policy, 0);
+        assert!(!p.contains("/private/var/folders\""), "shared temp must not be writable:\n{p}");
+        assert!(!p.contains("/private/tmp\""), "shared temp must not be writable:\n{p}");
+        for dir in [&worktree, &tmp] {
+            assert!(p.contains(&format!("(subpath \"{}\")", dir.display())), "{p}");
+            let real = dir.canonicalize().unwrap();
+            assert!(p.contains(&format!("(subpath \"{}\")", real.display())), "{p}");
+        }
+    }
 }

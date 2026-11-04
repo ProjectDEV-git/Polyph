@@ -50,9 +50,10 @@ accepted but hosted mode is M4.
 - **seccomp.** The Landlock fallback restricts files and TCP connects but adds
   no seccomp filter (for example against raw sockets or UDP). bubblewrap mode
   isolates the network with a namespace instead.
-- **Sandbox mechanisms tested only on Linux.** Seatbelt and Windows code is
-  type-checked for those targets but has not run; CI on macOS and Windows will
-  exercise `available_mechanisms_block_escapes`.
+- **Sandbox mechanisms on macOS and Windows** run only in CI. macOS CI found
+  that the Seatbelt profile let agents write to the shared temp folders; that
+  was fixed in M11 (only the agent's own TMPDIR is writable) and is covered
+  by a unit test, but has not been re-run on a Mac outside CI.
 - **Container mode** generates the podman/docker command but has no test (needs
   an image with the agent installed).
 - **Codex native app-server protocol** is not implemented; Codex runs through
