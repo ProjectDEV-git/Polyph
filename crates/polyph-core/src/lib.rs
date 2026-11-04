@@ -8,6 +8,7 @@ pub mod election;
 pub mod memory;
 pub mod redact;
 pub mod room;
+pub mod views;
 pub mod voice;
 pub mod whiteboard;
 

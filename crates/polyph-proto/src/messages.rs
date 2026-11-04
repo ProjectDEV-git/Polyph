@@ -372,6 +372,10 @@ pub struct Knock {
     pub name_salt: Vec<u8>,
     #[serde(default)]
     pub surface: Option<String>,
+    /// Another device of an existing member, joining through a link code that
+    /// member's own device created (`room.link`).
+    #[serde(default)]
+    pub link: bool,
 }
 
 /// One file of a hosted working copy. `hash` is BLAKE3 of the content.

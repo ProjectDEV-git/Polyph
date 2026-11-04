@@ -78,6 +78,12 @@ enum Cmd {
         /// Look for the room on the local network.
         #[arg(long)]
         lan: bool,
+        /// Link this device to a person already in the room (from `polyph link`).
+        #[arg(long)]
+        member: Option<String>,
+    },
+    Link {
+        room: Option<String>,
     },
     Discover,
     Leave {
@@ -619,18 +625,22 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                 print_invite(ctx, &inv);
             }
         }
-        Cmd::Join { code, name, relay, lan } => {
+        Cmd::Join { code, name, relay, lan, member } => {
             if !ctx.json {
                 ctx.out(l.t("join-connecting"));
             }
             let mut waiting_shown = false;
             let r = api
-                .call_with_events("join", json!({ "code": code, "name": name, "relay": relay, "lan": lan }), |ev| {
-                    if ev["params"]["event"]["type"] == "join_pending" && !waiting_shown && !ctx.json {
-                        waiting_shown = true;
-                        println!("{}", l.t("join-waiting"));
-                    }
-                })
+                .call_with_events(
+                    "join",
+                    json!({ "code": code, "name": name, "relay": relay, "lan": lan, "member": member }),
+                    |ev| {
+                        if ev["params"]["event"]["type"] == "join_pending" && !waiting_shown && !ctx.json {
+                            waiting_shown = true;
+                            println!("{}", l.t("join-waiting"));
+                        }
+                    },
+                )
                 .await
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
             if ctx.json {
@@ -675,6 +685,19 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                     ));
                 }
                 ctx.out(l.t("discover-hint"));
+            }
+        }
+        Cmd::Link { room } => {
+            let room = ctx.room(&mut api, room).await?;
+            let v = call(&mut api, "room.link", json!({ "room": room })).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else {
+                let code = v["code"].as_str().unwrap_or_default();
+                let member = v["member"].as_str().unwrap_or_default();
+                ctx.out(tr!(l, "link-code", code = code));
+                ctx.out(tr!(l, "link-cli", code = code, member = member));
+                ctx.out(l.t("link-expires"));
             }
         }
         Cmd::Leave { room } => {

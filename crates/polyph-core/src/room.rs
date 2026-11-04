@@ -820,6 +820,19 @@ impl RoomCore {
             return Err(RoomError::Forbidden);
         }
         let k = self.knocks.get(&knock).cloned().ok_or(RoomError::NotFound("knock"))?;
+        // A joiner names its own member id. Taking an existing member's id
+        // would let a stranger act as that person (answer their agents'
+        // approvals), so it is allowed only for that member's own new device:
+        // a link knock posted by one of that member's devices.
+        let mut role = role;
+        if let Some(existing) = self.member_role(k.member) {
+            let via_member =
+                if k.via == self.me { Some(self.my_member) } else { self.peers.get(&k.via).and_then(Peer::member) };
+            if !(k.link && via_member == Some(k.member)) {
+                return Err(RoomError::Invalid("that member is already in the room"));
+            }
+            role = existing.min(self.role());
+        }
         let kx: [u8; 32] = k.kx.as_slice().try_into().map_err(|_| RoomError::Invalid("knock has no key"))?;
         let salt: [u8; 16] =
             k.name_salt.as_slice().try_into().map_err(|_| RoomError::Invalid("knock has no name salt"))?;
@@ -847,6 +860,14 @@ impl RoomCore {
         }
         out.extend(self.on_member_added(chain, now));
         Ok(out)
+    }
+
+    /// The role of a member already in the room (any of their devices).
+    pub fn member_role(&self, member: MemberId) -> Option<Role> {
+        if member == self.my_member {
+            return Some(self.role());
+        }
+        self.peers.values().filter(|p| p.member() == Some(member)).map(Peer::role).max()
     }
 
     pub fn deny_knock(&mut self, knock: ObjectId) -> Result<Vec<Effect>> {

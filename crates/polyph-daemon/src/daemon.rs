@@ -212,16 +212,7 @@ pub struct RoomInfo {
     pub lan: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct MemberInfo {
-    pub member: String,
-    pub name: String,
-    pub role: Role,
-    pub online: bool,
-    pub hue: u16,
-    pub devices: usize,
-    pub me: bool,
-}
+pub use polyph_core::views::MemberInfo;
 
 pub struct Daemon {
     pub shared: Arc<Shared>,
@@ -405,24 +396,8 @@ impl Daemon {
             relay: ctx.relay.url.clone(),
             connected: ctx.connected,
             open,
-            members_online: ctx
-                .core
-                .peers
-                .values()
-                .filter(|p| p.online(now))
-                .filter_map(|p| p.member())
-                .collect::<std::collections::HashSet<_>>()
-                .len()
-                + 1,
-            members: ctx
-                .core
-                .peers
-                .values()
-                .filter_map(|p| p.member())
-                .filter(|m| *m != ctx.core.my_member)
-                .collect::<std::collections::HashSet<_>>()
-                .len()
-                + 1,
+            members_online: polyph_core::views::members_online(&ctx.core, now),
+            members: polyph_core::views::member_count(&ctx.core),
             epoch: ctx.core.epoch(),
             lan: ctx.lan.as_ref().map(|l| l.addr.to_string_with_pin()),
         }
@@ -668,7 +643,7 @@ impl Daemon {
                         if !c.core.role().can_write() {
                             return Err(ApiError::Forbidden("viewers cannot invite people".into()));
                         }
-                        let (code, waiter) = host_code(&mut c, kind.clone(), now + ttl).await?;
+                        let (code, waiter) = host_code(&mut c, kind.clone(), now + ttl, None).await?;
                         (code, waiter, c.lan.as_ref().map(|l| l.addr.to_string_with_pin()))
                     };
                     // Wait (without holding the room lock) until the relay hosts it,
@@ -694,6 +669,36 @@ impl Daemon {
                 }
                 Err(ApiError::Failed("could not find a free code; try again".into()))
             }
+            "room.link" => {
+                // A one-time code that links another device of this person
+                // (a phone, a second laptop) to their member in this room.
+                let p: RoomParam = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let ttl = 10 * 60;
+                // A freshly opened or joined room may still be connecting.
+                for _ in 0..200 {
+                    if rt.ctx.lock().await.connected {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                let (code, waiter, member, relay) = {
+                    let mut c = rt.ctx.lock().await;
+                    let member = c.core.my_member;
+                    let (code, waiter) = host_code(&mut c, CodeKind::OneTime, now + ttl, Some(member)).await?;
+                    (code, waiter, member, c.relay.url.clone())
+                };
+                if let Some(rx) = waiter
+                    && tokio::time::timeout(Duration::from_secs(10), rx).await.ok().and_then(|r| r.ok()) != Some(true)
+                {
+                    return Err(ApiError::Failed(
+                        "the relay did not confirm the code; check the connection and try again".into(),
+                    ));
+                }
+                ok(
+                    json!({ "code": code.to_string(), "member": member.to_hex(), "relay": relay, "expires_at": now + ttl }),
+                )
+            }
             "room.revoke_code" => {
                 #[derive(Deserialize)]
                 struct P {
@@ -714,42 +719,7 @@ impl Daemon {
                 let p: RoomParam = param(&params)?;
                 let rt = self.find(&p.room).await?;
                 let c = rt.ctx.lock().await;
-                let mut by: HashMap<MemberId, MemberInfo> = HashMap::new();
-                by.insert(
-                    c.core.my_member,
-                    MemberInfo {
-                        member: c.core.my_member.to_hex(),
-                        name: c.core.my_profile.display_name.clone(),
-                        role: c.core.role(),
-                        online: true,
-                        hue: c.core.my_profile.hue,
-                        devices: 1,
-                        me: true,
-                    },
-                );
-                for p in c.core.peers.values() {
-                    let Some(m) = p.member() else { continue };
-                    let e = by.entry(m).or_insert(MemberInfo {
-                        member: m.to_hex(),
-                        name: p.name(),
-                        role: p.role(),
-                        online: false,
-                        hue: p.profile.as_ref().map(|x| x.hue).unwrap_or(u16::MAX),
-                        devices: 0,
-                        me: false,
-                    });
-                    if !e.me {
-                        e.devices += 1;
-                    }
-                    e.online |= p.online(now);
-                    if e.name.is_empty() {
-                        e.name = p.name();
-                    }
-                    e.role = e.role.max(p.role());
-                }
-                let mut v: Vec<MemberInfo> = by.into_values().collect();
-                v.sort_by(|a, b| b.role.cmp(&a.role).then(a.name.cmp(&b.name)));
-                ok(v)
+                ok(polyph_core::views::members(&c.core, now))
             }
             "room.set_role" | "room.remove" => {
                 #[derive(Deserialize)]
@@ -854,26 +824,13 @@ impl Daemon {
                 let p: P = param(&params)?;
                 let rt = self.find(&p.room).await?;
                 let mut c = rt.ctx.lock().await;
-                let mut v = c.core.chat();
-                let names = member_names(&c.core);
-                if let Some(l) = p.limit {
-                    let skip = v.len().saturating_sub(l);
-                    v.drain(..skip);
-                }
-                let out: Vec<Value> = v.into_iter().map(|e| json!({ "id": e.id, "author": e.author, "name": names.get(&e.author).cloned().unwrap_or_default(), "agent": e.agent, "thread": e.thread, "text": e.text, "at": e.at })).collect();
-                ok(out)
+                ok(polyph_core::views::chat(&mut c.core, p.limit))
             }
             "board.get" => {
                 let p: RoomParam = param(&params)?;
                 let rt = self.find(&p.room).await?;
                 let mut c = rt.ctx.lock().await;
-                let doc = c.core.doc(&DocName::Board);
-                let b = Board::new(doc);
-                let cols = b.columns();
-                let cards = b.all_cards();
-                ok(
-                    json!({ "columns": cols.into_iter().map(|(id, title)| json!({"id": id, "title": title})).collect::<Vec<_>>(), "cards": cards }),
-                )
+                ok(polyph_core::views::board(&mut c.core))
             }
             "board.add" => {
                 #[derive(Deserialize)]
@@ -1058,17 +1015,7 @@ impl Daemon {
                 let p: RoomParam = param(&params)?;
                 let rt = self.find(&p.room).await?;
                 let mut c = rt.ctx.lock().await;
-                let threads = polyph_core::docs::threads(c.core.doc(&DocName::Threads));
-                let chat = c.core.chat();
-                let out: Vec<Value> = threads
-                    .iter()
-                    .map(|t| {
-                        let posts: Vec<_> =
-                            chat.iter().filter(|m| m.thread.as_deref() == Some(t.id.as_str())).collect();
-                        json!({ "thread": t, "posts": posts.len(), "last_at": posts.last().map(|m| m.at) })
-                    })
-                    .collect();
-                ok(out)
+                ok(polyph_core::views::threads(&mut c.core))
             }
             "thread.get" => {
                 #[derive(Deserialize)]
@@ -1299,23 +1246,7 @@ impl Daemon {
                 let p: P = param(&params)?;
                 let rt = self.find(&p.room).await?;
                 let mut c = rt.ctx.lock().await;
-                let mut v: Vec<polyph_proto::crdt::ActivityEntry> =
-                    polyph_proto::crdt::Activity::new(c.core.doc(&DocName::Activity))
-                        .entries()
-                        .into_iter()
-                        .filter(|e| p.since.is_none_or(|s| e.at >= s))
-                        .filter(|e| p.kinds.is_empty() || p.kinds.contains(&e.kind))
-                        .map(|mut e| {
-                            // Checkpoints are for replay, not for reading.
-                            e.checkpoint = e.checkpoint.map(|_| String::new());
-                            e
-                        })
-                        .collect();
-                if let Some(l) = p.limit {
-                    let skip = v.len().saturating_sub(l);
-                    v.drain(..skip);
-                }
-                ok(v)
+                ok(polyph_core::views::activity(&mut c.core, p.since, &p.kinds, p.limit))
             }
             "activity.replay" => {
                 #[derive(Deserialize)]
@@ -1727,6 +1658,13 @@ impl Daemon {
             cfg.name = p.name.clone();
             let _ = cfg.save(&self.shared.paths);
         }
+        // Linking this device to a person already in the room (`room.link` on theirs).
+        let link = match &p.member {
+            Some(h) => {
+                Some(MemberId::from_hex(h).map_err(|_| ApiError::BadRequest("member must be a member id".into()))?)
+            }
+            None => None,
+        };
         let mut candidates: Vec<(RelayAddr, bool)> = vec![];
         if let Some(r) = &p.relay {
             let a = RelayAddr::parse(r);
@@ -1745,7 +1683,7 @@ impl Daemon {
         let mut last =
             ApiError::NotFound("no room is waiting for this code; check it with the person who sent it".into());
         for (addr, lan) in candidates {
-            match self.join_via(&code, &name, &addr, lan, p.timeout_secs.unwrap_or(600)).await {
+            match self.join_via(&code, &name, &addr, lan, p.timeout_secs.unwrap_or(600), link).await {
                 Ok(v) => return Ok(v),
                 Err(e) => last = e,
             }
@@ -1760,6 +1698,7 @@ impl Daemon {
         addr: &RelayAddr,
         lan: bool,
         timeout_secs: u64,
+        link: Option<MemberId>,
     ) -> ApiResult {
         let seen = Arc::new(std::sync::Mutex::new(None));
         let mode = if lan && addr.pin.is_none() { TlsMode::Record(seen.clone()) } else { addr.tls() };
@@ -1810,11 +1749,14 @@ impl Daemon {
         let salt = ObjectId::random().map_err(|e| ApiError::Failed(e.to_string()))?.0;
         let req = JoinRequest {
             device: self.shared.identity.public(),
-            member: self.shared.member_id()?,
+            member: match &link {
+                Some(m) => *m,
+                None => self.shared.member_id()?,
+            },
             display_name: name.to_string(),
             name_salt: salt.to_vec(),
             surface: format!("{:?}", self.shared.opts.surface).to_lowercase(),
-            link_device: false,
+            link_device: link.is_some(),
         };
         let body = channel
             .seal(&to_cbor(&req).map_err(|e| ApiError::Failed(e.to_string()))?)
@@ -1873,6 +1815,8 @@ impl Daemon {
 struct JoinParams {
     code: String,
     name: Option<String>,
+    /// The member to link this device to (from `room.link` on their device).
+    member: Option<String>,
     relay: Option<String>,
     #[serde(default)]
     lan: bool,
@@ -1919,8 +1863,5 @@ fn resolve_member(core: &RoomCore, q: &str) -> Result<MemberId, ApiError> {
 }
 
 pub fn member_names(core: &RoomCore) -> HashMap<String, String> {
-    let mut m: HashMap<String, String> =
-        core.peers.values().filter_map(|p| p.member().map(|id| (id.to_hex(), p.name()))).collect();
-    m.insert(core.my_member.to_hex(), core.my_profile.display_name.clone());
-    m
+    polyph_core::views::member_names(core)
 }

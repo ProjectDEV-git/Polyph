@@ -71,6 +71,8 @@ pub struct HostedCode {
     pub kind: CodeKind,
     pub expires_at: i64,
     pub failures: u32,
+    /// A link code: only this member's new device may use it (`room.link`).
+    pub link_for: Option<MemberId>,
 }
 
 enum HostStage {
@@ -83,6 +85,8 @@ enum HostStage {
 struct HostJoin {
     rendezvous: RendezvousId,
     stage: Option<HostStage>,
+    /// Copied from the code at the start: the code is gone once the PAKE succeeds.
+    link_for: Option<MemberId>,
 }
 
 /// Resolves with (granted, denied) when the acting host answers a claim request.
@@ -550,7 +554,8 @@ async fn host_join_start(ctx: &mut RoomCtx, rendezvous: RendezvousId, session: u
     }
     let p = PakeStart::new(&code.code, PakeRole::Host, &ctx.binding);
     let msg = p.message().to_vec();
-    ctx.joins.insert(session, HostJoin { rendezvous, stage: Some(HostStage::AwaitPake(p)) });
+    let link_for = code.link_for;
+    ctx.joins.insert(session, HostJoin { rendezvous, stage: Some(HostStage::AwaitPake(p)), link_for });
     if let Some(s) = &ctx.sender {
         let _ = s.send(ClientFrame::Pake { session, data: msg }).await;
     }
@@ -594,6 +599,26 @@ async fn host_join_step(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, se
         Some(HostStage::AwaitRequest(mut ch)) => {
             let Ok(pt) = ch.open(&data) else { return };
             let Ok(req) = from_cbor::<JoinRequest>(&pt) else { return };
+            let link_for = j.link_for;
+            let link = req.link_device && link_for == Some(req.member);
+            // A link code only links its member's device; any other code only
+            // admits new members (an existing member's id would impersonate them).
+            let refuse = if link_for.is_some() && !link {
+                Some("this code links another device of the person who made it")
+            } else if !link && ctx.core.member_role(req.member).is_some() {
+                Some("that member is already in the room; link the device from one of theirs instead")
+            } else {
+                None
+            };
+            if let Some(reason) = refuse {
+                if let (Ok(body), Some(s)) = (to_cbor(&JoinReply::Denied { reason: reason.into() }), &ctx.sender)
+                    && let Ok(ct) = ch.seal(&body)
+                {
+                    let _ = s.send(ClientFrame::Pake { session, data: ct }).await;
+                    let _ = s.send(ClientFrame::PakeResult { session, ok: false }).await;
+                }
+                return;
+            }
             let knock = Knock {
                 id: ObjectId::random().unwrap_or(ObjectId([0; 16])),
                 display_name: req.display_name.chars().take(64).collect(),
@@ -605,9 +630,13 @@ async fn host_join_step(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, se
                 kx: req.device.kx.to_vec(),
                 name_salt: req.name_salt.clone(),
                 surface: Some(req.surface.clone()),
+                link,
             };
             let kid = knock.id;
-            let auto = !ctx.core.require_approval() && ctx.core.role().can_approve_joins();
+            // A person linking their own device needs no one else's approval
+            // when this device may admit people.
+            let own_link = link && req.member == ctx.core.my_member;
+            let auto = (own_link || !ctx.core.require_approval()) && ctx.core.role().can_approve_joins();
             j.stage = Some(HostStage::Knocked { channel: ch, knock: kid });
             ctx.joins.insert(session, j);
             let effects = ctx.core.post_knock(knock);
@@ -642,10 +671,11 @@ pub async fn host_code(
     ctx: &mut RoomCtx,
     kind: CodeKind,
     expires_at: i64,
+    link_for: Option<MemberId>,
 ) -> anyhow::Result<(JoinCode, Option<oneshot::Receiver<bool>>)> {
     let code = JoinCode::generate()?;
     let r = code.rendezvous();
-    ctx.codes.insert(r, HostedCode { code: code.clone(), kind: kind.clone(), expires_at, failures: 0 });
+    ctx.codes.insert(r, HostedCode { code: code.clone(), kind: kind.clone(), expires_at, failures: 0, link_for });
     let mut waiter = None;
     if let (Some(s), true) = (&ctx.sender, ctx.connected) {
         let (tx, rx) = oneshot::channel();

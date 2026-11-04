@@ -204,3 +204,7 @@ host-bad-mode = Unknown mode { $mode }: use distributed or hosted.
 web-link = Open this link in your browser (it works once, for two minutes):
     { $url }
 web-opened = Opened the browser client. The link works once.
+help-link = Link another of your devices (a phone, a second computer) to you in a room.
+link-code = Link code: { $code }
+link-cli = On the other computer: polyph join { $code } --member { $member }
+link-expires = It works once, for ten minutes. On a phone, scan the code from Settings in the app.

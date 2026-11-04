@@ -180,3 +180,7 @@ host-bad-mode = 不明なモード { $mode } です。distributed か hosted を
 web-link = このリンクをブラウザで開いてください（1 回限り、2 分間有効）:
     { $url }
 web-opened = ブラウザクライアントを開きました。リンクは 1 回だけ使えます。
+help-link = 自分の別のデバイス（スマートフォンや別のコンピューター）をルームの自分にリンクします。
+link-code = リンクコード: { $code }
+link-cli = 別のコンピューターで: polyph join { $code } --member { $member }
+link-expires = 1 回だけ、10 分間有効です。スマートフォンではアプリの設定からコードを読み取ってください。

@@ -180,3 +180,7 @@ host-bad-mode = 未知模式 { $mode }：请使用 distributed 或 hosted。
 web-link = 在浏览器中打开此链接（仅可使用一次，两分钟内有效）：
     { $url }
 web-opened = 已打开浏览器客户端。链接只能使用一次。
+help-link = 把你的另一台设备（手机或第二台电脑）关联到你在房间中的身份。
+link-code = 关联代码：{ $code }
+link-cli = 在另一台电脑上：polyph join { $code } --member { $member }
+link-expires = 仅可使用一次，十分钟内有效。在手机上，请从应用的设置中扫描代码。
