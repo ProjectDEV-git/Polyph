@@ -127,6 +127,176 @@ could not be followed exactly. Newest at the bottom of each section.
   the endpoint rejects native tools, and summarizes old turns at 75% of the
   context window.
 
+## Coordination
+
+- **The MCP server reaches the daemon through the agent's own proxy.** Plain
+  HTTP requests to the reserved host `polyph.internal` are answered by the
+  daemon instead of being forwarded. Every sandbox mechanism already lets the
+  agent reach its proxy (bubblewrap through the forwarder, Landlock by TCP
+  port, Seatbelt, Windows), so no new socket or sandbox rule is needed, and
+  because each agent has its own proxy the daemon knows which agent called. A
+  per-agent token is checked as well, since loopback ports are reachable by
+  other local processes.
+- **MCP is hand-rolled, not `rmcp`.** The server is a stdio relay with four
+  methods (`initialize`, `ping`, `tools/list`, `tools/call`) and static tool
+  definitions; like the ACP types, our own lean JSON handling is smaller and
+  does not churn with the SDK. It speaks protocol revisions 2025-06-18,
+  2025-03-26 and 2024-11-05.
+- **People's messages never wake someone else's agent.** Waking an agent with
+  a person's words is steering, which needs the agent's owner; those messages
+  are added to the agent's next prompt instead. Messages from agents wake an
+  idle agent, within the loop guard (`docs/protocol.md` 9.2).
+- **Inbox `hops`** was added to the existing `Inbox` message with a default
+  of 0, so older peers stay compatible.
+- **Memory notes re-anchor by line text** plus the nearest non-blank lines
+  around it, not by git blame: it works on uncommitted files and in every
+  member's own copy, and needs no repository access.
+
+- **Git through the `git` command**, not libgit2: it behaves exactly like the
+  person's own git (config, hooks off with `--no-verify`, worktrees), and
+  `merge-tree --write-tree` (git 2.38+) computes merges without a working
+  copy, so the queue never touches anyone's checkout.
+- **Agents never commit.** They write files; the daemon commits on the task
+  branch with an agent identity (`<label>.<id>@agents.polyph.invalid`). The
+  sandbox therefore never needs write access to the shared `.git`.
+- **Task worktrees live in `<repo>/.polyph/worktrees/`**, added to
+  `.git/info/exclude`. Not under the Polyph home: the sandbox hides that
+  directory, and a writable worktree inside it would un-hide it.
+- **Finishing a task releases its claims.** The work is committed; overlap
+  from then on is the merge queue's to settle, and holding claims through
+  review would block everyone else for no benefit.
+- **Merge order of conflict handling:** line-level diff3, then a symbol-level
+  merge for source files (each function merged on its own; additions on both
+  sides kept, the already-merged task first), then keep-both for prose, and
+  only then a resolver agent given both tasks' intent. Resolutions are
+  recorded per file on the queue entry.
+- **The target branch's `polyph.toml` configures merging** (reviewer,
+  resolver, approval, checks): a task branch cannot change how it is merged.
+- **Checks run on the merged result** in a detached worktree inside the
+  sandbox, with allowlisted hosts only and no approvals asked.
+- **The queue runs where the work is**: on the device that holds the task's
+  worktree, one merge at a time per repository; the queue itself is shared in
+  the Board document so everyone sees it.
+- **The reviewer answers with a `VERDICT:` line**, parsed from its last
+  message; no verdict counts as "changes requested".
+- **The planner works on a scratch worktree** and its cards start as drafts
+  until a person accepts the plan.
+- **Layer-3 watcher attribution:** a change counts as an agent's only if the
+  agent was mid-turn when it happened and it did not come through the file
+  tools; otherwise it is a person's and is left alone.
+- **Hosted mode judges changes per device**: a member's change applies if the
+  file is free or held by an agent on that member's device, and only if it
+  was made on the host's current version. Agents finish turns in
+  milliseconds, so attributing by "agent mid-turn" alone rejected their own
+  writes.
+- **Secrets are redacted with gitleaks-style rules** (high-signal token shapes
+  plus an entropy-gated generic rule) in the daemon before encryption.
+  Test fixtures are assembled from pieces so secret scanners do not flag the
+  source.
+- **`finish_task` goes through a daemon worker** over a channel: finishing can
+  start reviewer agents, whose MCP handlers lead back to `finish_task`, and
+  that cycle cannot be expressed as one `Send` future.
+
+## Board, terminals and integrations
+
+- **The room engine logs board changes itself**: every local change to the
+  Board document is diffed into card events in the Activity document, so
+  agents' tools, the merge queue, the planner and people are all covered
+  without logging at each call site. Agent tools pass their label.
+- **Board replay uses checkpoints**: every 50 card events an entry carries
+  the whole board (cards as JSON), and a replay folds later events onto the
+  latest checkpoint before the requested time.
+- **Activity entries keep document order for equal times** (stable sort), so
+  every member sees the same order.
+- **The room engine gets the daemon's clock** for activity timestamps; it
+  still performs no I/O.
+- **Whiteboards are indexed in Settings** (`whiteboard:<id>`), and the engine
+  requests listed boards it does not have, so late joiners get them.
+- **Agents draw diagrams, not raw Excalidraw**: `draw_diagram` takes boxes
+  and arrows and Polyph lays them out; drawing again with the same id
+  replaces the diagram.
+- **Terminal input is an approval only the terminal's owner can answer**; it
+  never escalates, so a requester can never approve their own access. The
+  keyboard holder can give it back; the owner can take it back.
+- **Notifications are derived per device** from daemon events and rendered in
+  the person's language; webhooks carry the same text and metadata, never
+  chat, code or file contents.
+- **Integration tokens are sealed with the storage key** on the device that
+  uses them and never enter a room.
+- **Pull requests replace the local merge** with `[merge] via = "github"`;
+  the PR's state is then the truth for the card.
+- **The D-Bus status service is read-only**: the session bus is reachable by
+  every process of the user, including sandboxed agents.
+- **`reqwest` 0.13 with rustls (ring)**, the same as the local agent, for all
+  outgoing HTTPS.
+
+## Terminal UI
+
+- **A separate crate (`polyph-tui`)** with a small `Backend` trait: the CLI
+  passes a WebSocket connection, tests pass the daemon in-process, so tests
+  drive the real state, keys and drawing.
+- **State refreshes by parts**: events name what changed (chat, board,
+  agents...) and the loop refetches those parts, coalesced every 100 ms. The
+  API stays the single source of truth; the TUI keeps no shadow model.
+- **Calls run as their own tasks**, so prompting an agent (which waits for
+  the turn) never freezes the screen; terminal keystrokes go through one
+  ordered queue instead, merged into one write when they pile up.
+- **Colors come from DESIGN.md's OKLCH tokens** via the same conversion as
+  voices: true color with `COLORTERM=truecolor|24bit`, the nearest 256-color
+  index otherwise, none with `NO_COLOR` or `TERM=dumb` (reverse video marks
+  the selection).
+- **Shared terminals are drawn with `vt100`**, starting from the scrollback
+  the daemon keeps, so full-screen programs show correctly in previews.
+- **Ctrl-] detaches** (as telnet and many consoles do); crossterm reports it
+  as Ctrl-5, so both are accepted.
+- **Chat keeps document order for equal times**, like activity, so messages
+  sent in the same second appear in the order every member sees.
+- **Approvals in the activity feed credit the person who answered**, naming
+  the agent in the text.
+
+## Desktop app, browser client and status pill
+
+- **One React app for three surfaces.** `packages/ui` holds the whole app
+  (`PolyphApp`), with `mode="pill"` for the status pill; the Tauri shell and
+  the Next.js client only provide the connection and a `Platform` (notify,
+  open links, toggle the pill). Brief in `docs/app.md`.
+- **The browser client talks to the person's own daemon**, which serves the
+  static export of `apps/web` (`POLYPH_WEB_DIR`, else next to the binary).
+  A browser-only room member (the wasm engine over the relay) waits for M8,
+  with the phone PWA that needs it.
+- **Browsers sign in with one-time links**: `polyph web` asks for a code
+  (`web.link`, API token only), the page trades it at `/web/session` for an
+  in-memory session token and drops it from the address bar, so the API
+  token never appears in a URL or history. Codes last two minutes and work
+  once; sessions end when the daemon stops.
+- **Browser-facing routes check `Host` (loopback names only) and `Origin`**
+  (the daemon's own pages and the Tauri webview), against DNS rebinding and
+  other sites' pages. Pages carry a strict CSP; Excalidraw's CDN fallback for
+  its fonts is blocked by it, and its fonts are copied into each app.
+- **State is fetched by parts and refreshed on events**, exactly like the TUI
+  (`partsFor` mirrors `parts_for`), with transcript lines and terminal bytes
+  applied straight from events. Replies that are not the expected shape
+  become empty lists rather than errors deep in a view.
+- **`voice.ts` is checked against Rust**: `polyph-core` writes
+  `packages/ui/test/voice-golden.json` (with `POLYPH_UPDATE_GOLDEN=1`) and
+  both test suites compare against it.
+- **Locales are bundled at build time** into `locales.gen.ts` (generated,
+  not committed) so Vite, Next.js and Vitest read the same Fluent files
+  without loaders.
+- **Fonts come from npm (`@fontsource`, OFL)** and are bundled into each app;
+  nothing loads from a font CDN.
+- **Dark is the default theme**; "match the system" is a choice in Settings.
+- **The "Needs you" column appears only while something waits**; otherwise
+  the title row's one-line finding says nothing needs you.
+- **The desktop shell finds or starts the daemon itself** (the same
+  `daemon.json` and `api.token` as the CLI), keeps Polyph in the tray when
+  the window closes, and leaves the daemon running on Quit.
+- **Test agents' scripts live outside `/tmp`** (`CARGO_TARGET_TMPDIR`):
+  under bubblewrap agents get a private, empty `/tmp`, so scripts kept there
+  were invisible. The merge tests only passed on machines without bubblewrap.
+- **The keychain is read from a plain thread**: secret-service backends block
+  on their own runtime, which panicked inside the daemon's async runtime.
+
 ## Process
 
 - **Design skills.** Impeccable, Emil Kowalski's design-engineering skill,

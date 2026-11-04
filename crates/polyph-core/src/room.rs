@@ -36,6 +36,38 @@ pub const APPROVAL_ESCALATION_SECS: i64 = 120;
 const TABLE_INTERVAL: i64 = 30;
 /// Hue not chosen yet.
 pub const NO_HUE: u16 = u16::MAX;
+/// Longest inbox message accepted, in bytes.
+pub const MAX_INBOX_TEXT: usize = 16 * 1024;
+
+/// A directed message to an agent (from a person or another agent).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InboxMessage {
+    pub id: ObjectId,
+    pub to: AgentRef,
+    pub from_member: MemberId,
+    pub from_agent: Option<AgentRef>,
+    pub thread: Option<ObjectId>,
+    pub reply_to: Option<ObjectId>,
+    pub text: String,
+    pub at: i64,
+    pub hops: u8,
+}
+
+impl InboxMessage {
+    fn into_wire(self) -> RoomMessage {
+        RoomMessage::Inbox {
+            id: self.id,
+            to: self.to,
+            from_member: self.from_member,
+            from_agent: self.from_agent,
+            thread: self.thread,
+            reply_to: self.reply_to,
+            text: self.text,
+            at: self.at,
+            hops: self.hops,
+        }
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum RoomError {
@@ -174,6 +206,22 @@ pub enum RoomEvent {
         by: MemberId,
         for_me: bool,
     },
+    /// Shared terminals, for the daemon's terminal module.
+    Terminal {
+        from: DeviceId,
+        member: MemberId,
+        msg: Box<polyph_proto::messages::TerminalMsg>,
+    },
+    /// Hosted-mode mirroring, for the daemon's mirror module.
+    Mirror {
+        from: DeviceId,
+        msg: Box<polyph_proto::messages::MirrorMsg>,
+    },
+    /// A message to an agent. `for_me` when the agent runs on this device.
+    Inbox {
+        message: InboxMessage,
+        for_me: bool,
+    },
     /// A transcript event from an agent (ours or a teammate's).
     Agent {
         event: Box<polyph_proto::messages::AgentEvent>,
@@ -255,6 +303,10 @@ pub struct RoomCore {
     online_seen: BTreeSet<DeviceId>,
     /// Next epoch, installed by `commit_rotation` once the announcement is sealed.
     pending_rotation: Option<EpochKey>,
+    /// Latest time seen (ticks, messages), for activity entries.
+    pub last_now: i64,
+    /// The embedder's clock, when it has one (the daemon's).
+    pub clock: Option<Arc<dyn Fn() -> i64 + Send + Sync>>,
 }
 
 impl std::fmt::Debug for RoomCore {
@@ -369,6 +421,8 @@ impl RoomCore {
             last_sync_reply: 0,
             online_seen: BTreeSet::new(),
             pending_rotation: None,
+            last_now: now,
+            clock: None,
         })
     }
 
@@ -454,6 +508,7 @@ impl RoomCore {
 
     /// Opens and processes one envelope from the relay.
     pub fn receive(&mut self, bytes: &[u8], now: i64) -> Vec<Effect> {
+        self.last_now = self.last_now.max(now);
         let env = match Envelope::decode(bytes) {
             Ok(e) => e,
             Err(_) => return vec![],
@@ -527,8 +582,22 @@ impl RoomCore {
                 }
             }
             RoomMessage::Crdt { doc, update } if writer => {
+                // New chat messages from others become Chat events, like our own.
+                let chat_before: Option<BTreeSet<String>> =
+                    (doc == DocName::Threads).then(|| docs::chat(self.doc(&doc)).into_iter().map(|c| c.id).collect());
                 if apply_update(self.doc(&doc), &update).is_ok() {
+                    let settings = doc == DocName::Settings;
+                    if let Some(seen) = chat_before {
+                        for c in docs::chat(self.doc(&DocName::Threads)) {
+                            if !seen.contains(&c.id) {
+                                out.push(Effect::Event(RoomEvent::Chat(c)));
+                            }
+                        }
+                    }
                     out.push(Effect::Event(RoomEvent::DocChanged { doc }));
+                    if settings {
+                        out.extend(self.fetch_new_whiteboards());
+                    }
                 }
             }
             RoomMessage::CrdtSyncRequest { doc, state_vector } => {
@@ -610,6 +679,40 @@ impl RoomCore {
                 out.push(Effect::Event(RoomEvent::Agent { event: ev }));
             }
             RoomMessage::Approval(a) => out.extend(self.on_approval(from, role, a, now)),
+            RoomMessage::Terminal(t) if writer => {
+                use polyph_proto::messages::TerminalMsg;
+                let Some(member) = self.sender_member(&from) else { return out };
+                // Nobody types or asks on someone else's behalf.
+                let honest = match &t {
+                    TerminalMsg::Input { typist, .. } => *typist == member,
+                    TerminalMsg::RequestInput { member: m, .. } => *m == member,
+                    TerminalMsg::Opened { owner, .. } => *owner == member,
+                    _ => true,
+                };
+                if honest {
+                    out.push(Effect::Event(RoomEvent::Terminal { from, member, msg: Box::new(t) }));
+                }
+            }
+            RoomMessage::Mirror(m) if writer => {
+                // A device proposes changes only for its own agents.
+                let honest = match &m {
+                    polyph_proto::messages::MirrorMsg::Propose { agent: Some(a), .. } => a.device == from,
+                    _ => true,
+                };
+                if honest {
+                    out.push(Effect::Event(RoomEvent::Mirror { from, msg: Box::new(m) }));
+                }
+            }
+            RoomMessage::Inbox { id, to, from_member, from_agent, thread, reply_to, text, at, hops } if writer => {
+                // The sender speaks only for itself and its own agents.
+                let honest = self.sender_member(&from) == Some(from_member)
+                    && from_agent.as_ref().is_none_or(|a| a.device == from && a.member == from_member);
+                if honest && text.len() <= MAX_INBOX_TEXT {
+                    let for_me = to.device == self.me;
+                    let message = InboxMessage { id, to, from_member, from_agent, thread, reply_to, text, at, hops };
+                    out.push(Effect::Event(RoomEvent::Inbox { message, for_me }));
+                }
+            }
             _ => {}
         }
         out
@@ -879,17 +982,66 @@ impl RoomCore {
 
     /// Applies a local change to a document and returns the update to broadcast.
     pub fn change_doc(&mut self, name: DocName, f: impl FnOnce(&Doc)) -> Result<Vec<Effect>> {
+        self.change_doc_as(name, None, f)
+    }
+
+    /// Like [`RoomCore::change_doc`], crediting board changes in the activity
+    /// feed to `agent` (a label) as well as this member.
+    pub fn change_doc_as(&mut self, name: DocName, agent: Option<&str>, f: impl FnOnce(&Doc)) -> Result<Vec<Effect>> {
         if !self.role().can_write() {
             return Err(RoomError::Forbidden);
         }
         let doc = self.doc(&name);
+        let board_before = (name == DocName::Board).then(|| crate::activity::cards(doc));
         let before = state_vector(doc);
         f(doc);
         let update = diff_since(doc, &before)?;
-        Ok(vec![
+        let mut out = vec![
             Effect::Send(RoomMessage::Crdt { doc: name.clone(), update }),
             Effect::Event(RoomEvent::DocChanged { doc: name }),
-        ])
+        ];
+        // Every local board change is logged by its author.
+        if let Some(before) = board_before {
+            let after = crate::activity::cards(self.doc(&DocName::Board));
+            let changes = crate::activity::diff(&before, &after);
+            if !changes.is_empty() {
+                let actor = self.my_member.to_hex();
+                let now = self.clock.as_ref().map(|c| c()).unwrap_or(self.last_now).max(self.last_now);
+                let act = self.doc(&DocName::Activity);
+                let sv = state_vector(act);
+                let mut ids = || ObjectId::random().map(|o| o.to_hex()).unwrap_or_default();
+                crate::activity::record_board_change(act, &after, changes, &actor, agent, now, &mut ids);
+                let update = diff_since(act, &sv)?;
+                out.push(Effect::Send(RoomMessage::Crdt { doc: DocName::Activity, update }));
+                out.push(Effect::Event(RoomEvent::DocChanged { doc: DocName::Activity }));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Whiteboards listed in the Settings index.
+    pub fn whiteboards(&mut self) -> Vec<crate::whiteboard::WhiteboardInfo> {
+        docs::settings_with_prefix(self.doc(&DocName::Settings), crate::whiteboard::INDEX_PREFIX)
+            .into_iter()
+            .filter_map(|(_, v)| serde_json::from_value(v).ok())
+            .collect()
+    }
+
+    /// Asks peers for whiteboards that are listed but not here yet.
+    fn fetch_new_whiteboards(&mut self) -> Vec<Effect> {
+        let missing: Vec<DocName> = self
+            .whiteboards()
+            .into_iter()
+            .map(|w| DocName::Whiteboard(w.id))
+            .filter(|d| !self.docs.contains_key(d))
+            .collect();
+        missing
+            .into_iter()
+            .map(|d| {
+                let sv = state_vector(self.doc(&d));
+                Effect::Send(RoomMessage::CrdtSyncRequest { doc: d, state_vector: sv })
+            })
+            .collect()
     }
 
     pub fn send_chat(
@@ -904,7 +1056,7 @@ impl RoomCore {
             author: self.my_member.to_hex(),
             agent,
             thread,
-            text: text.to_string(),
+            text: crate::redact::redact(text).into_owned(),
             at: now,
         };
         let mut out = self.change_doc(DocName::Threads, |d| docs::append_chat(d, &e))?;
@@ -1013,6 +1165,7 @@ impl RoomCore {
 
     /// Periodic work: heartbeat, election, claim table, lease expiry.
     pub fn tick(&mut self, now: i64) -> Vec<Effect> {
+        self.last_now = self.last_now.max(now);
         let mut out = vec![Effect::Send(RoomMessage::Presence(Presence {
             surface: self.surface,
             online: true,
@@ -1208,6 +1361,48 @@ impl RoomCore {
         ]
     }
 
+    // ---------- inboxes ----------
+
+    /// Sends a message to an agent's inbox. `from_agent` must run on this device.
+    #[allow(clippy::too_many_arguments)]
+    pub fn send_inbox(
+        &mut self,
+        to: AgentRef,
+        from_agent: Option<AgentRef>,
+        thread: Option<ObjectId>,
+        reply_to: Option<ObjectId>,
+        text: &str,
+        hops: u8,
+        now: i64,
+    ) -> Result<(InboxMessage, Vec<Effect>)> {
+        if !self.role().can_write() {
+            return Err(RoomError::Forbidden);
+        }
+        if from_agent.as_ref().is_some_and(|a| a.device != self.me) {
+            return Err(RoomError::Invalid("that agent does not run on this device"));
+        }
+        if text.trim().is_empty() || text.len() > MAX_INBOX_TEXT {
+            return Err(RoomError::Invalid("message is empty or too long"));
+        }
+        let message = InboxMessage {
+            id: ObjectId::random()?,
+            to,
+            from_member: self.my_member,
+            from_agent,
+            thread,
+            reply_to,
+            text: crate::redact::redact(text).into_owned(),
+            at: now,
+            hops,
+        };
+        let for_me = message.to.device == self.me;
+        let fx = vec![
+            Effect::Send(message.clone().into_wire()),
+            Effect::Event(RoomEvent::Inbox { message: message.clone(), for_me }),
+        ];
+        Ok((message, fx))
+    }
+
     // ---------- approvals ----------
 
     /// Registers an approval request for one of this device's agents.
@@ -1249,6 +1444,11 @@ impl RoomCore {
     pub fn may_answer(&self, p: &PendingApproval, member: MemberId, role: Role, now: i64) -> bool {
         if !role.can_approve_agents() {
             return false;
+        }
+        // Typing in someone's terminal runs as them: only they may allow it,
+        // so these never escalate (and the asker can never answer).
+        if matches!(p.kind, ApprovalKind::TerminalInput { .. }) {
+            return member == p.agent.member;
         }
         member == p.agent.member || now >= p.escalate_at
     }

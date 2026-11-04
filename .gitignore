@@ -20,3 +20,7 @@ test-results/
 *.vsix
 apps/desktop/src-tauri/gen/
 packages/proto-wasm/pkg/
+packages/ui/src/i18n/locales.gen.ts
+apps/web/public/excalidraw/
+apps/desktop/public/excalidraw/
+apps/web/next-env.d.ts

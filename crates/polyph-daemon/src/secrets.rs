@@ -110,7 +110,13 @@ pub fn storage_key(paths: &Paths, force_file: bool) -> anyhow::Result<(StorageKe
     if forced_file || paths.storage_key().exists() {
         return Ok((from_file(paths)?, KeyStore::File));
     }
-    match from_keychain(paths) {
+    // Keychain backends block on their own runtime (secret-service over
+    // D-Bus), which panics inside an async runtime; ask from a plain thread.
+    let p2 = paths.clone();
+    let got = std::thread::spawn(move || from_keychain(&p2))
+        .join()
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("keychain lookup panicked")));
+    match got {
         Ok(k) => Ok((k, KeyStore::Keychain)),
         Err(e) => {
             warn!(error = %e, "no keychain available; storing the local key in a private file");

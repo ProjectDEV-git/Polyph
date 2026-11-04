@@ -51,17 +51,51 @@ commit and an updated `HANDOFF.md`. Stubs go in `STUBS.md`.
 - [x] testkit fake ACP agent; tests; opt-in smoke tests
 
 ## M4 — coordination
-- [ ] MCP server (rmcp) with all tools; claims three layers; worktrees; merge queue
-- [ ] hosted-mode mirror; team-state digest; planner; memory anchoring
-- [ ] inboxes + loop guard; handoff; intent-aware merge; reviewer; secrets redaction
-- [ ] tests per brief
+- [x] MCP server (`polyph mcp`) given to every agent in `session/new`, reaching the daemon through the agent's proxy
+- [x] MCP tools: claims, team state, ask/reply/inbox, remember/recall/forget, list/create/move/finish tasks (whiteboard tools are M5)
+- [x] claims: layer 1 explicit (MCP), layer 2 automatic on edits (file or symbol granularity), layer 3 worktree watcher
+- [x] worktree and branch per task; daemon commits for agents (`polyph-git`)
+- [x] merge queue: review agent, approval, intent-aware merge (`polyph-merge`), resolver agent, sandboxed checks, branch advance, optional push
+- [x] planner (draft cards, dependencies, predicted overlaps, accept, unblock on merge)
+- [x] hosted mode: shared working copy on the host, member mirrors (`polyph mirror`)
+- [x] team-state digest; memory notes with anchoring
+- [x] inboxes + loop guard (hops, per-pair rate, wakes per hour); delivery at turn boundaries; revoked-claim notices
+- [x] handoff with brief, claims and worktree carried over
+- [x] secrets redaction (gitleaks-style rules) before anything leaves the daemon
+- [x] tests: `polyph-testkit/tests/m4.rs`, `m4_merge.rs`, `m4_hosted.rs`
 
 ## M5 — board, terminals, integrations
-- [ ] kanban, threads, activity with replay, whiteboards + agent tools
-- [ ] shared terminals with input approval; GitHub; notifications, webhooks; Linear; status feed + D-Bus
+- [x] kanban edits (update/remove), threads, activity feed with replay (board checkpoints), all logged by author
+- [x] multiple whiteboards (Excalidraw elements, indexed for late joiners) + agent tools (list, read as text, draw diagrams)
+- [x] shared terminals (`polyph-term` PTYs) with input approval only the owner can grant
+- [x] notifications (localized) and outgoing webhooks (JSON signed, Slack, Discord)
+- [x] GitHub: connect, issue import, pull requests for tasks, PR state follows cards
+- [x] Linear: connect, issue import, issue state follows cards
+- [x] status feed (agents, budgets, task moves) + `org.polyph.Status1` D-Bus service (read-only)
+- [x] CLI: term, thread, activity, whiteboard, plan, task, merge, memory, github, linear, webhook (four locales)
+- [x] tests: `polyph-testkit/tests/m5.rs`, `m5_integrations.rs`
 
 ## M6 — TUI
+- [x] surface brief (`docs/tui.md`) from PRODUCT.md and DESIGN.md
+- [x] `polyph-tui`: theme (DESIGN tokens to true color / 256 colors / none with `NO_COLOR`), states as symbol + word, voices
+- [x] views: chat with threads, board (move cards, 600 ms highlight), agents (follow transcripts, prompt, stop), activity with replay, merge queue, terminals (preview and attach)
+- [x] approvals stack stating exactly what will happen; approve once / for the task / deny with a note
+- [x] command line (`:join`, `:thread`, `:card`, `:plan`, `:agent`, `:term`, `:room`), rooms switcher, rail, keys overlay
+- [x] live loop: coalesced refreshes, redraw on change capped at 30/s, spinner only while agents run, ordered terminal input
+- [x] `polyph` with no arguments opens it in a terminal (help when piped)
+- [x] four locales (`locales/*/tui.ftl`), Thai and CJK widths, narrow terminals
+- [x] tests: `polyph-testkit/tests/m6.rs` (every view x locale x color depth x width; key flows; live updates)
 ## M7 — desktop app, browser client, status pill
+
+- [x] `docs/app.md`: the app brief (question, voices as the face, shell, views, states, pill)
+- [x] `packages/ui`: DESIGN tokens for Tailwind v4, bundled fonts, `voice.ts` checked against Rust, Fluent strings from `locales/`, daemon client, store refreshed by parts
+- [x] views: chat with threads, board (drag and keyboard moves, plans), agents (live transcript, prompt, inbox, start, stop), activity with replay, merge queue, terminals (xterm.js, keyboard requests), whiteboards (Excalidraw, synced per element), settings, host and join, people waiting to join, command palette
+- [x] approvals stack stating exactly what will happen; approve once / for the task / deny with a note; one-line finding under the room name
+- [x] browser client (`apps/web`, Next.js static export) served by the daemon; `polyph web` one-time links; Host and Origin checks; CSP
+- [x] desktop app (`apps/desktop`, Tauri 2): starts or finds the daemon, tray, always-on-top status pill window, native notifications, single instance
+- [x] status pill (desktop window and `/pill/` in the browser) from the status feed, first approval answerable inline
+- [x] four locales (`locales/*/app.ftl`), phone width, light and dark themes, reduced motion
+- [x] tests: Vitest (voices, i18n, store, client, approvals), `pnpm test:e2e` (browser client against a real daemon), daemon unit tests for links, hosts, origins and static files
 ## M8 — PWA, VS Code extension, Nublet provider
 ## M9 — cloud agents and extensibility
 ## M10 — website, accounts, billing

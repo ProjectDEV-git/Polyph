@@ -14,7 +14,15 @@ brief is the source of all requirements.
   `STUBS.md` (LAN bridge joins, mDNS untested in CI).
 - **Milestone 3 (agents and sandbox): done**, with gaps in `STUBS.md`
   (Windows isolation, seccomp, late-joiner transcripts).
-- **Milestone 4 (coordination): next.**
+- **Milestone 4 (coordination): done**, with gaps in `STUBS.md`
+  ("Milestone 4 gaps": local agent without MCP tools, per-device merges,
+  hosted mode not persisted, no CLI for plan/task/merge yet).
+- **Milestone 5 (board, terminals, integrations): done**, with gaps in
+  `STUBS.md` ("Milestone 5 gaps").
+- **Milestone 6 (TUI): done**, with gaps in `STUBS.md` ("Milestone 6 gaps").
+- **Milestone 7 (desktop app, browser client, status pill): done**, with
+  gaps in `STUBS.md` ("Milestone 7 gaps").
+- **Milestone 8 (PWA, VS Code extension, Nublet provider): next.**
 
 ## How to build and test
 
@@ -23,7 +31,17 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build -p polyph-proto --target wasm32-unknown-unknown --no-default-features --features wasm,crdt
 pnpm install && pnpm check:i18n
+pnpm --filter @polyph/ui test && pnpm -r typecheck
+pnpm --filter @polyph/web build && cargo build -p polyph-cli && pnpm test:e2e
+(cd apps/desktop && pnpm build && cd src-tauri && cargo clippy -- -D warnings)
 ```
+
+Build hygiene: `CARGO_INCREMENTAL=0` and `rm -rf target` when the disk
+fills; the desktop shell has its own `apps/desktop/src-tauri/target`.
+`pnpm test:e2e` needs Playwright with Chromium (`NODE_PATH=$(npm root -g)`
+where it is installed globally). Tauri on Linux needs the WebKitGTK
+development packages (`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`,
+`libayatana-appindicator3-dev`, `librsvg2-dev`, `libsoup-3.0-dev`).
 
 ## What works
 
@@ -65,6 +83,32 @@ pnpm install && pnpm check:i18n
 - Tests: `polyph-testkit/tests/m3.rs` (fake ACP agent through daemons and
   the sandbox) and `tests/localagent.rs` (local agent against a scripted
   model).
+- `polyph-mcp`: the MCP stdio server (`polyph mcp`) with tools `claim_files`,
+  `release_files`, `list_claims`, `team_state`, `ask_agent`, `reply`,
+  `read_inbox`, `remember`, `recall`, `forget`. The daemon passes it to every
+  agent in `session/new`; it calls the daemon at `http://polyph.internal`
+  through the agent's proxy (`polyph_sandbox::proxy::start_with`).
+- Daemon `coord` module: tool handlers, inboxes delivered at turn boundaries,
+  wakes for agent messages, loop guard, revoked-claim notices, team digest.
+  API `memory.list`, `inbox.send`.
+- `polyph-core::memory`: note layout in the Memory document and re-anchoring.
+- Tests: `polyph-testkit/tests/m4.rs`; the fake agent has `mcp` and
+  `echo_prompt` steps and starts the MCP server like a real agent.
+- `polyph-git`: worktrees, commits for agents, `merge-tree` merges, branch
+  advance, push. `polyph-merge`: symbols, diff3, symbol-level merge,
+  conflict markers and the resolver prompt.
+- Daemon `tasks`: task worktrees (`agent.start` with `task`), `task.finish`,
+  the merge queue (`merge.queue`), reviewer and resolver helper agents,
+  sandboxed checks, `agent.handoff`. `plan`: `plan.create`, `plan.accept`.
+  `watch`: claims layer 3. `mirror`: hosted mode (`mirror.host`,
+  `mirror.open`, `mirror.status`; CLI `polyph host --mode hosted`,
+  `polyph mirror <dir>`). `polyph-core::redact`: secret redaction.
+- `polyph.toml` gained `[merge]` (into, reviewer, resolver, approval,
+  run_checks, push), `[planner] agent` and `[claims]` (granularity, watch).
+- Tests: `m4_merge.rs` (the brief's success path: two tasks, claims, review,
+  approval, a conflict merged keeping both intents; resolver agent; reviewer
+  sending a task back; planner; handoff; symbol claims; watcher) and
+  `m4_hosted.rs`.
 
 Smoke tests against real agents (`POLYPH_SMOKE=1`): **not run** — Claude
 Code, Codex and Ollama are not installed in the build environment. Run them
@@ -91,13 +135,74 @@ target/debug/polyph --home /tmp/b join <CODE> --name Bo
 target/debug/polyph --home /tmp/a room knocks     # then: polyph --home /tmp/a approve <id>
 ```
 
+## Milestone 5 pieces
+
+- `polyph-core::activity` (board diff, checkpoints, replay) and
+  `polyph-core::whiteboard` (layout, text description, diagram layout).
+- Daemon: `feed` (activity entries), `boards` (whiteboards), `terms` (shared
+  terminals), `notify` (notifications, webhooks), `integrations` (sealed
+  tokens), `github`, `linear`, `status` (feed) and `dbus` (Linux).
+- API: board.update/remove, thread.create/list/get, activity.list/replay,
+  whiteboard.*, term.*, webhook.*, github.*, linear.*, integrations.status.
+- MCP tools: list_whiteboards, read_whiteboard, draw_diagram.
+- CLI: term, thread, activity, whiteboard, plan, task, merge, memory, github,
+  linear, webhook. Texts in `locales/*/{activity,notify,work}.ftl`.
+- Tests: `m5.rs` (board/threads/replay, whiteboards and agents, terminals,
+  notifications and webhooks, D-Bus) and `m5_integrations.rs` (GitHub and
+  Linear against local stand-ins).
+
+## Milestone 6 pieces
+
+- `docs/tui.md`: the TUI brief (layout, keys, color, motion).
+- `polyph-tui`: `theme` (tokens, depths, statuses), `conn` (Backend trait,
+  WebSocket client), `model` (state, refresh by parts, events), `ui`
+  (drawing, width-aware fit/wrap), `keys` (keymap, commands, actions), `run`
+  (loop). `polyph` with no arguments opens it (`polyph-cli` `tui()`).
+- `polyph-testkit::tui::InProcess` runs it against an in-process daemon;
+  `tests/m6.rs` covers views x locales x color depths x widths, key flows
+  (approve, chat, threads, board moves, commands, terminal attach and the
+  keyboard request) and live updates (moved-card highlight, incoming chat).
+- Try it: the "Try it locally" steps above, then run `polyph --home /tmp/a`.
+
+## Milestone 7 pieces
+
+- `docs/app.md`: the app brief (one question, voices as the face, shell,
+  views, states, the pill, how each surface connects).
+- `packages/ui` (`@polyph/ui`): `styles.css` (DESIGN tokens as CSS variables
+  mapped into Tailwind v4, bundled fonts), `voice.ts` (golden vectors from
+  `polyph-core`), `i18n` (Fluent; `scripts/bundle-locales.mjs` writes
+  `locales.gen.ts`), `api/client.ts` (JSON-RPC over the WebSocket, status
+  feed, reconnects), `store.ts` (refresh by parts, like the TUI), views in
+  `src/views/` (shell, rail, chat, board, agents, activity, merges,
+  terminals, whiteboards, settings, start, approvals, palette, pill) and
+  `PolyphApp` as the entry point. Strings in `locales/*/app.ftl`.
+- `apps/web` (`@polyph/web`): Next.js static export with `/app/` and
+  `/pill/`; `src/client.tsx` trades the one-time code for a session.
+- Daemon `web` module: one-time links, sessions, Host/Origin checks, static
+  files with a CSP; API `web.link`; routes `/web/session` and the client's
+  files. CLI `polyph web [--no-open]`.
+- `apps/desktop` (`@polyph/desktop`): Vite front end (app and pill pages) and
+  `src-tauri` (Tauri 2, outside the Cargo workspace): `daemon.rs` finds or
+  starts the daemon, `lib.rs` has the commands, tray, pill window and
+  notification plugin.
+- Fixed in passing: the daemon panicked at start when a secret-service
+  keychain was reachable (blocking call inside the async runtime), and the
+  merge tests (`m4_merge.rs`) failed wherever bubblewrap is installed (agents
+  could not see scripts in `/tmp`).
+- Try it: `cargo build -p polyph-cli && pnpm --filter @polyph/web build`,
+  then `POLYPH_WEB_DIR=$PWD/apps/web/out target/debug/polyph daemon run` and
+  `target/debug/polyph web`. Desktop: `cd apps/desktop && pnpm build && cd
+  src-tauri && cargo run --features tauri/custom-protocol` (with `polyph` on
+  PATH).
+
 ## Next steps
 
-1. M4: `polyph-mcp` (rmcp server with claim/memory/inbox/whiteboard tools,
-   registered in `session/new`), `polyph-git` worktrees and merge queue,
-   layer-3 file watcher, team-state digest, planner, memory anchoring, inboxes
-   and loop guard, handoff, `polyph-merge`, reviewer, secrets redaction
-   (gitleaks rules) applied before anything leaves the daemon.
+1. M8: the installable phone PWA (with a browser-only room member on the wasm
+   engine), the VS Code extension (claims decorations, approvals, the shared
+   UI in webviews) and the Nublet provider.
+2. Give `polyph-localagent` the Polyph MCP tools.
+3. Run the real-agent smoke tests, including review, resolve and planning.
+4. Build and try the desktop app on macOS and Windows.
 
 ## Known issues
 

@@ -60,6 +60,16 @@ pub mod card {
     pub const KIND: &str = "kind";
     pub const AUTO_PICKUP: &str = "auto_pickup";
     pub const DRAFT: &str = "draft";
+    /// Brief left by an agent that handed the task over, for the next one.
+    pub const HANDOFF: &str = "handoff";
+    /// Id of the plan that created the card.
+    pub const PLAN: &str = "plan";
+    /// Agent label or person the planner suggested.
+    pub const SUGGESTED_ASSIGNEE: &str = "suggested_assignee";
+    /// Where the card came from: `github:<owner>/<repo>#<n>` or `linear:<KEY-n>`.
+    pub const EXTERNAL: &str = "external";
+    /// Link to the issue it came from.
+    pub const URL: &str = "url";
 }
 
 pub mod activity {
@@ -97,6 +107,16 @@ pub struct CardView {
     pub size: Option<String>,
     pub kind: Option<String>,
     pub draft: bool,
+    #[serde(default)]
+    pub handoff: Option<String>,
+    #[serde(default)]
+    pub plan: Option<String>,
+    #[serde(default)]
+    pub suggested_assignee: Option<String>,
+    #[serde(default)]
+    pub external: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -337,6 +357,11 @@ fn read_card<T: ReadTxn>(m: &MapRef, txn: &T) -> CardView {
         size: any_str(m.get(txn, card::SIZE)),
         kind: any_str(m.get(txn, card::KIND)),
         draft: any_bool(m.get(txn, card::DRAFT)),
+        handoff: any_str(m.get(txn, card::HANDOFF)),
+        plan: any_str(m.get(txn, card::PLAN)),
+        suggested_assignee: any_str(m.get(txn, card::SUGGESTED_ASSIGNEE)),
+        external: any_str(m.get(txn, card::EXTERNAL)),
+        url: any_str(m.get(txn, card::URL)),
     }
 }
 
@@ -352,7 +377,8 @@ pub struct ActivityEntry {
     /// Structured, translatable summary key plus arguments as JSON.
     pub summary_key: String,
     pub args: serde_json::Value,
-    /// Optional full board-state checkpoint for replay (encoded update, base64).
+    /// Every so many card events: all cards as a JSON array of `CardView`,
+    /// where board replay starts (see `polyph_core::activity`).
     pub checkpoint: Option<String>,
 }
 
@@ -384,7 +410,8 @@ impl<'a> Activity<'a> {
                 _ => None,
             })
             .collect();
-        v.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.id.cmp(&b.id)));
+        // Stable: equal times keep the document's order, which every peer shares.
+        v.sort_by_key(|e| e.at);
         v
     }
 }

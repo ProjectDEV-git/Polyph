@@ -343,6 +343,14 @@ pub enum TerminalMsg {
     },
     Closed {
         id: ObjectId,
+        #[serde(default)]
+        exit: Option<u32>,
+    },
+    /// A member asks the owner for the keyboard. The owner answers through an
+    /// approval and announces the result with `Control`.
+    RequestInput {
+        id: ObjectId,
+        member: MemberId,
     },
 }
 
@@ -364,6 +372,59 @@ pub struct Knock {
     pub name_salt: Vec<u8>,
     #[serde(default)]
     pub surface: Option<String>,
+}
+
+/// One file of a hosted working copy. `hash` is BLAKE3 of the content.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MirrorEntry {
+    pub path: String,
+    #[serde(with = "crate::bytes::arr32")]
+    pub hash: [u8; 32],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MirrorFile {
+    pub path: String,
+    #[serde(with = "crate::bytes::vec")]
+    pub data: Vec<u8>,
+}
+
+/// Hosted mode: the host's working copy, mirrored to members. Only the
+/// hosting device sends `Index`, `Files`, `Changed` and `Rejected`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "t", content = "c", rename_all = "snake_case")]
+pub enum MirrorMsg {
+    /// Member to host: send the index.
+    IndexRequest,
+    /// Host: every mirrored file and its hash.
+    Index { files: Vec<MirrorEntry>, too_large: Vec<String> },
+    /// Member to host: send these files.
+    Fetch { paths: Vec<String> },
+    /// Host: file contents (members keep the ones they asked for).
+    Files { files: Vec<MirrorFile> },
+    /// Member to host: a change made in a mirror. `base` is the hash the
+    /// change was made on (None for a new file); `deleted` removes the file.
+    Propose {
+        id: ObjectId,
+        agent: Option<AgentRef>,
+        path: String,
+        #[serde(default, with = "crate::bytes::vec")]
+        base: Vec<u8>,
+        #[serde(with = "crate::bytes::vec")]
+        data: Vec<u8>,
+        deleted: bool,
+    },
+    /// Host: the working copy changed (by the host, or an accepted proposal).
+    Changed {
+        path: String,
+        #[serde(with = "crate::bytes::vec")]
+        data: Vec<u8>,
+        deleted: bool,
+        by: Option<AgentRef>,
+        proposal: Option<ObjectId>,
+    },
+    /// Host to proposer: the change was not applied.
+    Rejected { id: ObjectId, path: String, reason: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -432,6 +493,10 @@ pub enum RoomMessage {
         reply_to: Option<ObjectId>,
         text: String,
         at: i64,
+        /// Agent-to-agent hops since a human last spoke in this exchange (0 for
+        /// a human's message). Receivers stop waking agents past a limit.
+        #[serde(default)]
+        hops: u8,
     },
     Terminal(TerminalMsg),
     /// A spectator view key was created or revoked by the owner.
@@ -439,6 +504,8 @@ pub enum RoomMessage {
         id: ObjectId,
         revoked: bool,
     },
+    /// Hosted mode file mirroring.
+    Mirror(MirrorMsg),
     Goodbye,
     /// A message kind this version does not know. Never sent.
     Unknown,
@@ -465,6 +532,7 @@ const KNOWN_KINDS: &[&str] = &[
     "inbox",
     "terminal",
     "spectator_link",
+    "mirror",
     "goodbye",
     "unknown",
 ];

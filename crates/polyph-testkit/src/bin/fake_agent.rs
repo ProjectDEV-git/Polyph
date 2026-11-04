@@ -9,9 +9,14 @@
 //!   { "write": { "path": "src/auth.rs", "content": "fn login() {}\n" } },
 //!   { "run": { "command": "sh", "args": ["-c", "echo '3 passed; 0 failed'"] } },
 //!   { "raw_write": "/etc/escape.txt" },
-//!   { "usage": { "input": 120, "output": 30 } }
+//!   { "usage": { "input": 120, "output": 30 } },
+//!   { "mcp": { "tool": "claim_files", "args": { "paths": ["src/a.rs"], "reason": "edit" } } },
+//!   { "echo_prompt": true }
 //! ]] }
 //! ```
+//! `mcp` steps call the first MCP server from `session/new`, started the way a
+//! real agent starts it, and report "mcp <tool>: <text>". The string `$MSG` in
+//! their arguments becomes the first `[message id]` in the current prompt.
 //! Results of each step are reported back as agent messages
 //! ("permission: allowed", "write: denied: ...") so tests can assert on them.
 
@@ -20,7 +25,71 @@ use std::sync::Arc;
 use polyph_agents::rpc;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
+use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::Mutex;
+
+/// A minimal MCP client over a child's stdio.
+struct Mcp {
+    _child: Child,
+    stdin: ChildStdin,
+    lines: Lines<BufReader<ChildStdout>>,
+    next: u64,
+}
+
+impl Mcp {
+    async fn start(spec: &Value) -> Option<Mcp> {
+        let mut cmd = tokio::process::Command::new(spec.get("command")?.as_str()?);
+        for a in spec.get("args").and_then(|a| a.as_array()).into_iter().flatten() {
+            cmd.arg(a.as_str()?);
+        }
+        for e in spec.get("env").and_then(|a| a.as_array()).into_iter().flatten() {
+            cmd.env(e.get("name")?.as_str()?, e.get("value")?.as_str()?);
+        }
+        cmd.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).kill_on_drop(true);
+        let mut child = cmd.spawn().ok()?;
+        let stdin = child.stdin.take()?;
+        let lines = BufReader::new(child.stdout.take()?).lines();
+        let mut m = Mcp { _child: child, stdin, lines, next: 0 };
+        m.request("initialize", json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "fake", "version": "0" } })).await?;
+        m.send(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })).await?;
+        Some(m)
+    }
+
+    async fn send(&mut self, v: Value) -> Option<()> {
+        self.stdin.write_all(format!("{v}\n").as_bytes()).await.ok()
+    }
+
+    async fn request(&mut self, method: &str, params: Value) -> Option<Value> {
+        self.next += 1;
+        let id = self.next;
+        self.send(json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })).await?;
+        loop {
+            let line = self.lines.next_line().await.ok()??;
+            let v: Value = serde_json::from_str(&line).ok()?;
+            if v.get("id") == Some(&json!(id)) {
+                return Some(v);
+            }
+        }
+    }
+}
+
+/// The first `[hex]` message id in a prompt.
+fn first_message_id(prompt: &str) -> Option<String> {
+    prompt.split('[').skip(1).find_map(|rest| {
+        let id = rest.split(']').next()?;
+        (id.len() >= 8 && id.chars().all(|c| c.is_ascii_hexdigit())).then(|| id.to_string())
+    })
+}
+
+fn substitute(v: &Value, msg: &str) -> Value {
+    match v {
+        Value::String(s) => Value::String(s.replace("$MSG", msg)),
+        Value::Array(a) => Value::Array(a.iter().map(|x| substitute(x, msg)).collect()),
+        Value::Object(o) => Value::Object(o.iter().map(|(k, x)| (k.clone(), substitute(x, msg))).collect()),
+        other => other.clone(),
+    }
+}
 
 #[derive(Deserialize, Default)]
 struct Script {
@@ -36,6 +105,8 @@ async fn main() {
     let (peer, mut incoming, _tasks) = rpc::connect(tokio::io::stdin(), tokio::io::stdout());
     let turn = Arc::new(Mutex::new(0usize));
     let cwd = Arc::new(Mutex::new(String::new()));
+    let mcp_spec = Arc::new(Mutex::new(Value::Null));
+    let mcp: Arc<Mutex<Option<Mcp>>> = Arc::new(Mutex::new(None));
     while let Some(req) = incoming.recv().await {
         match req.method.as_str() {
             "initialize" => {
@@ -43,6 +114,7 @@ async fn main() {
             }
             "session/new" => {
                 *cwd.lock().await = req.params.get("cwd").and_then(|c| c.as_str()).unwrap_or_default().to_string();
+                *mcp_spec.lock().await = req.params.pointer("/mcpServers/0").cloned().unwrap_or(Value::Null);
                 req.respond(Ok(json!({ "sessionId": "fake-session" })));
             }
             "session/prompt" => {
@@ -53,8 +125,11 @@ async fn main() {
                     s
                 };
                 let (peer, cwd) = (peer.clone(), cwd.lock().await.clone());
+                let prompt =
+                    req.params.pointer("/prompt/0/text").and_then(|t| t.as_str()).unwrap_or_default().to_string();
+                let (mcp, spec) = (mcp.clone(), mcp_spec.lock().await.clone());
                 tokio::spawn(async move {
-                    let usage = run_turn(&peer, &cwd, steps).await;
+                    let usage = run_turn(&peer, &cwd, steps, &prompt, &mcp, &spec).await;
                     let mut resp = json!({ "stopReason": "end_turn" });
                     if let Some(u) = usage {
                         resp["usage"] = u;
@@ -80,12 +155,42 @@ async fn say(peer: &rpc::Peer, text: &str) {
     .await;
 }
 
-async fn run_turn(peer: &rpc::Peer, cwd: &str, steps: Vec<Value>) -> Option<Value> {
+async fn run_turn(
+    peer: &rpc::Peer,
+    cwd: &str,
+    steps: Vec<Value>,
+    prompt: &str,
+    mcp: &Mutex<Option<Mcp>>,
+    spec: &Value,
+) -> Option<Value> {
     let mut usage = None;
     for (i, step) in steps.iter().enumerate() {
         let id = format!("call-{i}");
         if let Some(m) = step.get("message").and_then(|m| m.as_str()) {
             say(peer, m).await;
+        } else if step.get("echo_prompt").is_some() {
+            say(peer, &format!("prompt: {}", prompt.replace('\n', " | "))).await;
+        } else if let Some(call) = step.get("mcp") {
+            let tool = call.get("tool").and_then(|t| t.as_str()).unwrap_or_default().to_string();
+            let args =
+                substitute(call.get("args").unwrap_or(&json!({})), &first_message_id(prompt).unwrap_or_default());
+            let mut guard = mcp.lock().await;
+            if guard.is_none() {
+                *guard = Mcp::start(spec).await;
+            }
+            let text = match guard.as_mut() {
+                None => "no mcp server".to_string(),
+                Some(m) => match m.request("tools/call", json!({ "name": tool, "arguments": args })).await {
+                    Some(r) => r
+                        .pointer("/result/content/0/text")
+                        .and_then(|t| t.as_str())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| r.to_string()),
+                    None => "mcp server closed".to_string(),
+                },
+            };
+            drop(guard);
+            say(peer, &format!("mcp {tool}: {}", text.replace('\n', " | "))).await;
         } else if let Some(t) = step.get("thought").and_then(|m| m.as_str()) {
             update(peer, json!({ "sessionUpdate": "agent_thought_chunk", "content": { "type": "text", "text": t } }))
                 .await;

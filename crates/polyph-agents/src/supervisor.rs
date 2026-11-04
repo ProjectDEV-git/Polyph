@@ -133,7 +133,7 @@ pub fn action_for(fields: &ToolCallFields) -> Action {
         )
         .collect();
     match kind {
-        ToolKind::Edit | ToolKind::Delete | ToolKind::Move => Action::Edit { paths },
+        ToolKind::Edit | ToolKind::Delete | ToolKind::Move => Action::Edit { paths, content: None },
         ToolKind::Read | ToolKind::Search => match paths.first() {
             Some(p) => Action::Read { path: p.clone() },
             None => Action::Other { title },
@@ -428,7 +428,13 @@ async fn write_file(params: Value, worktree: &Path, out: &mpsc::Sender<Output>) 
         return err(-32602, "invalid write request");
     };
     let (abs, _) = resolve(worktree, &p.path);
-    match ask(out, Action::Edit { paths: vec![abs.clone()] }, file_tool("fs-write", ToolKind::Edit, &p.path)).await {
+    match ask(
+        out,
+        Action::Edit { paths: vec![abs.clone()], content: Some(p.content.clone()) },
+        file_tool("fs-write", ToolKind::Edit, &p.path),
+    )
+    .await
+    {
         Answer::Deny { note } => err(-32000, note.unwrap_or_else(|| format!("writing {} was not allowed", p.path))),
         Answer::Allow { .. } => {
             if let Some(parent) = abs.parent() {

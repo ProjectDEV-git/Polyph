@@ -112,6 +112,12 @@ pub struct RoomCtx {
     pub needs_snapshot: bool,
     pub connected_at: Option<tokio::time::Instant>,
     pub lan: Option<crate::lan::LanRoom>,
+    /// Inboxes, reply waiters and the loop guard for this device's agents.
+    pub coord: crate::coord::Coord,
+    /// Hosted mode: this device's side of the shared working copy.
+    pub mirror: Option<crate::mirror::Mirror>,
+    /// Shared terminals: all known, and the ones running here.
+    pub terms: crate::terms::Terminals,
 }
 
 impl std::fmt::Debug for RoomCtx {
@@ -150,6 +156,9 @@ impl RoomRuntime {
                 joins: HashMap::new(),
                 outbox: VecDeque::new(),
                 claim_waiters: HashMap::new(),
+                coord: Default::default(),
+                mirror: None,
+                terms: Default::default(),
                 code_waiters: VecDeque::new(),
                 approval_waiters: HashMap::new(),
                 transcripts: HashMap::new(),
@@ -189,6 +198,16 @@ pub async fn apply(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, effects
     for e in effects {
         match e {
             Effect::Send(m) => send_msg(ctx, &m).await,
+            Effect::Event(RoomEvent::Terminal { from, member, msg }) => {
+                // Terminal bytes reach local clients as their own events.
+                crate::terms::handle(ctx, shared, from, member, *msg);
+            }
+            Effect::Event(RoomEvent::Mirror { from, msg }) => {
+                // File contents stay out of the local event stream.
+                for m in crate::mirror::handle(ctx, shared, from, *msg) {
+                    send_msg(ctx, &RoomMessage::Mirror(m)).await;
+                }
+            }
             Effect::Event(ev) => {
                 match &ev {
                     RoomEvent::JoinReady { knock, approved } => {
@@ -209,6 +228,18 @@ pub async fn apply(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, effects
                             let _ = tx.send(decision.clone());
                         }
                     }
+                    RoomEvent::Inbox { message, for_me: true } => {
+                        ctx.coord.deliver(message.clone());
+                    }
+                    RoomEvent::ClaimRevoked { claim, winner } if claim.owner.device == ctx.core.me => {
+                        ctx.coord.notice(
+                            claim.owner.id,
+                            format!(
+                                "Your claim on {} was revoked after a network split: {} claimed it first. Check whether your changes to it need reconciling.",
+                                claim.target, winner.owner.label
+                            ),
+                        );
+                    }
                     RoomEvent::Agent { event } => {
                         let log = ctx.transcripts.entry(event.agent.id).or_default();
                         log.push_back((**event).clone());
@@ -227,6 +258,11 @@ pub async fn apply(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, effects
     }
     ctx.core.commit_rotation();
     ctx.dirty = true;
+}
+
+/// Seals and publishes one message (queued while disconnected).
+pub async fn send(ctx: &mut RoomCtx, m: &RoomMessage) {
+    send_msg(ctx, m).await
 }
 
 async fn send_msg(ctx: &mut RoomCtx, m: &RoomMessage) {

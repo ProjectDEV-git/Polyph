@@ -12,6 +12,7 @@ use polyph_agents::project::ProjectConfig;
 use polyph_agents::registry::{self, AgentConfig, AgentDef};
 use polyph_agents::supervisor::{AgentProcess, Answer, CommandWrapper, Output, Request};
 use polyph_agents::usage::{Budget, BudgetState, Ledger};
+use polyph_agents::wire::{EnvVariable, McpServerStdio};
 use polyph_core::docs::{self, UsageRecord};
 use polyph_core::{Effect, RoomEvent};
 use polyph_proto::ids::{ObjectId, RoomId};
@@ -19,7 +20,7 @@ use polyph_proto::messages::{
     AgentEvent, AgentEventKind, AgentRef, AgentState, ApprovalKind, ApprovalScope, ClaimTarget, Decision, DocName,
     RoomMessage,
 };
-use polyph_sandbox::proxy::{Allowlist, Decider, ProxyHandle};
+use polyph_sandbox::proxy::{Allowlist, Decider, Internal, ProxyHandle};
 use polyph_sandbox::{Mechanism, Policy};
 use serde::Deserialize;
 use serde_json::json;
@@ -43,9 +44,24 @@ pub struct AgentHandle {
     /// Commands and paths approved "for this task".
     pub approved: Mutex<HashSet<String>>,
     pub busy: Mutex<()>,
+    /// Secret the agent's Polyph MCP server presents on every call.
+    pub mcp_token: String,
+    /// The task's worktree and branch, when the agent works on a task.
+    pub task_wt: Option<crate::tasks::TaskWorktree>,
+    pub helper: bool,
+    /// A handoff brief from the card, given with the first prompt.
+    pub brief: Mutex<Option<String>>,
+    /// Files this agent was just allowed to write through the protocol; the
+    /// layer-3 watcher leaves these alone.
+    pub acp_writes: parking_lot::Mutex<HashMap<PathBuf, std::time::Instant>>,
+    /// Hops of the agent message that started the current turn (0 when a person did).
+    pub trigger_hops: std::sync::atomic::AtomicU8,
     _proxy: ProxyHandle,
     tmp: PathBuf,
     pump: JoinHandle<()>,
+    waker: JoinHandle<()>,
+    /// Claims layer 3: the worktree watcher (see `watch`).
+    watcher: parking_lot::Mutex<Option<JoinHandle<()>>>,
 }
 
 impl std::fmt::Debug for AgentHandle {
@@ -57,6 +73,10 @@ impl std::fmt::Debug for AgentHandle {
 impl Drop for AgentHandle {
     fn drop(&mut self) {
         self.pump.abort();
+        self.waker.abort();
+        if let Some(w) = self.watcher.lock().take() {
+            w.abort();
+        }
         let _ = std::fs::remove_dir_all(&self.tmp);
     }
 }
@@ -81,9 +101,19 @@ pub struct StartParams {
     pub preset: Option<String>,
     pub task: Option<String>,
     pub prompt: Option<String>,
+    /// Give a task its own worktree and branch (default: yes, when `task` is
+    /// set and `cwd` is in a git repository).
+    #[serde(default)]
+    pub worktree: Option<bool>,
+    /// Polyph's own reviewer and resolver agents: they work in scratch
+    /// worktrees and are not subject to room claims.
+    #[serde(skip)]
+    pub helper: bool,
 }
 
-async fn publish(rt: &RoomRuntime, shared: &Shared, agent: &AgentRef, kind: AgentEventKind) {
+pub(crate) async fn publish(rt: &RoomRuntime, shared: &Shared, agent: &AgentRef, mut kind: AgentEventKind) {
+    // Nothing an agent prints, runs or diffs leaves the device unredacted.
+    polyph_core::redact::redact_event(&mut kind);
     let mut ctx = rt.ctx.lock().await;
     ctx.agent_seq += 1;
     let ev = Box::new(AgentEvent { agent: agent.clone(), seq: ctx.agent_seq, at: shared.clock.now(), kind });
@@ -97,7 +127,7 @@ async fn set_state(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, state: Ag
 }
 
 /// Asks the room for approval and waits for the answer.
-async fn request_approval(
+pub(crate) async fn request_approval(
     rt: &RoomRuntime,
     shared: &Shared,
     agent: &AgentRef,
@@ -122,13 +152,60 @@ async fn request_approval(
 fn approval_key(action: &Action) -> Option<String> {
     match action {
         Action::Execute { command } => Some(format!("exec:{command}")),
-        Action::Edit { paths } => {
+        Action::Edit { paths, .. } => {
             Some(format!("edit:{}", paths.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>().join(",")))
         }
         Action::Network { host, port } => Some(format!("net:{host}:{port}")),
         Action::Read { path } => Some(format!("read:{}", path.to_string_lossy())),
         _ => None,
     }
+}
+
+/// Asks the arbiter for `targets` and allows the action if all are granted.
+async fn claim_and_allow(
+    h: &AgentHandle,
+    rt: &RoomRuntime,
+    shared: &Shared,
+    targets: &[ClaimTarget],
+    reason: &str,
+) -> Answer {
+    let rx = {
+        let mut ctx = rt.ctx.lock().await;
+        let now = shared.clock.now();
+        match ctx.core.request_claims(&h.agent, targets, reason, h.task, polyph_core::room::DEFAULT_LEASE, now) {
+            Ok((req, fx)) => {
+                let (tx, rx) = oneshot::channel();
+                ctx.claim_waiters.insert(req, tx);
+                apply(rt, &mut ctx, shared, fx).await;
+                rx
+            }
+            Err(_) => return Answer::Deny { note: Some("could not claim the files".into()) },
+        }
+    };
+    match tokio::time::timeout(Duration::from_secs(15), rx).await {
+        Ok(Ok((_granted, denied))) if denied.is_empty() => Answer::Allow { always: false },
+        Ok(Ok((_, denied))) => {
+            let who: Vec<String> = denied.iter().map(|c| format!("{} ({})", c.target, c.owner.label)).collect();
+            Answer::Deny {
+                note: Some(format!("claimed by someone else: {}. Use ask_agent to coordinate.", who.join(", "))),
+            }
+        }
+        _ => Answer::Deny { note: Some("the claim arbiter did not answer; try again".into()) },
+    }
+}
+
+/// With `[claims] granularity = "symbol"`: the symbols a whole-file write
+/// changes, as claim targets. None when the write must claim the file
+/// (a new file, an unknown language, or changes outside any symbol).
+fn symbol_targets(worktree: &Path, path: &Path, new: &str) -> Option<Vec<ClaimTarget>> {
+    let rel = path.strip_prefix(worktree).ok()?.to_string_lossy().replace('\\', "/");
+    let lang = polyph_merge::symbols::Lang::from_path(&rel)?;
+    let old = std::fs::read_to_string(path).ok()?;
+    let names = polyph_merge::symbols::changed_symbols(&old, new, lang)?;
+    if names.is_empty() {
+        return None;
+    }
+    Some(names.into_iter().map(|n| ClaimTarget { path: rel.clone(), symbol: Some(n) }).collect())
 }
 
 /// Decides one request from an agent: policy first, then claims or a human.
@@ -139,6 +216,30 @@ async fn decide(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, action: Acti
     {
         return Answer::Allow { always: true };
     }
+    // Symbol claims: two agents may edit different functions of one file.
+    if let Action::Edit { paths, content: Some(new) } = &action
+        && paths.len() == 1
+        && h.preset != Preset::AskAll
+        && !h.helper
+        && h.project.symbol_claims()
+        && let Some(targets) = symbol_targets(&h.worktree, &paths[0], new)
+    {
+        let blocked: Vec<String> = {
+            let ctx = rt.ctx.lock().await;
+            let now = shared.clock.now();
+            targets
+                .iter()
+                .filter_map(|t| ctx.core.claims.holder(t, Some(&h.agent), now))
+                .map(|c| format!("{} ({})", c.target, c.owner.label))
+                .collect()
+        };
+        if !blocked.is_empty() {
+            return Answer::Deny {
+                note: Some(format!("claimed by someone else: {}. Use ask_agent to coordinate.", blocked.join(", "))),
+            };
+        }
+        return claim_and_allow(h, rt, shared, &targets, "editing").await;
+    }
     let verdict = {
         let ctx = rt.ctx.lock().await;
         let now = shared.clock.now();
@@ -146,6 +247,9 @@ async fn decide(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, action: Acti
         let claims = &ctx.core.claims;
         let claim = |p: &str| -> ClaimState {
             let t = ClaimTarget { path: p.to_string(), symbol: None };
+            if h.helper {
+                return ClaimState::Mine;
+            }
             match claims.holder(&t, None, now) {
                 None => ClaimState::Free,
                 Some(c) if c.owner.id == me => ClaimState::Mine,
@@ -165,39 +269,7 @@ async fn decide(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, action: Acti
         Verdict::Deny(note) => Answer::Deny { note: Some(note) },
         Verdict::ClaimAndAllow(files) => {
             let targets: Vec<ClaimTarget> = files.iter().map(|f| ClaimTarget::parse(f)).collect();
-            let rx = {
-                let mut ctx = rt.ctx.lock().await;
-                let now = shared.clock.now();
-                match ctx.core.request_claims(
-                    &h.agent,
-                    &targets,
-                    "editing",
-                    h.task,
-                    polyph_core::room::DEFAULT_LEASE,
-                    now,
-                ) {
-                    Ok((req, fx)) => {
-                        let (tx, rx) = oneshot::channel();
-                        ctx.claim_waiters.insert(req, tx);
-                        apply(rt, &mut ctx, shared, fx).await;
-                        rx
-                    }
-                    Err(_) => return Answer::Deny { note: Some("could not claim the files".into()) },
-                }
-            };
-            match tokio::time::timeout(Duration::from_secs(15), rx).await {
-                Ok(Ok((_granted, denied))) if denied.is_empty() => Answer::Allow { always: false },
-                Ok(Ok((_, denied))) => {
-                    let who: Vec<String> = denied.iter().map(|c| format!("{} ({})", c.target, c.owner.label)).collect();
-                    Answer::Deny {
-                        note: Some(format!(
-                            "claimed by someone else: {}. Use ask_agent to coordinate.",
-                            who.join(", ")
-                        )),
-                    }
-                }
-                _ => Answer::Deny { note: Some("the claim arbiter did not answer; try again".into()) },
-            }
+            claim_and_allow(h, rt, shared, &targets, "editing").await
         }
         Verdict::Ask(kind) => {
             set_state(h, rt, shared, AgentState::WaitingApproval, None).await;
@@ -241,7 +313,19 @@ async fn pump(
                         }
                         tokio::time::sleep(Duration::from_millis(20)).await;
                     };
+                    let edits = match &action {
+                        Action::Edit { paths, .. } => paths.clone(),
+                        _ => vec![],
+                    };
                     let a = decide(&h, &rt, &shared, action).await;
+                    if matches!(a, Answer::Allow { .. }) && !edits.is_empty() {
+                        let now = std::time::Instant::now();
+                        let mut w = h.acp_writes.lock();
+                        w.retain(|_, t| now.duration_since(*t) < std::time::Duration::from_secs(60));
+                        for p in edits {
+                            w.insert(p, now);
+                        }
+                    }
                     let _ = reply.send(a);
                 });
             }
@@ -277,7 +361,24 @@ pub fn mechanism(shared: &Shared, project: &ProjectConfig) -> Result<Mechanism, 
 }
 
 pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p: StartParams) -> ApiResult {
-    let worktree = p.cwd.canonicalize().map_err(|e| ApiError::BadRequest(format!("{}: {e}", p.cwd.display())))?;
+    let cwd = p.cwd.canonicalize().map_err(|e| ApiError::BadRequest(format!("{}: {e}", p.cwd.display())))?;
+    let task = p.task.as_deref().and_then(|t| ObjectId::from_hex(t).ok());
+    // A task gets its own worktree and branch, so agents never share files.
+    let task_card = match task {
+        Some(t) => crate::tasks::card(&mut *rt.ctx.lock().await, &t.to_hex()),
+        None => None,
+    };
+    let task_wt = match task {
+        Some(t) if p.worktree != Some(false) && polyph_git::Repo::open(&cwd).is_ok() => {
+            let card = task_card.clone();
+            let branch = card.as_ref().and_then(|c| c.branch.clone()).unwrap_or_else(|| {
+                polyph_git::task_branch(card.as_ref().map(|c| c.title.as_str()).unwrap_or(""), &t.short())
+            });
+            Some(crate::tasks::prepare_worktree(cwd.clone(), branch, None).await?)
+        }
+        _ => None,
+    };
+    let worktree = task_wt.as_ref().map(|w| w.path.clone()).unwrap_or(cwd);
     let project = ProjectConfig::load(&worktree)?;
     let defs = registry::all(&custom_agents(&shared, &project));
     let def = find_def(&defs, &p.kind)?;
@@ -297,7 +398,6 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
     let label =
         if same_kind == 0 { format!("{my_name}/{}", p.kind) } else { format!("{my_name}/{}{}", p.kind, same_kind + 1) };
     let agent = AgentRef { id, member, device, kind: p.kind.clone(), label };
-    let task = p.task.as_deref().and_then(|t| ObjectId::from_hex(t).ok());
 
     let mech = mechanism(&shared, &project)?;
     let tmp = std::env::temp_dir().join(format!("polyph-agent-{}", id.short()));
@@ -318,7 +418,20 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
             })
         })
     };
-    let proxy = polyph_sandbox::proxy::start(allow, decider, Some(tmp.join("run"))).await?;
+    let mcp_token = ObjectId::random().map_err(|e| ApiError::Failed(e.to_string()))?.to_hex();
+    let internal: Internal = {
+        let (rt, shared, once) = (rt.clone(), shared.clone(), once.clone());
+        Arc::new(move |req| {
+            let (rt, shared, once) = (rt.clone(), shared.clone(), once.clone());
+            Box::pin(async move {
+                match once.get().cloned() {
+                    Some(h) => crate::coord::internal(h, rt, shared, req).await,
+                    None => (503, br#"{"error":"agent starting"}"#.to_vec()),
+                }
+            })
+        })
+    };
+    let proxy = polyph_sandbox::proxy::start_with(allow, decider, Some(internal), Some(tmp.join("run"))).await?;
     let writable: Vec<PathBuf> =
         def.config.writable.iter().map(|w| registry::expand(w)).filter(|p| p.exists()).collect();
     let policy = Policy {
@@ -341,11 +454,30 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
         let policy = policy.clone();
         Arc::new(move |prog: &str, args: &[String]| polyph_sandbox::wrap(mech, &policy, prog, args))
     };
+    // The Polyph MCP server runs inside the sandbox and reaches the daemon
+    // through this agent's proxy, at the address the sandbox exports.
+    let mut mcp = vec![];
+    if let Some((cmd, args)) = shared.opts.mcp_command.split_first() {
+        let proxy_url =
+            wrapped.env.iter().find(|(k, _)| k == "HTTP_PROXY").map(|(_, v)| v.clone()).unwrap_or_else(|| proxy.url());
+        mcp.push(McpServerStdio {
+            name: polyph_mcp::SERVER_NAME.into(),
+            command: cmd.clone(),
+            args: args.to_vec(),
+            env: vec![
+                EnvVariable { name: polyph_mcp::ENV_PROXY.into(), value: proxy_url },
+                EnvVariable { name: polyph_mcp::ENV_TOKEN.into(), value: mcp_token.clone() },
+            ],
+        });
+    }
     let (tx, rx) = mpsc::channel(1024);
     let pump_task = tokio::spawn(pump(rx, once.clone(), rt.clone(), shared.clone(), agent.clone()));
-    let proc = match AgentProcess::start(&wrapped, worktree.clone(), vec![], tx, wrap).await {
+    let (wake_tx, wake_rx) = mpsc::unbounded_channel();
+    let waker_task = tokio::spawn(wake_loop(wake_rx, once.clone(), rt.clone(), shared.clone()));
+    let proc = match AgentProcess::start(&wrapped, worktree.clone(), mcp, tx, wrap).await {
         Ok(p) => Arc::new(p),
         Err(e) => {
+            waker_task.abort();
             pump_task.abort();
             let _ = std::fs::remove_dir_all(&tmp);
             return Err(ApiError::Failed(format!("{e}. Run `polyph agents doctor` to check the {} agent.", p.kind)));
@@ -363,13 +495,43 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
         state: Mutex::new(AgentState::Idle),
         approved: Mutex::new(HashSet::new()),
         busy: Mutex::new(()),
+        mcp_token,
+        task_wt: task_wt.clone(),
+        helper: p.helper,
+        brief: Mutex::new(task_card.as_ref().and_then(|c| c.handoff.clone())),
+        acp_writes: parking_lot::Mutex::new(HashMap::new()),
+        trigger_hops: std::sync::atomic::AtomicU8::new(0),
         _proxy: proxy,
         tmp,
         pump: pump_task,
+        waker: waker_task,
+        watcher: parking_lot::Mutex::new(None),
     });
     let _ = once.set(handle.clone());
+    rt.ctx.lock().await.coord.wakers.insert(id, wake_tx);
+    if handle.project.watch() && !p.helper {
+        *handle.watcher.lock() = crate::watch::spawn(handle.clone(), rt.clone(), shared.clone());
+    }
+    if let (Some(t), Some(wt)) = (task, &task_wt) {
+        crate::tasks::update_card(
+            &rt,
+            &shared,
+            &t.to_hex(),
+            Some("in_progress"),
+            &[
+                ("branch", Some(wt.branch.clone())),
+                ("assignee", Some(agent.label.clone())),
+                // The brief is now this agent's; nobody else picks it up.
+                (polyph_proto::crdt::card::HANDOFF, None),
+            ],
+        )
+        .await;
+    }
     agents.map.lock().await.insert(id, handle.clone());
     publish(&rt, &shared, &agent, AgentEventKind::Started { task, model: None, cloud: false }).await;
+    if !p.helper {
+        crate::feed::log(&rt, &shared, "agent_started", Some(&agent.label), json!({ "kind": agent.kind, "card": task.map(|t| t.to_hex()), "branch": task_wt.as_ref().map(|w| w.branch.clone()) })).await;
+    }
     set_state(&handle, &rt, &shared, AgentState::Idle, None).await;
     if let Some(text) = p.prompt {
         let (shared, rt, h) = (shared.clone(), rt.clone(), handle.clone());
@@ -379,7 +541,14 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
             }
         });
     }
-    Ok(json!({ "id": id.to_hex(), "label": agent.label, "sandbox": mech, "preset": preset }))
+    Ok(json!({
+        "id": id.to_hex(),
+        "label": agent.label,
+        "sandbox": mech,
+        "preset": preset,
+        "worktree": task_wt.as_ref().map(|w| w.path.clone()),
+        "branch": task_wt.as_ref().map(|w| w.branch.clone()),
+    }))
 }
 
 /// The ledger and budgets of a room, from its shared documents.
@@ -396,8 +565,39 @@ pub async fn ledger(rt: &RoomRuntime, prices: &polyph_agents::usage::PriceTable)
     (l, budgets)
 }
 
+/// Runs turns when other agents write to this one, within the loop guard.
+async fn wake_loop(
+    mut rx: mpsc::UnboundedReceiver<()>,
+    handle: Arc<tokio::sync::OnceCell<Arc<AgentHandle>>>,
+    rt: Arc<RoomRuntime>,
+    shared: Arc<Shared>,
+) {
+    while rx.recv().await.is_some() {
+        while rx.try_recv().is_ok() {}
+        let Some(h) = handle.get().cloned() else { continue };
+        let allowed = rt.ctx.lock().await.coord.allow_wake(h.agent.id, shared.clock.now());
+        if !allowed {
+            shared.emit(crate::events::ApiEvent::room_kind(
+                &h.room,
+                "loop_guard",
+                json!({ "agent": h.agent.id.to_hex(), "label": h.agent.label, "reason": "wakes_per_hour" }),
+            ));
+            continue;
+        }
+        if let Err(e) = run_turn(&shared, &rt, &h, None).await {
+            warn!(error = %e, agent = %h.agent.label, "turn for new messages failed");
+        }
+    }
+}
+
 /// Sends a prompt, enforcing budgets and recording usage.
 pub async fn prompt(shared: &Shared, rt: &RoomRuntime, h: &AgentHandle, text: &str) -> ApiResult {
+    run_turn(shared, rt, h, Some(text)).await
+}
+
+/// One turn: a person's prompt (`Some`), or a wake for new messages (`None`).
+/// Unread messages and Polyph notices are added to the prompt either way.
+async fn run_turn(shared: &Shared, rt: &RoomRuntime, h: &AgentHandle, text: Option<&str>) -> ApiResult {
     let member = h.agent.member.to_hex();
     let (l, budgets) = ledger(rt, &h.project.prices).await;
     if budgets.iter().filter(|b| b.applies_to(&member)).any(|b| b.state(&l) == BudgetState::Exceeded) {
@@ -407,6 +607,24 @@ pub async fn prompt(shared: &Shared, rt: &RoomRuntime, h: &AgentHandle, text: &s
         ));
     }
     let _busy = h.busy.lock().await;
+    let (mut extra, hops) = crate::coord::turn_boundary(&mut *rt.ctx.lock().await, h.agent.id);
+    if let Some(b) = h.brief.lock().await.take() {
+        extra = Some(match extra {
+            Some(x) => format!("[Polyph] Handoff:\n{b}\n\n{x}"),
+            None => format!("[Polyph] Handoff:\n{b}"),
+        });
+    }
+    let woken = text.is_none();
+    let text = match (text, extra) {
+        (Some(t), Some(x)) => format!("{t}\n\n{x}"),
+        (Some(t), None) => t.to_string(),
+        (None, Some(x)) => x,
+        // Woken, but a turn in between already delivered the messages.
+        (None, None) => return Ok(json!({ "stop_reason": null })),
+    };
+    // A person's prompt starts a fresh exchange; a wake continues the chain.
+    h.trigger_hops.store(if woken { hops } else { 0 }, std::sync::atomic::Ordering::Relaxed);
+    let text = text.as_str();
     publish(rt, shared, &h.agent, AgentEventKind::Prompt { text: text.to_string(), from: h.agent.member }).await;
     set_state(h, rt, shared, AgentState::Running, None).await;
     let r = h.proc.prompt(text).await;
@@ -456,12 +674,24 @@ pub async fn stop(shared: &Shared, agents: &Agents, rt: &RoomRuntime, id: Object
     h.proc.stop().await;
     {
         let mut ctx = rt.ctx.lock().await;
+        ctx.coord.wakers.remove(&id);
+        ctx.coord.inboxes.remove(&id);
         let mine: Vec<ObjectId> =
             ctx.core.claims.all().into_iter().filter(|c| c.owner.id == id).map(|c| c.id).collect();
         let fx = ctx.core.release_claims(&mine);
         apply(rt, &mut ctx, shared, fx).await;
     }
     publish(rt, shared, &h.agent, AgentEventKind::Stopped { reason: "stopped".into() }).await;
+    if !h.helper {
+        crate::feed::log(
+            rt,
+            shared,
+            "agent_stopped",
+            Some(&h.agent.label),
+            json!({ "card": h.task.map(|t| t.to_hex()) }),
+        )
+        .await;
+    }
     Ok(json!({}))
 }
 

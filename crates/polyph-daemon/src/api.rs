@@ -2,6 +2,8 @@
 //! single calls over HTTP (`POST /rpc`). Every request needs the token from
 //! `api.token` as `Authorization: Bearer <token>` or `?token=`.
 //!
+//! The browser client signs in with a one-time link instead (see `web.rs`).
+//!
 //! WebSocket clients receive events as `{"method":"event","params":{...}}`
 //! and, after calling `status.watch`, status feed lines as
 //! `{"method":"status","params":{...}}`.
@@ -10,7 +12,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Query, State};
+use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -32,6 +34,15 @@ const MAX_REQUEST: usize = 4 * 1024 * 1024;
 struct ApiState {
     daemon: Arc<Daemon>,
     token: Arc<String>,
+    web: Arc<crate::web::WebAuth>,
+    web_dir: Option<Arc<std::path::PathBuf>>,
+}
+
+/// How a request proved itself: the API token, or a browser session.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Auth {
+    Token,
+    Session,
 }
 
 #[derive(Deserialize)]
@@ -45,15 +56,24 @@ mod subtle_compare {
     }
 }
 
-fn authorized(st: &ApiState, headers: &HeaderMap, q: &TokenQuery) -> bool {
+/// Constant-time comparison for secrets.
+pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    eq(a, b)
+}
+
+fn authorized(st: &ApiState, headers: &HeaderMap, q: &TokenQuery) -> Option<Auth> {
     let from_header = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::to_string);
-    match from_header.or_else(|| q.token.clone()) {
-        Some(t) => eq(t.as_bytes(), st.token.as_bytes()),
-        None => false,
+    let t = from_header.or_else(|| q.token.clone())?;
+    if eq(t.as_bytes(), st.token.as_bytes()) {
+        Some(Auth::Token)
+    } else if st.web.session_valid(&t) {
+        Some(Auth::Session)
+    } else {
+        None
     }
 }
 
@@ -80,11 +100,15 @@ pub async fn serve(daemon: Arc<Daemon>, port: u16) -> anyhow::Result<ApiServer> 
     let addr = listener.local_addr()?;
     let info = json!({ "port": addr.port(), "pid": std::process::id(), "version": env!("CARGO_PKG_VERSION") });
     crate::paths::write_private(&daemon.shared.paths.daemon_info(), info.to_string().as_bytes())?;
-    let st = ApiState { daemon, token: Arc::new(token) };
+    let web_dir = crate::web::web_dir().map(Arc::new);
+    let st = ApiState { daemon, token: Arc::new(token), web: Arc::default(), web_dir };
     let app = Router::new()
         .route("/ws", get(ws))
         .route("/rpc", post(rpc))
         .route("/healthz", get(|| async { "ok" }))
+        .route("/web/session", post(web_session))
+        .route("/", get(|| async { axum::response::Redirect::temporary("/app/") }))
+        .route("/{*path}", get(web_file))
         .with_state(st);
     let task = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
@@ -98,17 +122,63 @@ async fn rpc(
     Query(q): Query<TokenQuery>,
     Json(req): Json<Value>,
 ) -> Response {
-    if !authorized(&st, &headers, &q) {
+    let Some(auth) = authorized(&st, &headers, &q) else {
         return (StatusCode::UNAUTHORIZED, "missing or wrong API token").into_response();
+    };
+    if !crate::web::origin_allowed(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
     }
-    Json(dispatch(&st, req).await).into_response()
+    Json(dispatch(&st, auth, req).await).into_response()
 }
 
-async fn dispatch(st: &ApiState, req: Value) -> Value {
+#[derive(Deserialize)]
+struct SessionReq {
+    code: String,
+}
+
+/// Trades a one-time link code for a browser session token.
+async fn web_session(State(st): State<ApiState>, headers: HeaderMap, Json(req): Json<SessionReq>) -> Response {
+    if !crate::web::local_host(&headers) || !crate::web::origin_allowed(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    match st.web.redeem(&req.code) {
+        Some(token) => Json(json!({ "token": token })).into_response(),
+        None => (StatusCode::UNAUTHORIZED, "link expired or already used").into_response(),
+    }
+}
+
+async fn web_file(State(st): State<ApiState>, headers: HeaderMap, UrlPath(path): UrlPath<String>) -> Response {
+    if !crate::web::local_host(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    match &st.web_dir {
+        Some(dir) => crate::web::serve_file(dir, &path).await,
+        None => (StatusCode::NOT_FOUND, "the browser client is not installed").into_response(),
+    }
+}
+
+async fn dispatch(st: &ApiState, auth: Auth, req: Value) -> Value {
     let id = req.get("id").cloned().unwrap_or(Value::Null);
     let Some(method) = req.get("method").and_then(|m| m.as_str()) else {
         return json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32600, "message": "missing method" } });
     };
+    if method == "web.link" {
+        // Only the API token's holder (the CLI, the desktop app) can sign in a browser.
+        if auth != Auth::Token || st.web_dir.is_none() {
+            let msg = if st.web_dir.is_none() {
+                "the browser client is not installed"
+            } else {
+                "not allowed from a browser session"
+            };
+            return json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32001, "message": msg } });
+        }
+        return match st.web.link() {
+            Some(code) => json!({ "jsonrpc": "2.0", "id": id, "result": { "code": code } }),
+            None => {
+                json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32603, "message": "no system randomness" } })
+            }
+        };
+    }
     let params = req.get("params").cloned().unwrap_or_else(|| json!({}));
     match st.daemon.call(method, params).await {
         Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
@@ -122,13 +192,16 @@ async fn ws(
     Query(q): Query<TokenQuery>,
     up: WebSocketUpgrade,
 ) -> Response {
-    if !authorized(&st, &headers, &q) {
+    let Some(auth) = authorized(&st, &headers, &q) else {
         return (StatusCode::UNAUTHORIZED, "missing or wrong API token").into_response();
+    };
+    if !crate::web::origin_allowed(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
     }
-    up.max_message_size(MAX_REQUEST).on_upgrade(move |s| session(st, s))
+    up.max_message_size(MAX_REQUEST).on_upgrade(move |s| session(st, auth, s))
 }
 
-async fn session(st: ApiState, socket: WebSocket) {
+async fn session(st: ApiState, auth: Auth, socket: WebSocket) {
     let (mut sink, mut stream) = socket.split();
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(1024);
     let writer = tokio::spawn(async move {
@@ -150,7 +223,7 @@ async fn session(st: ApiState, socket: WebSocket) {
                 };
                 let Ok(req) = serde_json::from_str::<Value>(&text) else { continue };
                 if req.get("method").and_then(|m| m.as_str()) == Some("status.watch") {
-                    let mut f = StatusFeed::default();
+                    let mut f = StatusFeed::new(st.daemon.shared.clock.now());
                     let snap = f.snapshot(st.daemon.status().await);
                     let _ = tx.send(json!({ "jsonrpc": "2.0", "id": req.get("id").cloned().unwrap_or(Value::Null), "result": {} }).to_string()).await;
                     let _ = tx.send(json!({ "jsonrpc": "2.0", "method": "status", "params": snap }).to_string()).await;
@@ -161,7 +234,7 @@ async fn session(st: ApiState, socket: WebSocket) {
                 let tx2 = tx.clone();
                 // Long calls (join waits for approval) must not block events.
                 tokio::spawn(async move {
-                    let resp = dispatch(&st2, req).await;
+                    let resp = dispatch(&st2, auth, req).await;
                     let _ = tx2.send(resp.to_string()).await;
                 });
             }

@@ -175,3 +175,48 @@ mod tests {
         assert!(voice_css(255, Step::Person, Theme::Light).starts_with("oklch(0.5"));
     }
 }
+
+/// Golden vectors shared with `packages/ui/src/voice.ts`. Run with
+/// `POLYPH_UPDATE_GOLDEN=1` to rewrite the file after a deliberate change.
+#[cfg(test)]
+mod golden {
+    use super::*;
+
+    fn vectors() -> serde_json::Value {
+        let mut hues = vec![];
+        let mut used = vec![];
+        for _ in 0..12 {
+            let h = assign_hue(&used);
+            hues.push(h);
+            used.push(h);
+        }
+        let mut colors = vec![];
+        for h in (0u16..360).step_by(13) {
+            for (tn, theme) in [("dark", Theme::Dark), ("light", Theme::Light)] {
+                for (sn, step) in [
+                    (serde_json::Value::Null, Step::Person),
+                    (0.into(), Step::Agent(0)),
+                    (1.into(), Step::Agent(1)),
+                    (2.into(), Step::Agent(2)),
+                    (3.into(), Step::Agent(3)),
+                ] {
+                    colors.push(serde_json::json!([h, sn, tn, voice_css(h, step, theme)]));
+                }
+            }
+        }
+        serde_json::json!({ "hues": hues, "colors": colors })
+    }
+
+    #[test]
+    fn matches_the_typescript_vectors() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/ui/test/voice-golden.json");
+        let want = vectors();
+        if std::env::var_os("POLYPH_UPDATE_GOLDEN").is_some() {
+            std::fs::write(&path, serde_json::to_string_pretty(&want).unwrap() + "\n").unwrap();
+        }
+        // Compare values, not text: key order depends on serde_json features.
+        let have: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap_or_default()).unwrap_or_default();
+        assert_eq!(have, want, "voice vectors changed; rerun with POLYPH_UPDATE_GOLDEN=1 and check voice.ts");
+    }
+}

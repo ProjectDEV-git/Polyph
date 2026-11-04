@@ -297,6 +297,88 @@ Layouts are in `crates/polyph-proto/src/crdt.rs`.
 - A member returning when nobody is online fetches snapshots, decrypts the
   newest one it can, merges it, then syncs with peers when they appear.
 
+### 9.1 Memory notes
+
+The `Memory` document holds a Y.Map `notes`: note id (hex) to a JSON string
+with `id`, `path` (repository-relative, normalized; a trailing `/` pins a
+directory), `line` (1-based, or null for the whole file), `anchor`, `text`,
+`author` (member id hex), `agent` (label or null) and `at`. The anchor keeps
+the trimmed text of the pinned line and of the nearest non-blank lines above
+and below it. Readers re-place a note against their own copy of the file:
+the line itself must match, neighbors and distance from the old line break
+ties, and a note whose line is gone is shown as possibly stale. Layout and
+placement are in `crates/polyph-core/src/memory.rs`.
+
+### 9.2 Inboxes
+
+`Inbox { id, to, from_member, from_agent, thread, reply_to, text, at, hops }`
+is a directed message to one agent, readable by every member like any room
+message. Receivers accept it only if `from_member` is the sender's member and
+`from_agent`, when present, runs on the sending device. Text is at most
+16 KiB.
+
+`hops` counts agent-to-agent steps since a person last spoke: 0 for a
+person's message, and one more than the hops of the message that started the
+sending agent's turn otherwise. The daemon running the target agent:
+
+- wakes an idle agent for a message from another agent only while
+  `hops < 4`, and at most 12 times per hour per agent;
+- never wakes an agent for a person's message (that would be steering
+  someone else's agent); it is delivered at the agent's next turn;
+- limits each agent to 8 messages per target agent per 10 minutes.
+
+Messages that do not wake an agent are not dropped: they are added to the
+agent's next prompt. Older peers decode messages without `hops` as 0.
+
+### 9.3 Board additions
+
+Cards may carry `handoff` (a brief for the next agent), `plan` (the planner
+run that created it) and `suggested_assignee`. The Board document also holds
+`merge_queue`: a Y.Map of entry id to a JSON merge entry (branch, target,
+queued commit, device that runs it, state, detail, files resolved and how,
+merge commit). Only the entry's device changes it. Layouts are in
+`crates/polyph-proto/src/crdt.rs` and `crates/polyph-core/src/docs.rs`.
+
+### 9.4 Hosted mode
+
+The Settings key `hosted` names the device holding the shared working copy.
+`Mirror(MirrorMsg)` messages carry it:
+
+- members send `IndexRequest`, `Fetch { paths }` and
+  `Propose { id, agent, path, base, data, deleted }`;
+- only the hosting device sends `Index { files, too_large }`, `Files`,
+  `Changed { path, data, deleted, by, proposal }` and `Rejected`.
+
+Hashes are BLAKE3 of the content. The host applies a proposal only if `base`
+is the current hash (empty for a new file) and no agent on another device
+holds a claim covering the path; otherwise it answers `Rejected` and the
+member restores the host's version. Files over 512 KiB, gitignored files and
+build directories are not mirrored. `Files` messages stay under 700 KiB.
+
+### 9.5 Activity and whiteboards
+
+The Activity document's `events` array holds JSON entries (`id`, `at`,
+`kind`, `actor`, `agent`, `summary_key`, `args`, `checkpoint`). Each device
+logs its own board changes as `card_created`, `card_moved`, `card_updated`
+and `card_removed`; every 50 card events one entry's `checkpoint` holds all
+cards as a JSON array. Readers sort by `at`, keeping document order for equal
+times. `summary_key` names a Fluent message in `activity.ftl`.
+
+Whiteboards are listed in the Settings map under `whiteboard:<id>` (JSON with
+`id`, `name`, `created_by`, `created_at`); a device that sees a listed board
+it lacks sends a `CrdtSyncRequest` for `whiteboard/<id>`.
+
+### 9.6 Terminals
+
+`Terminal(TerminalMsg)` messages: the owner's device sends `Opened`,
+`Output`, `Resize`, `Control` and `Closed { exit }`; members send
+`RequestInput { member }` and, while they hold the keyboard, `Input`.
+Receivers accept `Input` and `RequestInput` only for the sender's own member,
+`Output`, `Resize` and `Closed` only from the owner's device, and `Control`
+from the owner's device or (to give it back) from the current holder. A
+request becomes an approval of kind `TerminalInput` that only the terminal's
+owner may answer.
+
 ## 10. Acting host
 
 One online device per room is the **acting host**. It arbitrates claims,

@@ -6,16 +6,17 @@ here should be described as done anywhere else.
 ## Not started (later milestones)
 
 Crates that currently contain only a placeholder `lib.rs`:
-`polyph-mcp`,
-`polyph-git`, `polyph-merge`, `polyph-term`, `polyph-plugins`. Directories
+`polyph-plugins`. Directories
 `apps/`, `packages/`, `integrations/`, `deploy/` and `cloud/` (except its
-LICENSE) are not built. The TUI does not exist yet: `polyph` with no
-arguments prints help.
+LICENSE) are not built. `polyph` with no arguments opens the TUI in a terminal and prints help
+otherwise.
 
 CLI commands not implemented yet (they arrive with their milestones):
 `login`, `logout`, `cloud *` (and `agent start --on cloud`), `plan`,
 `task *`, `memory *`, `term *`, `sync`, `spectate-link *`, `template *`,
-`skills *`, `plugin *`, `mcp`. `polyph host --mode hosted` is
+`skills *`, `plugin *`. (`polyph mcp` exists: agents start it.) People can
+list memory notes and message agents through the daemon API (`memory.list`,
+`inbox.send`) but not yet from the CLI. `polyph host --mode hosted` is
 accepted but hosted mode is M4.
 
 ## Partial work in finished milestones
@@ -74,6 +75,102 @@ accepted but hosted mode is M4.
   Code, Codex and Ollama but have not been run: none is installed here.
 - **Security contact address** in `docs/security.md` is not set.
 - **Relay self-hosting docs** for EC2, LAN and cloud agents come with M11.
+
+## Milestone 4 gaps
+
+- **Whiteboard tools for agents** come with whiteboards (M5).
+- **Local agent ignores MCP servers.** `polyph-localagent` does not read
+  `mcpServers` from `session/new`, so it has no Polyph tools; it still gets
+  claims through its ACP writes.
+- **Container mode and MCP.** The MCP server command is the host's `polyph`
+  binary, which is not inside a container image; container-mode agents get
+  no Polyph tools until the binary is mounted into the container.
+- **Inboxes are in memory.** Unread messages live in the daemon of the
+  device running the agent and are lost if that daemon restarts. The
+  messages themselves still pass through the relay buffer.
+- **Reply to a person.** `reply` only answers agents; a person's message is
+  answered in the agent's normal output.
+- **Merges are per device.** The merge queue merges into the target branch of
+  the repository on the device that ran the task. Members on different
+  machines share work through a remote (`[merge] push`), which asks a person
+  before pushing; nothing fetches or rebases a teammate's pushes yet, and a
+  successor on another device after a handoff needs the branch fetched by hand.
+- **Symbols are found by heuristics** (`polyph-merge::symbols`), not a parser:
+  unusual formatting can put a change "outside any symbol", which falls back to
+  a whole-file claim or an agent-resolved conflict, never to a wrong merge.
+- **Symbol claims and shared directories.** Symbol claims let two agents write
+  one file; in hosted mode or any shared directory their whole-file writes can
+  still overwrite each other. Use them with task worktrees.
+- **Hosted mode** is not persisted: the host and members run `polyph host
+  --mode hosted` / `polyph mirror` again after a daemon restart. Files over
+  512 KiB, build output and gitignored files are not mirrored; a member's
+  mirror has no `.git`, so members' agents do not get task worktrees there.
+- **Agents cannot pick up tasks themselves.** The board's `auto_pickup` field
+  is not acted on; people start agents on cards.
+- **Real-agent smoke tests** of the review, resolve and planner prompts have
+  not run (no real agents installed here).
+
+## Milestone 5 gaps
+
+- **Terminal attach** exists in the TUI; `polyph term send/read` remain the
+  scripted way in the CLI.
+- **Late viewers of a terminal** see output from when their device came
+  online (plus what the relay buffer replays); the owner does not resend
+  scrollback to newcomers.
+- **Agents' own command terminals** are summarized in transcripts, not shared
+  as live terminals.
+- **Terminal output redaction** works per output batch; a secret split across
+  two batches can slip through.
+- **OS notifications** are not shown by the daemon itself: local apps receive
+  `notification` events and show them (M6/M7); Linux panels can use D-Bus.
+- **Webhook URLs and secrets** are per device and not synced between a
+  person's devices.
+- **GitHub and Linear** are followed by polling (every minute for pull
+  requests); no incoming webhooks from them yet. Linear only moves issues for
+  card moves made on the device holding the key.
+- **D-Bus** only on Linux; macOS and Windows status integrations come with
+  the status pill (M7).
+- **Activity checkpoints** cover cards (column and title); replaying other
+  card fields needs the full card history.
+
+## Milestone 6 gaps
+
+- **The TUI does not resize shared terminals**: an attached terminal shows the
+  owner's size; only the owner's own client can resize it.
+- **No mouse support** in the TUI; everything is on the keyboard.
+- **Whiteboards are not shown in the TUI** (they need a canvas); agents' and
+  people's whiteboards are read in the apps (M7) or as text via the agents'
+  `read_whiteboard` tool.
+- **Plans** are created with `:plan` and accepted from the CLI
+  (`polyph plan accept`); the TUI shows the drafts' board, not a plan review.
+- **Screen readers**: the TUI follows terminal conventions (no live-region
+  equivalent); the apps carry the accessibility work.
+- **The Impeccable `critique`/`audit`/`polish` passes** named in DESIGN.md were
+  done by hand against PRODUCT.md and DESIGN.md (the Impeccable skill is not
+  installed in this environment).
+
+## Milestone 7 gaps
+
+- **Browser-only members** (joining a room from a browser with no daemon,
+  using the wasm engine over the relay) come with the phone PWA in M8. The
+  browser client today is a window onto the person's own daemon.
+- **Desktop packaging** is configured (`tauri.conf.json`, icons) but no
+  installers are built or signed yet; the app expects `polyph` next to it or
+  on PATH. Release work is M11.
+- **macOS and Windows** builds of the desktop app have not been run; it was
+  built and run on Linux (WebKitGTK under Xvfb).
+- **Shared terminals keep the owner's size**: the app shows them at their
+  size with scrolling and does not resize them to the window.
+- **Integrations are read-only in the app**: connecting GitHub or Linear and
+  managing webhooks stay in the CLI.
+- **Excalidraw's built-in font fallback** to a CDN is blocked by the page
+  policy (fonts are bundled), which logs blocked requests in the console.
+- **Simplified Chinese UI font** relies on platform fonts; the Noto Sans SC
+  subset named in DESIGN.md is not bundled yet.
+- **Agent-made whiteboard shapes** are not yet outlined in their voice.
+- **The Impeccable passes** were done by hand with the design-taste
+  inspector (`inspect.mjs --app`); its remaining warnings are the third
+  typeface (DESIGN.md's serif for room names) and honest empty space.
 
 ## Process gaps
 

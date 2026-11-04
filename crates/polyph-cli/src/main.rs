@@ -3,6 +3,7 @@
 //! `locales/*/cli.ftl`.
 
 mod client;
+mod work;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -37,6 +38,11 @@ enum Cmd {
         cmd: DaemonCmd,
     },
     Whoami,
+    Web {
+        /// Print the link instead of opening the browser.
+        #[arg(long)]
+        no_open: bool,
+    },
     Room {
         #[command(subcommand)]
         cmd: RoomCmd,
@@ -141,7 +147,62 @@ enum Cmd {
         #[command(subcommand)]
         cmd: SandboxCmd,
     },
+    Mcp,
     Usage {
+        #[arg(long)]
+        room: Option<String>,
+    },
+    Term {
+        #[command(subcommand)]
+        cmd: work::TermCmd,
+    },
+    Thread {
+        #[command(subcommand)]
+        cmd: work::ThreadCmd,
+    },
+    Activity {
+        #[arg(long)]
+        room: Option<String>,
+        #[arg(long, default_value_t = 30)]
+        limit: usize,
+    },
+    Whiteboard {
+        #[command(subcommand)]
+        cmd: work::WhiteboardCmd,
+    },
+    Plan {
+        #[command(subcommand)]
+        cmd: work::PlanCmd,
+    },
+    Task {
+        #[command(subcommand)]
+        cmd: work::TaskCmd,
+    },
+    Merge {
+        #[arg(long)]
+        room: Option<String>,
+    },
+    Memory {
+        /// A file or directory (default: every note).
+        path: Option<String>,
+        #[arg(long)]
+        room: Option<String>,
+    },
+    Github {
+        #[command(subcommand)]
+        cmd: work::GithubCmd,
+    },
+    Linear {
+        #[command(subcommand)]
+        cmd: work::LinearCmd,
+    },
+    Webhook {
+        #[command(subcommand)]
+        cmd: work::WebhookCmd,
+    },
+    Mirror {
+        /// Directory for your mirror of the room's shared working copy.
+        dir: PathBuf,
         #[arg(long)]
         room: Option<String>,
     },
@@ -317,13 +378,24 @@ struct Ctx {
     paths: Paths,
 }
 
+/// Prints a line; a closed pipe (`polyph ... | head`) ends the program quietly.
+fn line(s: &str) {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    if let Err(e) = writeln!(out, "{s}")
+        && e.kind() == std::io::ErrorKind::BrokenPipe
+    {
+        std::process::exit(0);
+    }
+}
+
 impl Ctx {
     fn out(&self, s: impl AsRef<str>) {
-        println!("{}", s.as_ref());
+        line(s.as_ref());
     }
 
     fn print_json(&self, v: &Value) {
-        println!("{}", serde_json::to_string_pretty(v).unwrap_or_default());
+        line(&serde_json::to_string_pretty(v).unwrap_or_default());
     }
 
     async fn api(&self) -> anyhow::Result<Api> {
@@ -368,6 +440,7 @@ async fn call(api: &mut Api, method: &str, params: Value) -> anyhow::Result<Valu
 }
 
 fn main() {
+    let _ = UTC_OFFSET.set(time::UtcOffset::current_local_offset().map(|o| i64::from(o.whole_seconds())).unwrap_or(0));
     // The sandbox helper re-enters this binary before anything else runs.
     let raw: Vec<String> = std::env::args().collect();
     if raw.get(1).map(String::as_str) == Some("__sandbox") {
@@ -410,9 +483,50 @@ fn main() {
     std::process::exit(code);
 }
 
+/// Opens a URL in the person's browser.
+fn open_browser(url: &str) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    let mut c = std::process::Command::new("open");
+    #[cfg(target_os = "windows")]
+    let mut c = {
+        let mut c = std::process::Command::new("rundll32");
+        c.arg("url.dll,FileProtocolHandler");
+        c
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let mut c = std::process::Command::new("xdg-open");
+    let status = c
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()?;
+    if status.success() { Ok(()) } else { Err(std::io::Error::other("no browser")) }
+}
+
+/// Local time offset, read in `main` before any thread starts (the only time
+/// it can be read soundly on Unix).
+static UTC_OFFSET: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+
+async fn tui(ctx: &Ctx) -> anyhow::Result<()> {
+    let port = client::ensure_daemon(&ctx.paths, true).await.map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let token = std::fs::read_to_string(ctx.paths.token())?;
+    let (conn, events) = polyph_tui::conn::connect(port, &token).await?;
+    let cfg = polyph_daemon::config::UserConfig::load(&ctx.paths).unwrap_or_default();
+    let mode = if cfg.theme == "light" { polyph_tui::theme::Mode::Light } else { polyph_tui::theme::Mode::Dark };
+    let theme = polyph_tui::theme::Theme::new(polyph_tui::theme::Depth::detect(), mode);
+    let mut app = polyph_tui::App::new(Localizer::new(ctx.l.lang()), theme);
+    app.utc_offset = UTC_OFFSET.get().copied().unwrap_or(0);
+    polyph_tui::run(app, conn, events).await
+}
+
 async fn run(ctx: &Ctx, cmd: Option<Cmd>) -> anyhow::Result<()> {
     let Some(cmd) = cmd else {
-        // The terminal UI arrives in milestone 6; until then show help.
+        use std::io::IsTerminal;
+        // In a terminal: the TUI. Piped or scripted: help.
+        if std::io::stdout().is_terminal() && std::io::stdin().is_terminal() {
+            return tui(ctx).await;
+        }
         let l = &ctx.l;
         let mut c = localize(Cli::command(), l, "");
         c.print_help()?;
@@ -433,6 +547,8 @@ async fn run(ctx: &Ctx, cmd: Option<Cmd>) -> anyhow::Result<()> {
             h.shutdown().await;
             Ok(())
         }
+        // Started by agents inside their sandbox; speaks MCP on stdin/stdout.
+        Cmd::Mcp => polyph_mcp::run_stdio().await,
         Cmd::Completions { shell } => {
             let mut c = Cli::command();
             clap_complete::generate(shell, &mut c, "polyph", &mut std::io::stdout());
@@ -468,13 +584,32 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
             }
         }
         Cmd::Room { cmd } => room_cmd(ctx, &mut api, cmd).await?,
-        Cmd::Host { quick, lan, no_approval, name, bridge, mode: _ } => {
+        Cmd::Host { quick, lan, no_approval, name, bridge, mode } => {
+            if mode != "distributed" && mode != "hosted" {
+                anyhow::bail!(tr!(l, "host-bad-mode", mode = mode.as_str()));
+            }
             let name = name.unwrap_or_default();
             let room = call(&mut api, "room.create", json!({ "name": name, "quick": quick || name.is_empty(), "require_approval": !no_approval, "lan": lan, "bridge": bridge })).await?;
             let rid = room["id"].as_str().unwrap_or_default().to_string();
+            let shared = if mode == "hosted" {
+                let dir = std::env::current_dir()?;
+                Some(call(&mut api, "mirror.host", json!({ "room": rid, "dir": dir })).await?)
+            } else {
+                None
+            };
             let inv = call(&mut api, "room.invite", json!({ "room": rid })).await?;
+            if let Some(s) = &shared
+                && !ctx.json
+            {
+                ctx.out(tr!(
+                    l,
+                    "hosted-sharing",
+                    dir = s["root"].as_str().unwrap_or_default(),
+                    files = s["files"].as_u64().unwrap_or(0)
+                ));
+            }
             if ctx.json {
-                ctx.print_json(&json!({ "room": room, "invite": inv }));
+                ctx.print_json(&json!({ "room": room, "invite": inv, "hosted": shared }));
             } else {
                 if room["quick"].as_bool() == Some(true) {
                     ctx.out(l.t("quick-created"));
@@ -507,6 +642,18 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                     name = r["name"].as_str().unwrap_or_default(),
                     role = ctx.role(r["role"].as_str().unwrap_or("member"))
                 ));
+            }
+        }
+        Cmd::Web { no_open } => {
+            let v = call(&mut api, "web.link", json!({})).await?;
+            let port = client::daemon_port(&ctx.paths).unwrap_or(0);
+            let url = format!("http://127.0.0.1:{port}/app/#code={}", v["code"].as_str().unwrap_or_default());
+            if ctx.json {
+                ctx.print_json(&json!({ "url": url }));
+            } else if no_open || open_browser(&url).is_err() {
+                ctx.out(tr!(l, "web-link", url = url.as_str()));
+            } else {
+                ctx.out(l.t("web-opened"));
             }
         }
         Cmd::Discover => {
@@ -723,6 +870,26 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                 }
             }
         }
+        Cmd::Term { cmd } => work::term(ctx, &mut api, cmd).await?,
+        Cmd::Thread { cmd } => work::thread(ctx, &mut api, cmd).await?,
+        Cmd::Activity { room, limit } => work::activity(ctx, &mut api, room, limit).await?,
+        Cmd::Whiteboard { cmd } => work::whiteboard(ctx, &mut api, cmd).await?,
+        Cmd::Plan { cmd } => work::plan(ctx, &mut api, cmd).await?,
+        Cmd::Task { cmd } => work::task(ctx, &mut api, cmd).await?,
+        Cmd::Merge { room } => work::merge(ctx, &mut api, room).await?,
+        Cmd::Memory { path, room } => work::memory(ctx, &mut api, path, room).await?,
+        Cmd::Github { cmd } => work::github(ctx, &mut api, cmd).await?,
+        Cmd::Linear { cmd } => work::linear(ctx, &mut api, cmd).await?,
+        Cmd::Webhook { cmd } => work::webhook(ctx, &mut api, cmd).await?,
+        Cmd::Mirror { dir, room } => {
+            let room = ctx.room(&mut api, room).await?;
+            let v = call(&mut api, "mirror.open", json!({ "room": room, "dir": dir })).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else {
+                ctx.out(tr!(l, "mirror-opened", dir = v["root"].as_str().unwrap_or_default()));
+            }
+        }
         Cmd::Usage { room } => {
             let room = ctx.room(&mut api, room).await?;
             let cwd = std::env::current_dir()?;
@@ -813,7 +980,7 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
             call(&mut api, "budget.set", json!({ "room": room, "budgets": budgets })).await?;
             ctx.out(l.t("budget-saved"));
         }
-        Cmd::Daemon { .. } | Cmd::Relay { .. } | Cmd::Completions { .. } => {}
+        Cmd::Daemon { .. } | Cmd::Relay { .. } | Cmd::Completions { .. } | Cmd::Mcp => {}
     }
     Ok(())
 }

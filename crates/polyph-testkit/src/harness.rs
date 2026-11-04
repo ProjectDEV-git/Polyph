@@ -52,6 +52,8 @@ impl Node {
 pub struct AgentBins {
     pub fake_agent: String,
     pub sandbox_helper: String,
+    /// The MCP server executable (`polyph-test-mcp`).
+    pub mcp: String,
 }
 
 #[derive(Debug)]
@@ -62,6 +64,9 @@ pub struct Harness {
     pub agents: Option<AgentBins>,
     /// More agent definitions for every node (for example the local agent).
     pub extra_agents: std::collections::BTreeMap<String, polyph_agents::registry::AgentConfig>,
+    /// D-Bus for the status service: "off" (default here, so tests never
+    /// touch the developer's session bus) or a private bus address.
+    pub dbus: String,
 }
 
 impl Harness {
@@ -79,6 +84,7 @@ impl Harness {
             nodes: vec![],
             agents: None,
             extra_agents: Default::default(),
+            dbus: "off".into(),
         })
     }
 
@@ -96,8 +102,10 @@ impl Harness {
         opts.lan_bind = std::net::IpAddr::from([127, 0, 0, 1]);
         opts.mdns = false;
         opts.file_keystore = true;
+        opts.dbus = self.dbus.clone();
         if let Some(b) = &self.agents {
             opts.sandbox_helper = vec![b.sandbox_helper.clone()];
+            opts.mcp_command = vec![b.mcp.clone()];
             opts.extra_agents.insert(
                 "fake".into(),
                 polyph_agents::registry::AgentConfig { command: b.fake_agent.clone(), ..Default::default() },
@@ -182,6 +190,22 @@ impl Harness {
         while tokio::time::Instant::now() < deadline {
             if f().await {
                 return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        anyhow::bail!("timed out waiting until {what}")
+    }
+
+    /// Like [`Harness::until`], returning the value once `f` produces one.
+    pub async fn until_value<T, F, Fut>(&self, what: &str, mut f: F) -> anyhow::Result<T>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Option<T>>,
+    {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while tokio::time::Instant::now() < deadline {
+            if let Some(v) = f().await {
+                return Ok(v);
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }

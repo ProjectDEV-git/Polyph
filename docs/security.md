@@ -91,6 +91,11 @@ without TLS, content stays end-to-end encrypted; TLS protects metadata.
 - The daemon's local API listens on localhost only and requires a random token
   stored in the user's config directory with mode 0600 (owner-only ACL on
   Windows).
+- The browser client never sees that token: `polyph web` opens a one-time
+  link (two minutes, single use) that the page trades for a session token
+  held in the daemon's memory. Browser-facing routes answer only to loopback
+  host names (against DNS rebinding), the API refuses pages from other
+  origins, and the client's pages carry a strict Content Security Policy.
 - Device secret keys are stored in the OS keychain, or in a file encrypted
   with a key held in the keychain or, where none exists, derived from a local
   secret with owner-only permissions.
