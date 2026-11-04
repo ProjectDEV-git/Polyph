@@ -330,6 +330,35 @@ could not be followed exactly. Newest at the bottom of each section.
 - **Manifest strings for VS Code** come from `locales/*/vscode.ftl` and are
   written to `package.nls*.json` at build time, keeping one source of text.
 
+## Agent hosts and extensibility (M9)
+
+- **"Cloud agents" are agents on the person's own machines** (agent hosts).
+  The brief's open core keeps Polyph-run infrastructure proprietary, and
+  PRODUCT.md asks for agents on members' own servers, so the open engine
+  builds that; a hosted offering can sit on the same messages later.
+- **A host is another device of the same member**, with the `agent-host`
+  capability in its certificate (the field existed since M1). It needs no new
+  trust model: certificates already say who a device belongs to, and the
+  approver sees the capability in the knock.
+- **Hosts obey only their own member**, checked against the sender's
+  verified certificate, and requesters accept replies only from the host
+  they asked. Prompts travel in the room like inbox messages, so members can
+  read them, as they can read every agent's transcript.
+- **Only known capabilities are granted**: an unknown capability in a knock
+  is dropped rather than written into a certificate.
+- **Skills are files, read through MCP tools**: every agent kind gets them
+  the same way, with no agent-specific config, and project skills travel
+  with the repository through git.
+- **Plugins are per person and per device**, never installed by a
+  repository, so cloning a repository cannot run code on a teammate's
+  machine. Their tool servers run inside each agent's sandbox (started by
+  the agent from a copy, since the Polyph home is hidden from agents) and
+  their hooks in a fresh sandbox of their own; network is limited to hosts
+  the manifest declares, enforced by the same allowlisting proxy as agents.
+- **Hook output is data, not commands**: JSON lines with a fixed set of
+  actions (chat posts for now), labeled `plugin/<name>`, and hooks never run
+  on plugin posts, so plugins cannot loop on each other.
+
 ## Skipped work
 
 - **The Nublet provider (M8) was skipped** on 2026-11-04 at the project

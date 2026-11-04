@@ -555,8 +555,12 @@ pub fn call(p: &mut Phone, method: &str, params: &Value, now: i64, out: &mut Out
                 task: Option<String>,
                 prompt: Option<String>,
             }
+            // Without a host, the agent would run here: a phone runs none.
+            if params.get("on").and_then(Value::as_str).is_none_or(str::is_empty) {
+                return Err(needs_daemon("agent.start"));
+            }
             let q: P = param(params)?;
-            let Some(on) = q.on.filter(|s| !s.is_empty()) else { return Err(needs_daemon("agent.start")) };
+            let on = q.on.unwrap_or_default();
             let r = room(p, &q.room)?;
             let list = hosts(r, now);
             let ql = on.to_lowercase();

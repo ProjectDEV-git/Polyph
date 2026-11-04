@@ -26,7 +26,10 @@ brief is the source of all requirements.
   Nublet provider **skipped** by the project owner's decision (its interface
   is not available; see `DECISIONS.md` "Skipped work"); gaps in `STUBS.md`
   ("Milestone 8 gaps").
-- **Milestone 9 (cloud agents and extensibility): in progress.**
+- **Milestone 9 (cloud agents and extensibility): done**, with the scope
+  derived from earlier milestones (no M9 brief in the repository; see
+  `PLAN.md`) and gaps in `STUBS.md` ("Milestone 9 gaps").
+- **Milestone 10 (website, accounts, billing): next.**
 
 ## How to build and test
 
@@ -226,9 +229,28 @@ target/debug/polyph --home /tmp/a room knocks     # then: polyph --home /tmp/a a
   and open the link in a browser. VS Code: `cd apps/vscode && pnpm build`,
   then open the folder in VS Code and run the extension (F5).
 
+## Milestone 9 pieces
+
+- Protocol: `JoinRequest.capabilities`, `Knock.capabilities`,
+  `messages::AGENT_HOST`, `RoomMessage::Host(HostMsg)`.
+- Core: `RoomCore::is_agent_host`, `RoomEvent::Host`; `approve_knock`
+  grants known capabilities.
+- Daemon `hosts` (agent hosts: list, invite, join, start/prompt/stop on a
+  host, the host side), `plugins` (tool servers for agents, hook runner);
+  config `host_workdir`, `host_rooms`; API `agent.hosts`, `host.*`,
+  `plugin.*`, `skills.*`, `template.*`; `agent.start` with `on`.
+- `polyph-plugins`: `manifest`, `store`, `skills`, `templates`.
+- MCP tools `list_skills`, `read_skill`. The phone engine starts, prompts
+  and stops agents on hosts.
+- CLI `agent-host`, `agent hosts`, `agent start --on`, `plugin`, `skills`,
+  `template`. App: Run on in Agents > Start; Settings > Plugins.
+- Tests: `m9.rs`, `m9_extend.rs`; test binaries `polyph-test-plugin-mcp`
+  and the fake agent's named-server `mcp` steps.
+- Docs: `docs/agent-hosts.md`, `docs/extending.md`.
+
 ## Next steps
 
-1. M9: cloud agents and extensibility.
+1. M10: website, accounts, billing.
 2. The skipped Nublet provider, if its interface becomes available.
 3. Give `polyph-localagent` the Polyph MCP tools.
 4. Run the real-agent smoke tests, including review, resolve and planning.

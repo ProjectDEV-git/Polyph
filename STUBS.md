@@ -12,9 +12,8 @@ LICENSE) are not built. `polyph` with no arguments opens the TUI in a terminal a
 otherwise.
 
 CLI commands not implemented yet (they arrive with their milestones):
-`login`, `logout`, `cloud *` (and `agent start --on cloud`), `plan`,
-`task *`, `memory *`, `term *`, `sync`, `spectate-link *`, `template *`,
-`skills *`, `plugin *`. (`polyph mcp` exists: agents start it.) People can
+`login`, `logout`, `cloud *`, `sync`, `spectate-link *`. (`agent start --on`,
+`agent-host`, `template`, `skills` and `plugin` arrived in M9.) (`polyph mcp` exists: agents start it.) People can
 list memory notes and message agents through the daemon API (`memory.list`,
 `inbox.send`) but not yet from the CLI. `polyph host --mode hosted` is
 accepted but hosted mode is M4.
@@ -206,6 +205,34 @@ accepted but hosted mode is M4.
   Xvfb. Its webview uses Polyph's own theme rather than VS Code's colors.
 - **Claims in VS Code** are matched against workspace folders' git roots;
   a workspace that is not the room's repository simply shows no claims.
+
+## Milestone 9 gaps
+
+- **No brief for M9 in the repository.** Its scope was derived from what
+  earlier milestones left for it (see `PLAN.md`); check it against the
+  brief when that is available.
+- **Polyph-hosted cloud agents** (run by Polyph for a subscription) are not
+  built: they need accounts and billing (M10, proprietary `cloud/`). Agent
+  hosts are the person's own machines; `--on cloud` means "any of my hosts".
+- **Hosts keep no queue while offline**: a start, prompt or stop sent when
+  the host is offline is lost (the start times out after 60 seconds).
+- **One person per host daemon.** A shared server needs a separate
+  `POLYPH_HOME` and user account per person.
+- **Hosts' working copies are not synced**: the host works in its own
+  checkout; results reach others through task branches, the merge queue and
+  `[merge] push`, like any device.
+- **Agent hosts on Windows and macOS** have not been tried; tests ran on
+  Linux with Landlock.
+- **Plugins are not signed or sandboxed beyond the agent sandbox**, and there
+  is no plugin registry; people install folders they trust. On Windows the
+  sandbox is weak (see the Windows sandbox entry above), so plugins there
+  run with little isolation.
+- **Hook actions** are limited to chat posts; no card or thread actions yet.
+- **Built-in skill texts are English.** Template descriptions are
+  translated; the skill files a template writes into a repository are team
+  content and start in English.
+- **Plugins are listed, not managed, in the app**; adding and removing stay
+  in the CLI.
 
 ## Process gaps
 
