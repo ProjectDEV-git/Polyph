@@ -343,6 +343,14 @@ pub enum TerminalMsg {
     },
     Closed {
         id: ObjectId,
+        #[serde(default)]
+        exit: Option<u32>,
+    },
+    /// A member asks the owner for the keyboard. The owner answers through an
+    /// approval and announces the result with `Control`.
+    RequestInput {
+        id: ObjectId,
+        member: MemberId,
     },
 }
 

@@ -205,3 +205,92 @@ async fn whiteboards_sync_and_agents_draw_and_read_them() {
     .await
     .unwrap();
 }
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn shared_terminal_with_input_approval() {
+    let (h, rid) = room(async |_, _| {}).await;
+    let (a, b) = (0, 1);
+    let dir = tempfile::tempdir().unwrap();
+    let t = call(
+        &h,
+        a,
+        "term.open",
+        json!({ "room": rid, "cwd": dir.path(), "command": ["sh"], "title": "Ann's shell", "cols": 80, "rows": 24 }),
+    )
+    .await;
+    let id = t["id"].as_str().unwrap().to_string();
+    h.until("Bo sees the terminal", || async {
+        call(&h, b, "term.list", json!({ "room": rid }))
+            .await
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["id"] == id && x["title"] == "Ann's shell")
+    })
+    .await
+    .unwrap();
+    let read = |i: usize| {
+        let (h, rid, id) = (&h, rid.clone(), id.clone());
+        async move {
+            call(h, i, "term.read", json!({ "room": rid, "term": id })).await["text"].as_str().unwrap().to_string()
+        }
+    };
+
+    // Ann types; Bo watches. A token in the output is redacted on the way.
+    let key = ["gh", "p_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"].concat();
+    call(&h, a, "term.input", json!({ "room": rid, "term": id, "text": format!("echo ann-''was-here {key}\n") })).await;
+    h.until("output reaches Bo", || async { read(b).await.contains("ann-was-here") }).await.unwrap();
+    let seen = read(b).await;
+    assert!(!seen.contains(&key) && seen.contains("[REDACTED:github-token]"), "{seen}");
+
+    // Bo cannot type until Ann lets him, and cannot approve his own request.
+    assert!(h.nodes[b].call("term.input", json!({ "room": rid, "term": id, "text": "id\n" })).await.is_err());
+    call(&h, b, "term.ask", json!({ "room": rid, "term": id })).await;
+    let ask = h
+        .until_value("Ann is asked", || async {
+            let l = call(&h, a, "approvals.list", json!({ "room": rid })).await;
+            l.as_array()
+                .unwrap()
+                .iter()
+                .find(|x| x["kind"]["t"] == "terminal_input")
+                .map(|x| x["id"].as_str().unwrap().to_string())
+        })
+        .await
+        .unwrap();
+
+    h.clock.advance(300);
+    h.until("Bo sees the request", || async {
+        call(&h, b, "approvals.list", json!({ "room": rid })).await.as_array().unwrap().len() == 1
+    })
+    .await
+    .unwrap();
+    assert!(h.nodes[b].call("approve", json!({ "room": rid, "id": ask })).await.is_err(), "the asker cannot approve");
+    call(&h, a, "approve", json!({ "room": rid, "id": ask })).await;
+    let bo = call(&h, b, "whoami", json!({})).await["member"].as_str().unwrap().to_string();
+    h.until("Bo holds the keyboard", || async {
+        call(&h, b, "term.list", json!({ "room": rid })).await[0]["writer"] == bo.as_str()
+    })
+    .await
+    .unwrap();
+    call(&h, b, "term.input", json!({ "room": rid, "term": &id[..8], "text": "echo bo-''typed\n" })).await;
+    h.until("Bo's typing runs on Ann's machine", || async { read(a).await.contains("bo-typed") }).await.unwrap();
+
+    // Ann takes the keyboard back.
+    call(&h, a, "term.revoke", json!({ "room": rid, "term": id })).await;
+    h.until("Bo lost the keyboard", || async {
+        call(&h, b, "term.list", json!({ "room": rid })).await[0]["writer"].is_null()
+    })
+    .await
+    .unwrap();
+    assert!(h.nodes[b].call("term.input", json!({ "room": rid, "term": id, "text": "id\n" })).await.is_err());
+
+    // Closing ends it for everyone, with the exit status.
+    call(&h, a, "term.input", json!({ "room": rid, "term": id, "text": "exit 4\n" })).await;
+    h.until("closed for Bo", || async {
+        let l = call(&h, b, "term.list", json!({ "room": rid })).await;
+        l[0]["closed"] == true && l[0]["exit"] == 4
+    })
+    .await
+    .unwrap();
+}

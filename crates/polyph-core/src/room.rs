@@ -206,6 +206,12 @@ pub enum RoomEvent {
         by: MemberId,
         for_me: bool,
     },
+    /// Shared terminals, for the daemon's terminal module.
+    Terminal {
+        from: DeviceId,
+        member: MemberId,
+        msg: Box<polyph_proto::messages::TerminalMsg>,
+    },
     /// Hosted-mode mirroring, for the daemon's mirror module.
     Mirror {
         from: DeviceId,
@@ -663,6 +669,20 @@ impl RoomCore {
                 out.push(Effect::Event(RoomEvent::Agent { event: ev }));
             }
             RoomMessage::Approval(a) => out.extend(self.on_approval(from, role, a, now)),
+            RoomMessage::Terminal(t) if writer => {
+                use polyph_proto::messages::TerminalMsg;
+                let Some(member) = self.sender_member(&from) else { return out };
+                // Nobody types or asks on someone else's behalf.
+                let honest = match &t {
+                    TerminalMsg::Input { typist, .. } => *typist == member,
+                    TerminalMsg::RequestInput { member: m, .. } => *m == member,
+                    TerminalMsg::Opened { owner, .. } => *owner == member,
+                    _ => true,
+                };
+                if honest {
+                    out.push(Effect::Event(RoomEvent::Terminal { from, member, msg: Box::new(t) }));
+                }
+            }
             RoomMessage::Mirror(m) if writer => {
                 // A device proposes changes only for its own agents.
                 let honest = match &m {
@@ -1414,6 +1434,11 @@ impl RoomCore {
     pub fn may_answer(&self, p: &PendingApproval, member: MemberId, role: Role, now: i64) -> bool {
         if !role.can_approve_agents() {
             return false;
+        }
+        // Typing in someone's terminal runs as them: only they may allow it,
+        // so these never escalate (and the asker can never answer).
+        if matches!(p.kind, ApprovalKind::TerminalInput { .. }) {
+            return member == p.agent.member;
         }
         member == p.agent.member || now >= p.escalate_at
     }

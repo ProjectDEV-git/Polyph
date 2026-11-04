@@ -1062,6 +1062,51 @@ impl Daemon {
                     .collect();
                 ok(json!({ "thread": t, "posts": posts }))
             }
+            "term.open" => {
+                let p: crate::terms::OpenParams = param(&params)?;
+                crate::terms::open(self, p).await
+            }
+            "term.list" => {
+                let p: RoomParam = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                ok(crate::terms::list(&rt).await)
+            }
+            "term.read" | "term.close" | "term.ask" | "term.release" | "term.revoke" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    term: String,
+                }
+                let p: P = param(&params)?;
+                match method {
+                    "term.read" => crate::terms::read(self, &p.room, &p.term).await,
+                    "term.close" => crate::terms::close(self, &p.room, &p.term).await,
+                    other => crate::terms::control(self, &p.room, &p.term, other.trim_start_matches("term.")).await,
+                }
+            }
+            "term.input" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    term: String,
+                    text: Option<String>,
+                    data: Option<String>,
+                }
+                let p: P = param(&params)?;
+                let bytes = crate::terms::input_bytes(p.text, p.data)?;
+                crate::terms::input(self, &p.room, &p.term, bytes).await
+            }
+            "term.resize" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    term: String,
+                    cols: u16,
+                    rows: u16,
+                }
+                let p: P = param(&params)?;
+                crate::terms::resize(self, &p.room, &p.term, p.cols, p.rows).await
+            }
             "whiteboard.create" => {
                 #[derive(Deserialize)]
                 struct P {

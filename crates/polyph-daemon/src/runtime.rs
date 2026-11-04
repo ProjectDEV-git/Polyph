@@ -116,6 +116,8 @@ pub struct RoomCtx {
     pub coord: crate::coord::Coord,
     /// Hosted mode: this device's side of the shared working copy.
     pub mirror: Option<crate::mirror::Mirror>,
+    /// Shared terminals: all known, and the ones running here.
+    pub terms: crate::terms::Terminals,
 }
 
 impl std::fmt::Debug for RoomCtx {
@@ -156,6 +158,7 @@ impl RoomRuntime {
                 claim_waiters: HashMap::new(),
                 coord: Default::default(),
                 mirror: None,
+                terms: Default::default(),
                 code_waiters: VecDeque::new(),
                 approval_waiters: HashMap::new(),
                 transcripts: HashMap::new(),
@@ -195,6 +198,10 @@ pub async fn apply(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, effects
     for e in effects {
         match e {
             Effect::Send(m) => send_msg(ctx, &m).await,
+            Effect::Event(RoomEvent::Terminal { from, member, msg }) => {
+                // Terminal bytes reach local clients as their own events.
+                crate::terms::handle(ctx, shared, from, member, *msg);
+            }
             Effect::Event(RoomEvent::Mirror { from, msg }) => {
                 // File contents stay out of the local event stream.
                 for m in crate::mirror::handle(ctx, shared, from, *msg) {

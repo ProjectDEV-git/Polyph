@@ -20,6 +20,7 @@ pub mod runtime;
 pub mod secrets;
 pub mod status;
 pub mod tasks;
+pub mod terms;
 pub mod watch;
 
 pub use clock::Clock;

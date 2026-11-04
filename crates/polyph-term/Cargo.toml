@@ -1,5 +1,6 @@
 [package]
 name = "polyph-term"
+description = "Pseudo-terminals for Polyph's shared terminals"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,3 +11,9 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+portable-pty = "0.9"
+tokio = { workspace = true, features = ["sync", "rt"] }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
