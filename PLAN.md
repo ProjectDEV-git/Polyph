@@ -123,4 +123,18 @@ accounts and billing (M10).
 - [x] tests: `m9.rs` (agent hosts, teammate refused, restart, workdir, phone with the laptop stopped), `m9_extend.rs` (templates, skills and a plugin tool through an agent, a hook answering once), crate unit tests
 - [x] docs: `docs/agent-hosts.md`, `docs/extending.md`
 ## M10 — website, accounts, billing
+
+Scope note: no M10 brief is in the repository; this scope comes from
+`PRODUCT.md` (website positioning, plans with undecided prices, open core with
+proprietary accounts and billing under `cloud/`), `cloud/LICENSE`, and what
+`STUBS.md` left for M10.
+
+- [x] relay: snapshot retention per room through the `Policy` (per plan)
+- [x] `cloud/` `polyph-cloud` (proprietary): email-code and GitHub device-flow sign-in, sessions, devices linked by an `account-link` signature, teams and invites, plans from config (no prices set), Stripe checkout, portal and signed webhooks, the hosted relay with a plan policy, `polyph-cloud serve`
+- [x] daemon `cloud` module and CLI `polyph login`, `logout`, `cloud status` (four locales)
+- [x] website (`apps/web`): home, pricing ("Pricing coming soon" until set), download (build from source), security, privacy and terms drafts, account page; four locales at `/`, `/th/`, `/ja/`, `/zh-Hans/`; GSAP, ScrollTrigger and Lenis on site pages only; `vercel.json` headers including the phone CSP
+- [x] daemon serves its root as `/app/` now that the export holds the website
+- [x] tests: `cloud/tests/cloud.rs` (API with Stripe and GitHub stand-ins), `cloud/tests/daemon_login.rs` (a real daemon signs in), relay per-room retention, daemon root redirect; website inspected at three widths (`docs/website.md`)
+- [x] docs: `docs/website.md`, `cloud/README.md`; CI job for `cloud/`
+- [ ] web push, team dashboard (opt-in usage summaries), spectator link limits, docs translation: see `STUBS.md` "Milestone 10 gaps"
 ## M11 — release

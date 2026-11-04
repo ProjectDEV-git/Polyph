@@ -29,7 +29,12 @@ brief is the source of all requirements.
 - **Milestone 9 (cloud agents and extensibility): done**, with the scope
   derived from earlier milestones (no M9 brief in the repository; see
   `PLAN.md`) and gaps in `STUBS.md` ("Milestone 9 gaps").
-- **Milestone 10 (website, accounts, billing): next.**
+- **Milestone 10 (website, accounts, billing): done**, with the scope
+  derived from `PRODUCT.md`, `cloud/LICENSE` and earlier stubs (no M10 brief
+  in the repository; see `PLAN.md`) and gaps in `STUBS.md` ("Milestone 10
+  gaps": web push, team dashboard, prices, nothing run against real Stripe,
+  GitHub or mail yet, not deployed).
+- **Milestone 11 (release): next.**
 
 ## How to build and test
 
@@ -43,7 +48,15 @@ pnpm --filter @polyph/ui test && pnpm -r typecheck
 pnpm --filter @polyph/web build && cargo build -p polyph-cli && pnpm test:e2e
 (cd apps/vscode && pnpm build && pnpm test && xvfb-run -a node test/e2e/run.mjs && node test/e2e/webview.mjs)
 (cd apps/desktop && pnpm build && cd src-tauri && cargo clippy -- -D warnings)
+cargo test --manifest-path cloud/Cargo.toml --target-dir target
+cargo clippy --manifest-path cloud/Cargo.toml --target-dir target --all-targets -- -D warnings
 ```
+
+The website's visual check (design-taste-frontend skill): build, serve
+`apps/web/out` (for example `python3 -m http.server 4310 --directory
+apps/web/out`) and run `node .claude/skills/design-taste-frontend/scripts/inspect.mjs
+http://127.0.0.1:4310/`. It must be served from the export's root, or the
+`/_next/` assets do not load.
 
 The web build compiles the phone engine to wasm (`scripts/build-phone-wasm.mjs`):
 it needs `rustup target add wasm32-unknown-unknown` and `cargo install
@@ -249,13 +262,43 @@ target/debug/polyph --home /tmp/a room knocks     # then: polyph --home /tmp/a a
   and the fake agent's named-server `mcp` steps.
 - Docs: `docs/agent-hosts.md`, `docs/extending.md`.
 
+## Milestone 10 pieces
+
+- Relay: `Hub::expire_snapshots_at` expires snapshots per room through the
+  `Policy` (owner device → plan → retention).
+- Proto: `ctx::ACCOUNT_LINK`.
+- `cloud/` (`polyph-cloud`, proprietary, built on its own): `config`,
+  `plans`, `db` (SQLite), `mail` (Resend-compatible, log, memory), `billing`
+  (Stripe checkout, portal, webhook signatures and events), `policy`
+  (`CloudPolicy` for the relay), `api` (axum, CORS for the website), `serve`
+  and the `polyph-cloud serve` binary. See `cloud/README.md`.
+- Daemon `cloud` module (`cloud.login.start`, `cloud.login.finish`,
+  `cloud.status`, `cloud.logout`), config key `cloud`; CLI `login`, `logout`,
+  `cloud status` (`crates/polyph-cli/src/account.rs`); strings in
+  `locales/*/account.ftl` and `locales/*/cloud.ftl` (emails).
+- Website: `apps/web/src/site/` and the routes in `apps/web/app` (English at
+  the root, `app/[lang]/` for th, ja, zh-Hans); strings in
+  `locales/*/site.ftl`; `apps/web/vercel.json`; brief and checks in
+  `docs/website.md`. `@polyph/ui` now also exports `./voice` and `./mark`.
+- The daemon's web server redirects `/` to `/app/`.
+- Try it: `cargo run --manifest-path cloud/Cargo.toml --target-dir target --
+  serve` with a `cloud.toml` holding `dev = true`, `allowed_origins =
+  ["http://127.0.0.1:4310"]` and `api_bind = "127.0.0.1:8790"`; then
+  `polyph config set cloud http://127.0.0.1:8790` and `polyph login` (the
+  code is in the service's log). For the account page, build the site with
+  `NEXT_PUBLIC_POLYPH_CLOUD=http://127.0.0.1:8790` and serve `apps/web/out`.
+
 ## Next steps
 
-1. M10: website, accounts, billing.
-2. The skipped Nublet provider, if its interface becomes available.
-3. Give `polyph-localagent` the Polyph MCP tools.
-4. Run the real-agent smoke tests, including review, resolve and planning.
-5. Build and try the desktop app and VS Code extension on macOS and Windows;
+1. M11: release (installers, signing, packaging the desktop app and VS Code
+   extension, deploying the website and `polyph-cloud`).
+2. Run billing against Stripe test mode, GitHub sign-in with a real OAuth app,
+   and a real mail provider; then decide prices and member limits.
+3. Web push and the team dashboard (`STUBS.md`, Milestone 10 gaps).
+4. The skipped Nublet provider, if its interface becomes available.
+5. Give `polyph-localagent` the Polyph MCP tools.
+6. Run the real-agent smoke tests, including review, resolve and planning.
+7. Build and try the desktop app and VS Code extension on macOS and Windows;
    try the phone app on real iOS and Android devices.
 
 ## Known issues

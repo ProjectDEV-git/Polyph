@@ -5,14 +5,11 @@ here should be described as done anywhere else.
 
 ## Not started (later milestones)
 
-Crates that currently contain only a placeholder `lib.rs`:
-`polyph-plugins`. Directories
-`apps/`, `packages/`, `integrations/`, `deploy/` and `cloud/` (except its
-LICENSE) are not built. `polyph` with no arguments opens the TUI in a terminal and prints help
-otherwise.
+Directories `integrations/` and `deploy/` are not built. `polyph` with no
+arguments opens the TUI in a terminal and prints help otherwise.
 
 CLI commands not implemented yet (they arrive with their milestones):
-`login`, `logout`, `cloud *`, `sync`, `spectate-link *`. (`agent start --on`,
+`sync`, `spectate-link *`. (`login`, `logout` and `cloud status` arrived in M10.) (`agent start --on`,
 `agent-host`, `template`, `skills` and `plugin` arrived in M9.) (`polyph mcp` exists: agents start it.) People can
 list memory notes and message agents through the daemon API (`memory.list`,
 `inbox.send`) but not yet from the CLI. `polyph host --mode hosted` is
@@ -24,12 +21,10 @@ accepted but hosted mode is M4.
   epoch and issuer so diverged epochs after a split can coexist. The
   `Keyring` in `polyph-proto` currently keys by epoch only; the daemon must
   add the issuer dimension when it implements split recovery (M2).
-- **Per-room retention under the hosted plans.** The relay's snapshot expiry
-  uses one global retention from its `Policy`. Per-plan retention (7 days
-  Free, 1 year Pro) needs the cloud `Policy` to expire per room (M10).
 - **Spectator link limits.** The free plan's "1 spectator link per room" is
   not enforced by the relay, because links are client-side keys. Needs a
-  relay frame to register link ids per room (minor protocol bump) (M10).
+  relay frame to register link ids per room (minor protocol bump). The plan
+  carries `spectator_links` already; still open after M10.
 - **LAN bridging for remote joiners.** `polyph host --lan --bridge` copies
   envelopes both ways between the LAN relay and the internet relay, but
   invite codes are only hosted on the LAN relay and `JoinApproved.relay`
@@ -240,4 +235,42 @@ accepted but hosted mode is M4.
   `/plugin marketplace add https://github.com/NutshellEngineering/apple-design-skill`
   slash command, which a headless session cannot run. Install it in an
   interactive session before M7 polish.
-- **Docs translation.** Docs ship in English only; the pipeline is to be built in M10.
+- **Docs translation.** Docs ship in English only; no translation pipeline
+  was built in M10 (the website itself is in four languages).
+
+## Milestone 10 gaps
+
+- **No M10 brief in the repository.** Scope was derived (see `PLAN.md`);
+  check it against the brief when available.
+- **Web push** for phone notifications is not built: the hosted push service,
+  VAPID keys and subscriptions are still to do. The phone app alerts only
+  while it is open (see Milestone 8 gaps).
+- **Team dashboard** (opt-in signed usage summaries, `ctx::USAGE`) is not
+  built.
+- **Prices are unset.** Plans carry an optional display `price` and a
+  `stripe_price`; the website and account page say "Pricing coming soon" and
+  checkout is refused until they are configured. Member limits per plan are
+  not decided either (unset means unlimited).
+- **Not run against real services.** Stripe, GitHub's device flow and the
+  mail endpoint were exercised against local stand-ins only. Needs a Stripe
+  test-mode run, a GitHub OAuth app with the device flow enabled, and a mail
+  provider account (the code speaks Resend's API shape).
+- **Not deployed.** No hosting exists yet for the website (`apps/web`,
+  `vercel.json` is ready) or `polyph-cloud`; the domains (`polyph.dev`,
+  `api.polyph.dev`) remain placeholders set at build time
+  (`POLYPH_DEFAULT_CLOUD`, `NEXT_PUBLIC_POLYPH_CLOUD`).
+- **Rate limits behind a proxy.** Sign-in starts are limited per peer IP;
+  behind a reverse proxy every request has the proxy's IP, so the proxy must
+  limit or the service must learn to trust a forwarded header.
+- **Plan cache.** The relay policy rebuilds every device's plan from the
+  database on each change; fine for now, needs incremental updates at scale.
+- **Logging out keeps the device linked** (rooms it owns keep the plan);
+  unlinking is on the website's account page, not in the CLI.
+- **Account management in the apps.** The desktop app, phone and VS Code do
+  not show the account yet; it lives in the CLI and on the website.
+- **Legal pages are drafts** and say so; they need legal review.
+- **Website pictures** are interface fragments; no screenshots of the real
+  desktop app yet (it is not packaged until M11). See `docs/website.md` for
+  the inspector warnings that were kept and why.
+- **Daemon session tokens for the cloud** are sealed like integration tokens
+  and are per device; a person's other devices sign in separately.

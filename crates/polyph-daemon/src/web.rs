@@ -153,6 +153,11 @@ worker-src 'self' blob:; manifest-src 'self'; frame-ancestors 'none'; base-uri '
 /// Serves a file from the client's static export. Paths that leave the
 /// directory are refused; a directory serves its `index.html`.
 pub async fn serve_file(dir: &Path, path: &str) -> Response {
+    // The export also holds the public website; a person's own daemon serves
+    // only the app, so its root goes to the app.
+    if path.trim_start_matches('/').is_empty() {
+        return (StatusCode::FOUND, [(header::LOCATION, HeaderValue::from_static("/app/"))]).into_response();
+    }
     let rel = Path::new(path.trim_start_matches('/'));
     if rel.components().any(|c| !matches!(c, Component::Normal(_))) {
         return StatusCode::NOT_FOUND.into_response();
@@ -222,6 +227,9 @@ mod tests {
         std::fs::create_dir_all(dir.join("app")).unwrap();
         std::fs::write(dir.join("app/index.html"), "<p>hi</p>").unwrap();
         assert_eq!(serve_file(&dir, "/app/").await.status(), StatusCode::OK);
+        let root = serve_file(&dir, "/").await;
+        assert_eq!(root.status(), StatusCode::FOUND);
+        assert_eq!(root.headers()[header::LOCATION], "/app/");
         assert_eq!(serve_file(&dir, "/app").await.status(), StatusCode::OK);
         assert_eq!(serve_file(&dir, "/../etc/passwd").await.status(), StatusCode::NOT_FOUND);
         assert_eq!(serve_file(&dir, "/missing.js").await.status(), StatusCode::NOT_FOUND);

@@ -28,6 +28,7 @@ The relay sees only this, and the hosted service's privacy page says the same:
 | **Opt-in** signed usage summaries: token counts, cost estimates, task counts | Team dashboard (accounts only, off by default) |
 | **Web push** subscriptions; push payloads say only "open Polyph" | Phone notifications (accounts only) |
 | Account email or GitHub id, plan and billing status | Accounts (optional; incognito use has none) |
+| Device public keys linked to an account (each link signed by the device) | Applying a plan to the rooms those devices own |
 
 ## Threat model
 

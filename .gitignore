@@ -29,3 +29,4 @@ polyph-relay.db*
 apps/vscode/media/webview/
 apps/vscode/package.nls*.json
 .vscode-test/
+.taste-skill/

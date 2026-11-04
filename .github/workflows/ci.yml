@@ -45,6 +45,24 @@ jobs:
       - name: Phone engine for wasm32
         run: cargo clippy -p polyph-phone --target wasm32-unknown-unknown --features wasm -- -D warnings
 
+  cloud:
+    name: Hosted service (cloud/, Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cloud -> ../target
+      - name: Format
+        run: cargo fmt --manifest-path cloud/Cargo.toml -- --check
+      - name: Clippy
+        run: cargo clippy --manifest-path cloud/Cargo.toml --target-dir target --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --manifest-path cloud/Cargo.toml --target-dir target
+
   node:
     name: TypeScript and i18n
     runs-on: ubuntu-24.04
