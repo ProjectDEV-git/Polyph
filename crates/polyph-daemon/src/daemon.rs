@@ -136,6 +136,10 @@ pub struct Shared {
     pub tick_every: Duration,
     pub opts: DaemonOptions,
     events: broadcast::Sender<ApiEvent>,
+    /// The daemon, for work started from deep inside (agents' MCP calls).
+    pub daemon: std::sync::OnceLock<std::sync::Weak<Daemon>>,
+    /// Runs `finish_task` calls from agents (see `coord::FinishJob`).
+    pub finisher: std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<crate::coord::FinishJob>>,
 }
 
 impl std::fmt::Debug for Shared {
@@ -253,6 +257,8 @@ impl Daemon {
             tick_every: opts.tick_every,
             opts,
             events,
+            daemon: std::sync::OnceLock::new(),
+            finisher: std::sync::OnceLock::new(),
         });
         let d = Arc::new(Self {
             shared: shared.clone(),
@@ -261,6 +267,24 @@ impl Daemon {
             open: Mutex::new(vec![]),
             shutdown: tokio::sync::Notify::new(),
         });
+        let _ = shared.daemon.set(Arc::downgrade(&d));
+        {
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<crate::coord::FinishJob>();
+            let _ = shared.finisher.set(tx);
+            let weak = Arc::downgrade(&d);
+            tokio::spawn(async move {
+                while let Some(job) = rx.recv().await {
+                    let Some(d) = weak.upgrade() else { break };
+                    tokio::spawn(async move {
+                        let r = match d.agent(&job.agent.to_hex()).await {
+                            Ok(h) => crate::tasks::finish(d.clone(), h, job.message).await,
+                            Err(e) => Err(e),
+                        };
+                        let _ = job.reply.send(r);
+                    });
+                }
+            });
+        }
         // Load every saved room; reopen the ones that were open.
         let open_list: Vec<String> = std::fs::read(paths.home.join("open_rooms.json"))
             .ok()
@@ -878,6 +902,30 @@ impl Daemon {
                 let p: P = param(&params)?;
                 let h = self.agent(&p.agent).await?;
                 crate::tasks::finish(self.clone(), h, p.message).await
+            }
+            "plan.create" => {
+                let p: crate::plan::PlanParams = param(&params)?;
+                crate::plan::create(self.clone(), p).await
+            }
+            "plan.accept" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    plan: String,
+                }
+                let p: P = param(&params)?;
+                crate::plan::accept(self, &p.room, &p.plan).await
+            }
+            "agent.handoff" => {
+                #[derive(Deserialize)]
+                struct P {
+                    agent: String,
+                    to_kind: Option<String>,
+                    note: Option<String>,
+                }
+                let p: P = param(&params)?;
+                let h = self.agent(&p.agent).await?;
+                crate::tasks::handoff(self.clone(), h, p.to_kind, p.note).await
             }
             "merge.queue" => {
                 let p: RoomParam = param(&params)?;

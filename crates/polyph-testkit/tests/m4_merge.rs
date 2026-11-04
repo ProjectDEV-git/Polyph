@@ -327,6 +327,8 @@ async fn the_resolver_agent_settles_a_real_disagreement_with_both_intents() {
     .await
     .unwrap();
     h.nodes[1].call("agent.prompt", json!({ "agent": bid, "text": "fee" })).await.unwrap();
+    let bm = messages(&h, 1, &rid, &bid).await;
+    assert!(bm.contains(&"write: ok".to_string()), "{bm:?}");
     h.nodes[1].call("task.finish", json!({ "agent": bid })).await.unwrap();
     let e = wait_state(&h, 1, &rid, &bbr, "merged").await;
     assert_eq!(e["resolved"], json!([["src/lib.rs", "agent:fake-resolver"]]), "{e}");
@@ -379,4 +381,140 @@ async fn a_reviewer_can_send_a_task_back() {
     let said = messages(&h, 0, &rid, &aid).await;
     let p = said.iter().rev().find(|m| m.starts_with("prompt:")).unwrap();
     assert!(p.contains("The reviewer asked for changes") && p.contains("must reject negative amounts"), "{p}");
+}
+
+async fn cards(h: &Harness, i: usize, rid: &str) -> Vec<Value> {
+    h.nodes[i].call("board.get", json!({ "room": rid })).await.unwrap()["cards"].as_array().unwrap().clone()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_planner_splits_a_goal_and_agents_work_the_tasks() {
+    let plan = json!({ "goal": "Billing", "tasks": [
+        { "id": "t1", "title": "Add refunds", "description": "refund()", "acceptance": ["refund works"], "predicted_files": ["src/refund.rs"], "size": "s", "suggested_assignee": "Ann/fake-a" },
+        { "id": "t2", "title": "Add invoices", "description": "invoice()", "acceptance": ["invoice works"], "predicted_files": ["src/lib.rs"], "depends_on": ["t1"], "size": "m" },
+        { "id": "t3", "title": "Document charges", "description": "docs", "acceptance": ["documented"], "predicted_files": ["src/lib.rs"], "size": "s" }
+    ] });
+    let (h, rid, repo, _s) = setup(
+        vec![
+            // A first answer that is not a plan, then a good one.
+            ("fake-planner", json!({ "turns": [
+                [ { "message": "I would split it like this: {\"goal\": \"Billing\"}" } ],
+                [ { "echo_prompt": true }, { "message": format!("```json\n{plan}\n```") } ]
+            ] })),
+            ("fake-a", json!({ "turns": [[
+                { "mcp": { "tool": "list_tasks", "args": { "column": "ready" } } },
+                { "write": { "path": "src/refund.rs", "content": "pub fn refund() {}\n" } },
+                { "mcp": { "tool": "create_task", "args": { "title": "Refund emails", "description": "notify on refund" } } },
+                { "mcp": { "tool": "finish_task", "args": { "summary": "Add refund()" } } }
+            ]] })),
+        ],
+        "[merge]\napproval = false\n",
+    )
+    .await;
+    let r = repo.path();
+    let p = h.nodes[0]
+        .call("plan.create", json!({ "room": rid, "goal": "Add billing", "cwd": r, "kind": "fake-planner" }))
+        .await
+        .unwrap();
+    let ids: Vec<String> =
+        p["cards"].as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap().to_string()).collect();
+    assert_eq!(ids.len(), 3);
+    assert_eq!(p["overlaps"].as_array().unwrap().len(), 1, "t2 and t3 both touch src/lib.rs: {p}");
+    let planner = h.nodes[0].call("agent.list", json!({ "room": rid })).await.unwrap();
+    let pid = planner.as_array().unwrap().iter().find(|a| a["kind"] == "fake-planner").unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let retry = messages(&h, 0, &rid, &pid).await;
+    assert!(retry.iter().any(|m| m.starts_with("prompt:") && m.contains("Answer again")), "{retry:?}");
+
+    // Drafts until accepted; then tasks without dependencies are ready.
+    let all = cards(&h, 0, &rid).await;
+    assert!(all.iter().all(|c| c["draft"] == true && c["column"] == "backlog"));
+    let t1 = all.iter().find(|c| c["title"] == "Add refunds").unwrap().clone();
+    let t2 = all.iter().find(|c| c["title"] == "Add invoices").unwrap().clone();
+    assert_eq!(t2["depends_on"], json!([t1["id"]]));
+    assert_eq!(t1["suggested_assignee"], "Ann/fake-a");
+    let acc = h.nodes[0].call("plan.accept", json!({ "room": rid, "plan": p["plan"] })).await.unwrap();
+    assert_eq!((acc["accepted"].as_u64(), acc["ready"].as_u64()), (Some(3), Some(2)));
+
+    // An agent works t1 through its tools and finishes it itself.
+    let (aid, abr) = start_task(&h, 0, &rid, "fake-a", r, t1["id"].as_str().unwrap()).await;
+    h.nodes[0].call("agent.prompt", json!({ "agent": aid, "text": "go" })).await.unwrap();
+    let said = messages(&h, 0, &rid, &aid).await;
+    let listed = said.iter().find(|m| m.starts_with("mcp list_tasks")).unwrap();
+    assert!(listed.contains("Add refunds (in_progress)") || listed.contains("Document charges (ready)"), "{listed}");
+    assert!(said.iter().any(|m| m.starts_with("mcp create_task: Added task")), "{said:?}");
+    let fin = said.iter().find(|m| m.starts_with("mcp finish_task")).unwrap();
+    assert!(fin.contains(&format!("on {abr}")) && fin.contains("into main"), "{fin}");
+    wait_state(&h, 0, &rid, &abr, "merged").await;
+    assert!(r.join("src/refund.rs").exists());
+
+    // t1 is done, so t2 is ready now.
+    h.until("t2 becomes ready", || async {
+        let all = cards(&h, 0, &rid).await;
+        let col = |id: &Value| all.iter().find(|c| c["id"] == *id).unwrap()["column"].clone();
+        col(&t1["id"]) == "done" && col(&t2["id"]) == "ready"
+    })
+    .await
+    .unwrap();
+    assert!(cards(&h, 0, &rid).await.iter().any(|c| c["title"] == "Refund emails" && c["column"] == "backlog"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_task_can_be_handed_to_another_agent() {
+    let (h, rid, repo, _s) = setup(
+        vec![
+            (
+                "fake-a",
+                json!({ "turns": [[
+                { "write": { "path": "src/lib.rs", "content": with(REFUND) } },
+                { "message": "refund() is in; rounding is still missing" }
+            ]] }),
+            ),
+            ("fake-b", json!({ "turns": [[ { "echo_prompt": true }, { "read": "src/lib.rs" } ]] })),
+        ],
+        "",
+    )
+    .await;
+    let r = repo.path();
+    let c = add_card(&h, &rid, "Add refunds", "Refunds round to cents.").await;
+    let (aid, abr) = start_task(&h, 0, &rid, "fake-a", r, &c).await;
+    h.nodes[0].call("agent.prompt", json!({ "agent": aid, "text": "start" })).await.unwrap();
+    let out = h.nodes[0]
+        .call("agent.handoff", json!({ "agent": aid, "to_kind": "fake-b", "note": "check the rounding" }))
+        .await
+        .unwrap();
+    let next = out["next"]["id"].as_str().unwrap().to_string();
+    assert_eq!(out["next"]["branch"], abr.as_str(), "same branch and worktree");
+    // The successor holds the claim and gets the brief with its first prompt.
+    h.until("successor holds the claim", || async {
+        let cl = h.nodes[0].call("claims.list", json!({ "room": rid })).await.unwrap();
+        cl.as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["target"]["path"] == "src/lib.rs" && x["owner"]["label"] == "Ann/fake-b")
+    })
+    .await
+    .unwrap();
+    h.nodes[0].call("agent.prompt", json!({ "agent": next, "text": "carry on" })).await.unwrap();
+    let said = messages(&h, 0, &rid, &next).await;
+    let p = said.iter().find(|m| m.starts_with("prompt:")).unwrap();
+    for want in [
+        "You are taking over this task from Ann/fake-a",
+        "Task: Add refunds",
+        "Refunds round to cents.",
+        "Work in progress, handed over by Ann/fake-a",
+        "Files they edited: src/lib.rs",
+        "refund() is in; rounding is still missing",
+        "Their note: check the rounding",
+    ] {
+        assert!(p.contains(want), "missing {want:?} in {p}");
+    }
+    assert!(said.contains(&"read: ok".to_string()));
+    let card = cards(&h, 0, &rid).await.into_iter().find(|x| x["id"] == c).unwrap();
+    assert_eq!(card["handoff"], Value::Null, "the brief was taken");
+    assert_eq!(card["assignee"], "Ann/fake-b");
+    let log = git(r, &["log", "--format=%s", &abr]);
+    assert!(log.starts_with("Work in progress, handed over by Ann/fake-a"), "{log}");
 }

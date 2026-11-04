@@ -60,6 +60,12 @@ pub mod card {
     pub const KIND: &str = "kind";
     pub const AUTO_PICKUP: &str = "auto_pickup";
     pub const DRAFT: &str = "draft";
+    /// Brief left by an agent that handed the task over, for the next one.
+    pub const HANDOFF: &str = "handoff";
+    /// Id of the plan that created the card.
+    pub const PLAN: &str = "plan";
+    /// Agent label or person the planner suggested.
+    pub const SUGGESTED_ASSIGNEE: &str = "suggested_assignee";
 }
 
 pub mod activity {
@@ -97,6 +103,12 @@ pub struct CardView {
     pub size: Option<String>,
     pub kind: Option<String>,
     pub draft: bool,
+    #[serde(default)]
+    pub handoff: Option<String>,
+    #[serde(default)]
+    pub plan: Option<String>,
+    #[serde(default)]
+    pub suggested_assignee: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -337,6 +349,9 @@ fn read_card<T: ReadTxn>(m: &MapRef, txn: &T) -> CardView {
         size: any_str(m.get(txn, card::SIZE)),
         kind: any_str(m.get(txn, card::KIND)),
         draft: any_bool(m.get(txn, card::DRAFT)),
+        handoff: any_str(m.get(txn, card::HANDOFF)),
+        plan: any_str(m.get(txn, card::PLAN)),
+        suggested_assignee: any_str(m.get(txn, card::SUGGESTED_ASSIGNEE)),
     }
 }
 

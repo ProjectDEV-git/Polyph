@@ -403,6 +403,7 @@ async fn process(
                 set_state(rt, &shared, e, MergeState::Merged, summary).await;
                 if let Some(c) = &e.card {
                     update_card(rt, &shared, c, Some("done"), &[]).await;
+                    crate::plan::promote_unblocked(rt, &shared).await;
                 }
                 if let Some(remote) = project.merge.push.clone() {
                     push(rt, &shared, agent, repo_root, &remote, &e.into).await;
@@ -457,8 +458,64 @@ async fn ours_intent(rt: &RoomRuntime, root: &Path, into: &str, files: &[String]
     Intent { label: into.to_string(), title: format!("the current {into}"), ..Default::default() }
 }
 
-/// Runs a helper agent (reviewer or resolver) in `cwd` for one turn and
-/// returns everything it said.
+/// A Polyph-run agent (planner, reviewer, resolver) in a scratch directory.
+pub(crate) struct Helper {
+    pub h: Arc<AgentHandle>,
+}
+
+impl Helper {
+    pub async fn start(
+        daemon: &Arc<Daemon>,
+        rt: &Arc<RoomRuntime>,
+        kind: &str,
+        cwd: &Path,
+    ) -> Result<Helper, ApiError> {
+        let started = agents::start(
+            daemon.shared.clone(),
+            &daemon.agents,
+            rt.clone(),
+            StartParams {
+                room: rt.id.to_hex(),
+                kind: kind.to_string(),
+                cwd: cwd.to_path_buf(),
+                preset: Some("default".into()),
+                task: None,
+                prompt: None,
+                worktree: Some(false),
+                helper: true,
+            },
+        )
+        .await?;
+        let h = daemon.agent(started["id"].as_str().unwrap_or_default()).await?;
+        Ok(Helper { h })
+    }
+
+    /// One turn; returns what the agent said in it.
+    pub async fn turn(&self, daemon: &Arc<Daemon>, rt: &Arc<RoomRuntime>, prompt: &str) -> Result<String, ApiError> {
+        let seen = rt.ctx.lock().await.transcripts.get(&self.h.agent.id).map(|l| l.len()).unwrap_or(0);
+        agents::prompt(&daemon.shared, rt, &self.h, prompt).await?;
+        let ctx = rt.ctx.lock().await;
+        Ok(ctx
+            .transcripts
+            .get(&self.h.agent.id)
+            .map(|log| {
+                log.iter()
+                    .skip(seen)
+                    .filter_map(|ev| match &ev.kind {
+                        AgentEventKind::Message { text } => Some(text.clone()),
+                        _ => None,
+                    })
+                    .collect::<String>()
+            })
+            .unwrap_or_default())
+    }
+
+    pub async fn stop(self, daemon: &Arc<Daemon>, rt: &Arc<RoomRuntime>) {
+        let _ = agents::stop(&daemon.shared, &daemon.agents, rt, self.h.agent.id).await;
+    }
+}
+
+/// Runs a helper agent in `cwd` for one turn and returns what it said.
 async fn helper_turn(
     daemon: &Arc<Daemon>,
     rt: &Arc<RoomRuntime>,
@@ -466,45 +523,13 @@ async fn helper_turn(
     cwd: &Path,
     prompt: &str,
 ) -> Result<String, ApiError> {
-    let started = agents::start(
-        daemon.shared.clone(),
-        &daemon.agents,
-        rt.clone(),
-        StartParams {
-            room: rt.id.to_hex(),
-            kind: kind.to_string(),
-            cwd: cwd.to_path_buf(),
-            preset: Some("default".into()),
-            task: None,
-            prompt: None,
-            worktree: Some(false),
-            helper: true,
-        },
-    )
-    .await?;
-    let id = started["id"].as_str().unwrap_or_default().to_string();
-    let h = daemon.agent(&id).await?;
-    let r = agents::prompt(&daemon.shared, rt, &h, prompt).await;
-    let said = {
-        let ctx = rt.ctx.lock().await;
-        ctx.transcripts
-            .get(&h.agent.id)
-            .map(|log| {
-                log.iter()
-                    .filter_map(|ev| match &ev.kind {
-                        AgentEventKind::Message { text } => Some(text.clone()),
-                        _ => None,
-                    })
-                    .collect::<String>()
-            })
-            .unwrap_or_default()
-    };
-    let _ = agents::stop(&daemon.shared, &daemon.agents, rt, h.agent.id).await;
-    r?;
-    Ok(said)
+    let helper = Helper::start(daemon, rt, kind, cwd).await?;
+    let r = helper.turn(daemon, rt, prompt).await;
+    helper.stop(daemon, rt).await;
+    r
 }
 
-async fn temp_worktree(root: &Path, name: &str, rev: &str) -> Result<PathBuf, ApiError> {
+pub(crate) async fn temp_worktree(root: &Path, name: &str, rev: &str) -> Result<PathBuf, ApiError> {
     let (root, rev) = (root.to_path_buf(), rev.to_string());
     let path = root.join(WORKTREES).join(name);
     let p2 = path.clone();
@@ -523,7 +548,7 @@ async fn temp_worktree(root: &Path, name: &str, rev: &str) -> Result<PathBuf, Ap
     Ok(path)
 }
 
-async fn drop_worktree(root: &Path, path: &Path) {
+pub(crate) async fn drop_worktree(root: &Path, path: &Path) {
     let (root, path) = (root.to_path_buf(), path.to_path_buf());
     let _ = blocking(move || {
         if let Ok(r) = Repo::open(&root) {
@@ -729,4 +754,146 @@ async fn run_checks_in(shared: &Arc<Shared>, project: &ProjectConfig, wt: &Path)
 pub async fn queue(rt: &RoomRuntime) -> Vec<MergeEntry> {
     let mut ctx = rt.ctx.lock().await;
     docs::merge_entries(ctx.core.doc(&DocName::Board))
+}
+
+/// What one agent leaves the next: the task, the work so far and open ends.
+async fn handoff_brief(rt: &RoomRuntime, h: &AgentHandle, commits: &[String], note: Option<&str>) -> String {
+    let mut ctx = rt.ctx.lock().await;
+    let mut s = format!("You are taking over this task from {}.", h.agent.label);
+    if let Some(t) = h.task
+        && let Some(c) = card(&mut ctx, &t.to_hex())
+    {
+        s.push_str(&format!("\nTask: {}", c.title));
+        if !c.description.trim().is_empty() {
+            s.push_str(&format!("\n{}", c.description.trim()));
+        }
+        for a in &c.acceptance {
+            s.push_str(&format!("\n- done when: {a}"));
+        }
+    }
+    if let Some(wt) = &h.task_wt {
+        s.push_str(&format!("\nBranch {} (from {}); their work is committed there.", wt.branch, wt.base));
+    }
+    if !commits.is_empty() {
+        s.push_str("\nCommits so far:");
+        for c in commits.iter().rev().take(20).rev() {
+            s.push_str(&format!("\n- {c}"));
+        }
+    }
+    if let Some(log) = ctx.transcripts.get(&h.agent.id) {
+        let edited: Vec<String> = {
+            let mut v: Vec<String> = vec![];
+            for e in log {
+                if let AgentEventKind::Tool(t) = &e.kind
+                    && t.kind == polyph_proto::messages::ToolKind::Edit
+                {
+                    for p in &t.paths {
+                        if !v.contains(p) {
+                            v.push(p.clone());
+                        }
+                    }
+                }
+            }
+            v
+        };
+        if !edited.is_empty() {
+            s.push_str(&format!("\nFiles they edited: {}", edited.join(", ")));
+        }
+        let said: Vec<String> = log
+            .iter()
+            .filter_map(|e| match &e.kind {
+                AgentEventKind::Message { text } => Some(text.trim().to_string()),
+                _ => None,
+            })
+            .filter(|t| !t.is_empty())
+            .collect();
+        if !said.is_empty() {
+            s.push_str("\nThe last things they said:");
+            for t in said.iter().rev().take(6).rev() {
+                let t: String = t.chars().take(400).collect();
+                s.push_str(&format!("\n> {}", t.replace('\n', "\n> ")));
+            }
+        }
+    }
+    let held: Vec<String> =
+        ctx.core.claims.all().into_iter().filter(|c| c.owner.id == h.agent.id).map(|c| c.target.to_string()).collect();
+    if !held.is_empty() {
+        s.push_str(&format!("\nClaims they held (claim them again before editing): {}", held.join(", ")));
+    }
+    if let Some(n) = note.filter(|n| !n.trim().is_empty()) {
+        s.push_str(&format!("\nTheir note: {}", n.trim()));
+    }
+    polyph_core::redact::redact(&s).into_owned()
+}
+
+/// Hands a task over: commits work in progress, leaves a brief on the card,
+/// stops the agent and, with `to_kind`, starts its successor right away.
+pub async fn handoff(
+    daemon: Arc<Daemon>,
+    h: Arc<AgentHandle>,
+    to_kind: Option<String>,
+    note: Option<String>,
+) -> Result<Value, ApiError> {
+    let rt = daemon.find(&h.room.to_hex()).await?;
+    let mut commits = vec![];
+    if let Some(wt) = h.task_wt.clone() {
+        let sig = Signature::agent(&h.agent.label, &h.agent.id.short());
+        let msg = format!("Work in progress, handed over by {}", h.agent.label);
+        commits = blocking(move || -> Result<Vec<String>, ApiError> {
+            let r = Repo::open(&wt.path).map_err(git_err)?;
+            r.commit_all(&msg, &sig).map_err(git_err)?;
+            r.log_subjects(&wt.base, &wt.branch).map_err(git_err)
+        })
+        .await??;
+    }
+    let brief = handoff_brief(&rt, &h, &commits, note.as_deref()).await;
+    let held: Vec<polyph_proto::messages::ClaimTarget> = {
+        let ctx = rt.ctx.lock().await;
+        ctx.core.claims.all().into_iter().filter(|c| c.owner.id == h.agent.id).map(|c| c.target).collect()
+    };
+    if let Some(t) = h.task {
+        update_card(
+            &rt,
+            &daemon.shared,
+            &t.to_hex(),
+            None,
+            &[(polyph_proto::crdt::card::HANDOFF, Some(brief.clone()))],
+        )
+        .await;
+    }
+    agents::stop(&daemon.shared, &daemon.agents, &rt, h.agent.id).await?;
+    let Some(kind) = to_kind else {
+        return Ok(json!({ "brief": brief, "next": null }));
+    };
+    let cwd = h.task_wt.as_ref().map(|w| w.repo.clone()).unwrap_or_else(|| h.worktree.clone());
+    let started = agents::start(
+        daemon.shared.clone(),
+        &daemon.agents,
+        rt.clone(),
+        StartParams {
+            room: rt.id.to_hex(),
+            kind,
+            cwd,
+            preset: Some(format!("{:?}", h.preset).to_lowercase().replace("askall", "ask-all")),
+            task: h.task.map(|t| t.to_hex()),
+            prompt: None,
+            worktree: None,
+            helper: false,
+        },
+    )
+    .await?;
+    // The successor holds what its predecessor held.
+    if !held.is_empty() {
+        let next = daemon.agent(started["id"].as_str().unwrap_or_default()).await?;
+        let mut ctx = rt.ctx.lock().await;
+        let now = daemon.shared.clock.now();
+        if let Ok((req, fx)) =
+            ctx.core.request_claims(&next.agent, &held, "taken over", next.task, polyph_core::room::DEFAULT_LEASE, now)
+        {
+            let (tx, _rx) = tokio::sync::oneshot::channel();
+            ctx.claim_waiters.insert(req, tx);
+            apply(&rt, &mut ctx, &daemon.shared, fx).await;
+        }
+    }
+    Ok(json!({ "brief": brief, "next": started }))
 }

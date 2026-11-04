@@ -12,6 +12,7 @@ pub mod events;
 pub mod export;
 pub mod lan;
 pub mod paths;
+pub mod plan;
 pub mod runtime;
 pub mod secrets;
 pub mod status;

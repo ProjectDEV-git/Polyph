@@ -308,6 +308,10 @@ pub async fn call_tool(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, tool:
         tools::REMEMBER => remember(h, rt, shared, args).await,
         tools::RECALL => recall(h, rt, args).await,
         tools::FORGET => forget(rt, shared, args).await,
+        tools::TASKS => list_tasks(h, rt, args).await,
+        tools::CREATE_TASK => create_task(h, rt, shared, args).await,
+        tools::MOVE_TASK => move_task(h, rt, shared, args).await,
+        tools::FINISH => finish_task(h, shared, args).await,
         _ => Err(ToolOutput::err(format!("unknown tool {tool}"))),
     };
     r.unwrap_or_else(|e| e)
@@ -769,4 +773,169 @@ mod tests {
         }
         assert!(!c.allow_wake(a, 10));
     }
+}
+
+async fn list_tasks(h: &AgentHandle, rt: &RoomRuntime, args: &Value) -> ToolResult {
+    #[derive(Deserialize)]
+    struct A {
+        column: Option<String>,
+    }
+    let a: A = arg(args)?;
+    let cards = {
+        let mut ctx = rt.ctx.lock().await;
+        polyph_proto::crdt::Board::new(ctx.core.doc(&DocName::Board)).all_cards()
+    };
+    let mine = h.task.map(|t| t.to_hex());
+    let shown: Vec<_> = cards
+        .iter()
+        .filter(|c| !c.draft)
+        .filter(|c| match &a.column {
+            Some(col) => &c.column == col,
+            None => c.column != "done",
+        })
+        .collect();
+    if shown.is_empty() {
+        return Ok(ToolOutput::ok("No tasks.", json!({ "tasks": [] })));
+    }
+    let short = |id: &str| id.chars().take(8).collect::<String>();
+    let title_of = |id: &str| cards.iter().find(|c| c.id == id).map(|c| c.title.clone()).unwrap_or_else(|| short(id));
+    let mut text = String::from("Tasks:");
+    let mut data = vec![];
+    for c in &shown {
+        let me = mine.as_deref() == Some(c.id.as_str());
+        text.push_str(&format!("\n- [{}] {} ({})", short(&c.id), c.title, c.column));
+        if let Some(a) = &c.assignee {
+            text.push_str(&format!(", {a}"));
+        }
+        if me {
+            text.push_str(", your task");
+        }
+        let waiting: Vec<String> = c
+            .depends_on
+            .iter()
+            .filter(|d| cards.iter().find(|x| &x.id == *d).is_none_or(|x| x.column != "done"))
+            .map(|d| title_of(d))
+            .collect();
+        if !waiting.is_empty() {
+            text.push_str(&format!(", waits for: {}", waiting.join("; ")));
+        }
+        if !c.files.is_empty() {
+            text.push_str(&format!(", files: {}", c.files.join(", ")));
+        }
+        data.push(json!({ "id": c.id, "title": c.title, "column": c.column, "assignee": c.assignee, "depends_on": c.depends_on, "files": c.files, "mine": me }));
+    }
+    Ok(ToolOutput::ok(text, json!({ "tasks": data })))
+}
+
+async fn create_task(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {
+    #[derive(Deserialize)]
+    struct A {
+        title: String,
+        #[serde(default)]
+        description: String,
+        #[serde(default)]
+        acceptance: Vec<String>,
+        #[serde(default)]
+        files: Vec<String>,
+    }
+    let a: A = arg(args)?;
+    if a.title.trim().is_empty() || a.title.len() > 200 {
+        return Err(ToolOutput::err("a title must be 1 to 200 bytes"));
+    }
+    let red = |s: &str| polyph_core::redact::redact(s).into_owned();
+    let id = ObjectId::random().map_err(|e| ToolOutput::err(e.to_string()))?.to_hex();
+    let card = polyph_proto::crdt::NewCard {
+        id: id.clone(),
+        title: red(a.title.trim()),
+        description: format!("{}\n\n(added by {})", red(&a.description), h.agent.label).trim().to_string(),
+        column: "backlog".into(),
+        created_by: h.agent.member.to_hex(),
+        created_at: shared.clock.now(),
+        acceptance: a.acceptance.iter().map(|x| red(x)).collect(),
+        files: a.files,
+        kind: Some("task".into()),
+        ..Default::default()
+    };
+    let mut ctx = rt.ctx.lock().await;
+    let fx = ctx
+        .core
+        .change_doc(DocName::Board, |d| {
+            let _ = polyph_proto::crdt::Board::new(d).add_card(&card);
+        })
+        .map_err(|e| ToolOutput::err(e.to_string()))?;
+    apply(rt, &mut ctx, shared, fx).await;
+    Ok(ToolOutput::ok(format!("Added task [{}] to the backlog.", &id[..8]), json!({ "id": id })))
+}
+
+async fn move_task(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {
+    #[derive(Deserialize)]
+    struct A {
+        id: String,
+        column: String,
+    }
+    let a: A = arg(args)?;
+    if !["backlog", "ready", "claimed", "in_progress"].contains(&a.column.as_str()) {
+        return Err(ToolOutput::err("agents can move cards to backlog, ready, claimed or in_progress only"));
+    }
+    let want = a.id.trim().trim_start_matches('[').trim_end_matches(']').to_lowercase();
+    let now = shared.clock.now();
+    let mut ctx = rt.ctx.lock().await;
+    let cards = polyph_proto::crdt::Board::new(ctx.core.doc(&DocName::Board)).all_cards();
+    let found: Vec<_> = cards.iter().filter(|c| !want.is_empty() && c.id.starts_with(&want)).collect();
+    let c = match found.as_slice() {
+        [c] => (*c).clone(),
+        [] => return Err(ToolOutput::err(format!("no task {}", a.id))),
+        _ => return Err(ToolOutput::err("that id matches several tasks; give more of it")),
+    };
+    if c.assignee.as_deref().is_some_and(|x| x != h.agent.label) {
+        return Err(ToolOutput::err(format!("that task belongs to {}", c.assignee.unwrap_or_default())));
+    }
+    if c.column == "review" || c.column == "done" {
+        return Err(ToolOutput::err("that task is in review or done; the merge queue moves it"));
+    }
+    let fx = ctx
+        .core
+        .change_doc(DocName::Board, |d| {
+            let b = polyph_proto::crdt::Board::new(d);
+            let last = b.cards_in(&a.column).last().map(|x| x.id.clone());
+            let _ = b.move_card(&c.id, &a.column, last.as_deref(), now);
+        })
+        .map_err(|e| ToolOutput::err(e.to_string()))?;
+    apply(rt, &mut ctx, shared, fx).await;
+    Ok(ToolOutput::ok(format!("Moved \"{}\" to {}.", c.title, a.column), json!({ "id": c.id, "column": a.column })))
+}
+
+async fn finish_task(h: &AgentHandle, shared: &Shared, args: &Value) -> ToolResult {
+    #[derive(Deserialize)]
+    struct A {
+        summary: String,
+    }
+    let a: A = arg(args)?;
+    // Through the daemon's worker: finishing can start reviewer agents, whose
+    // own MCP handlers lead back here, so this cannot call it directly.
+    let tx = shared.finisher.get().ok_or_else(|| ToolOutput::err("Polyph is starting or shutting down"))?;
+    let (reply, rx) = oneshot::channel();
+    tx.send(FinishJob { agent: h.agent.id, message: Some(a.summary), reply })
+        .map_err(|_| ToolOutput::err("Polyph is shutting down"))?;
+    let r = rx
+        .await
+        .map_err(|_| ToolOutput::err("Polyph is shutting down"))?
+        .map_err(|e| ToolOutput::err(e.to_string()))?;
+    Ok(ToolOutput::ok(
+        format!(
+            "Committed {} commit(s) on {} and queued it to merge into {}. Your claims are released. You are done with this task.",
+            r["commits"],
+            r["branch"].as_str().unwrap_or_default(),
+            r["into"].as_str().unwrap_or_default()
+        ),
+        r,
+    ))
+}
+
+/// A `finish_task` call handed to the daemon's worker.
+#[derive(Debug)]
+pub struct FinishJob {
+    pub agent: ObjectId,
+    pub message: Option<String>,
+    pub reply: oneshot::Sender<Result<Value, crate::daemon::ApiError>>,
 }

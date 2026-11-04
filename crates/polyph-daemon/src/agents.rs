@@ -49,6 +49,8 @@ pub struct AgentHandle {
     /// The task's worktree and branch, when the agent works on a task.
     pub task_wt: Option<crate::tasks::TaskWorktree>,
     pub helper: bool,
+    /// A handoff brief from the card, given with the first prompt.
+    pub brief: Mutex<Option<String>>,
     /// Hops of the agent message that started the current turn (0 when a person did).
     pub trigger_hops: std::sync::atomic::AtomicU8,
     _proxy: ProxyHandle,
@@ -303,9 +305,13 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
     let cwd = p.cwd.canonicalize().map_err(|e| ApiError::BadRequest(format!("{}: {e}", p.cwd.display())))?;
     let task = p.task.as_deref().and_then(|t| ObjectId::from_hex(t).ok());
     // A task gets its own worktree and branch, so agents never share files.
+    let task_card = match task {
+        Some(t) => crate::tasks::card(&mut *rt.ctx.lock().await, &t.to_hex()),
+        None => None,
+    };
     let task_wt = match task {
         Some(t) if p.worktree != Some(false) && polyph_git::Repo::open(&cwd).is_ok() => {
-            let card = crate::tasks::card(&mut *rt.ctx.lock().await, &t.to_hex());
+            let card = task_card.clone();
             let branch = card.as_ref().and_then(|c| c.branch.clone()).unwrap_or_else(|| {
                 polyph_git::task_branch(card.as_ref().map(|c| c.title.as_str()).unwrap_or(""), &t.short())
             });
@@ -433,6 +439,7 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
         mcp_token,
         task_wt: task_wt.clone(),
         helper: p.helper,
+        brief: Mutex::new(task_card.as_ref().and_then(|c| c.handoff.clone())),
         trigger_hops: std::sync::atomic::AtomicU8::new(0),
         _proxy: proxy,
         tmp,
@@ -447,7 +454,12 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
             &shared,
             &t.to_hex(),
             Some("in_progress"),
-            &[("branch", Some(wt.branch.clone())), ("assignee", Some(agent.label.clone()))],
+            &[
+                ("branch", Some(wt.branch.clone())),
+                ("assignee", Some(agent.label.clone())),
+                // The brief is now this agent's; nobody else picks it up.
+                (polyph_proto::crdt::card::HANDOFF, None),
+            ],
         )
         .await;
     }
@@ -528,7 +540,13 @@ async fn run_turn(shared: &Shared, rt: &RoomRuntime, h: &AgentHandle, text: Opti
         ));
     }
     let _busy = h.busy.lock().await;
-    let (extra, hops) = crate::coord::turn_boundary(&mut *rt.ctx.lock().await, h.agent.id);
+    let (mut extra, hops) = crate::coord::turn_boundary(&mut *rt.ctx.lock().await, h.agent.id);
+    if let Some(b) = h.brief.lock().await.take() {
+        extra = Some(match extra {
+            Some(x) => format!("[Polyph] Handoff:\n{b}\n\n{x}"),
+            None => format!("[Polyph] Handoff:\n{b}"),
+        });
+    }
     let woken = text.is_none();
     let text = match (text, extra) {
         (Some(t), Some(x)) => format!("{t}\n\n{x}"),

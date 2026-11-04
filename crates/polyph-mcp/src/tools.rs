@@ -24,6 +24,10 @@ pub const INBOX: &str = "read_inbox";
 pub const REMEMBER: &str = "remember";
 pub const RECALL: &str = "recall";
 pub const FORGET: &str = "forget";
+pub const TASKS: &str = "list_tasks";
+pub const CREATE_TASK: &str = "create_task";
+pub const MOVE_TASK: &str = "move_task";
+pub const FINISH: &str = "finish_task";
 
 fn no_args() -> Value {
     json!({ "type": "object", "properties": {}, "additionalProperties": false })
@@ -145,6 +149,65 @@ their current line. Without `path`, every note in the room. Read notes before ed
                 "type": "object",
                 "properties": { "id": { "type": "string" } },
                 "required": ["id"],
+                "additionalProperties": false
+            })
+        },
+    },
+    ToolDef {
+        name: TASKS,
+        description: "List the room's task cards: id, title, column, assignee, dependencies and predicted files. \
+Your own task is marked. Without `column`, every column except done.",
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": { "column": { "enum": ["backlog", "ready", "claimed", "in_progress", "review", "done"] } },
+                "additionalProperties": false
+            })
+        },
+    },
+    ToolDef {
+        name: CREATE_TASK,
+        description: "Add a task card to the backlog, for work you found that is outside your own task (a bug, a \
+follow-up). A person or the planner decides who does it.",
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "title": { "type": "string" },
+                    "description": { "type": "string" },
+                    "acceptance": { "type": "array", "items": { "type": "string" } },
+                    "files": { "type": "array", "items": { "type": "string" } }
+                },
+                "required": ["title"],
+                "additionalProperties": false
+            })
+        },
+    },
+    ToolDef {
+        name: MOVE_TASK,
+        description: "Move a task card that is yours or unassigned to another column (backlog, ready, claimed, \
+in_progress). Use finish_task, not this, when your work is done; only merging moves a card to done.",
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" },
+                    "column": { "enum": ["backlog", "ready", "claimed", "in_progress"] }
+                },
+                "required": ["id", "column"],
+                "additionalProperties": false
+            })
+        },
+    },
+    ToolDef {
+        name: FINISH,
+        description: "Your task is done: Polyph commits your work on the task branch, releases your claims and \
+queues the branch for review and merging. Call it once, at the end, with a one-line summary for the commit.",
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": { "summary": { "type": "string" } },
+                "required": ["summary"],
                 "additionalProperties": false
             })
         },
