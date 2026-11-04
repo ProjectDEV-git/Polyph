@@ -35,7 +35,9 @@ pub fn chat(doc: &Doc) -> Vec<ChatEntry> {
             _ => None,
         })
         .collect();
-    v.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.id.cmp(&b.id)));
+    // Stable: messages in the same second keep the document's order, which
+    // every member shares.
+    v.sort_by_key(|e| e.at);
     v
 }
 

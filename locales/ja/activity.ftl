@@ -9,8 +9,8 @@ activity-changes-requested = レビューで { $branch } の変更が求めら�
 activity-agent-started = { $kind } エージェントを起動しました
 activity-agent-stopped = エージェントを停止しました
 activity-approval = { $approved ->
-    [true] { $title } を承認しました
-   *[other] { $title } を拒否しました
+    [true] { $agent } の { $title } を承認しました
+   *[other] { $agent } の { $title } を拒否しました
 }
 activity-overlap = { $agent } が { $path } を変更しましたが、このファイルは { $holder } がクレーム中です
 activity-thread-created = スレッド { $title } を開始しました

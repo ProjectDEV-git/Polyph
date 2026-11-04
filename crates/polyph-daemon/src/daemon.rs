@@ -1471,8 +1471,9 @@ impl Daemon {
                         &mut c,
                         &self.shared,
                         "approval",
-                        Some(&agent),
-                        json!({ "id": id.to_hex(), "approved": approved, "title": title }),
+                        // The person who answered is the actor; the agent is named in the text.
+                        None,
+                        json!({ "id": id.to_hex(), "approved": approved, "title": title, "agent": agent }),
                     )
                     .await;
                 }

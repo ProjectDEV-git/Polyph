@@ -9,8 +9,8 @@ activity-changes-requested = 评审要求修改 { $branch }
 activity-agent-started = 启动了一个 { $kind } 智能体
 activity-agent-stopped = 停止了一个智能体
 activity-approval = { $approved ->
-    [true] 批准了 { $title }
-   *[other] 拒绝了 { $title }
+    [true] 批准了 { $agent } 的 { $title }
+   *[other] 拒绝了 { $agent } 的 { $title }
 }
 activity-overlap = { $agent } 修改了 { $path }，该文件由 { $holder } 认领
 activity-thread-created = 发起了讨论串 { $title }

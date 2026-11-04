@@ -9,8 +9,8 @@ activity-changes-requested = ผู้รีวิวขอให้แก้ไ
 activity-agent-started = เริ่มเอเจนต์ { $kind }
 activity-agent-stopped = หยุดเอเจนต์
 activity-approval = { $approved ->
-    [true] อนุมัติ { $title }
-   *[other] ปฏิเสธ { $title }
+    [true] อนุมัติ { $title } ให้ { $agent }
+   *[other] ปฏิเสธ { $title } ของ { $agent }
 }
 activity-overlap = { $agent } แก้ไข { $path } ซึ่ง { $holder } จองไว้
 activity-thread-created = เริ่มเธรด { $title }

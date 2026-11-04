@@ -76,6 +76,15 @@ commit and an updated `HANDOFF.md`. Stubs go in `STUBS.md`.
 - [x] tests: `polyph-testkit/tests/m5.rs`, `m5_integrations.rs`
 
 ## M6 — TUI
+- [x] surface brief (`docs/tui.md`) from PRODUCT.md and DESIGN.md
+- [x] `polyph-tui`: theme (DESIGN tokens to true color / 256 colors / none with `NO_COLOR`), states as symbol + word, voices
+- [x] views: chat with threads, board (move cards, 600 ms highlight), agents (follow transcripts, prompt, stop), activity with replay, merge queue, terminals (preview and attach)
+- [x] approvals stack stating exactly what will happen; approve once / for the task / deny with a note
+- [x] command line (`:join`, `:thread`, `:card`, `:plan`, `:agent`, `:term`, `:room`), rooms switcher, rail, keys overlay
+- [x] live loop: coalesced refreshes, redraw on change capped at 30/s, spinner only while agents run, ordered terminal input
+- [x] `polyph` with no arguments opens it in a terminal (help when piped)
+- [x] four locales (`locales/*/tui.ftl`), Thai and CJK widths, narrow terminals
+- [x] tests: `polyph-testkit/tests/m6.rs` (every view x locale x color depth x width; key flows; live updates)
 ## M7 — desktop app, browser client, status pill
 ## M8 — PWA, VS Code extension, Nublet provider
 ## M9 — cloud agents and extensibility

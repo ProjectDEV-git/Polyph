@@ -9,8 +9,8 @@ activity-changes-requested = review asked for changes to { $branch }
 activity-agent-started = started a { $kind } agent
 activity-agent-stopped = stopped an agent
 activity-approval = { $approved ->
-    [true] approved { $title }
-   *[other] denied { $title }
+    [true] approved { $title } for { $agent }
+   *[other] denied { $title } for { $agent }
 }
 activity-overlap = { $agent } changed { $path }, which { $holder } holds
 activity-thread-created = started the thread { $title }

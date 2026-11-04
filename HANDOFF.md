@@ -19,7 +19,8 @@ brief is the source of all requirements.
   hosted mode not persisted, no CLI for plan/task/merge yet).
 - **Milestone 5 (board, terminals, integrations): done**, with gaps in
   `STUBS.md` ("Milestone 5 gaps").
-- **Milestone 6 (TUI): next.**
+- **Milestone 6 (TUI): done**, with gaps in `STUBS.md` ("Milestone 6 gaps").
+- **Milestone 7 (desktop app, browser client, status pill): next.**
 
 ## How to build and test
 
@@ -138,11 +139,26 @@ target/debug/polyph --home /tmp/a room knocks     # then: polyph --home /tmp/a a
   notifications and webhooks, D-Bus) and `m5_integrations.rs` (GitHub and
   Linear against local stand-ins).
 
+## Milestone 6 pieces
+
+- `docs/tui.md`: the TUI brief (layout, keys, color, motion).
+- `polyph-tui`: `theme` (tokens, depths, statuses), `conn` (Backend trait,
+  WebSocket client), `model` (state, refresh by parts, events), `ui`
+  (drawing, width-aware fit/wrap), `keys` (keymap, commands, actions), `run`
+  (loop). `polyph` with no arguments opens it (`polyph-cli` `tui()`).
+- `polyph-testkit::tui::InProcess` runs it against an in-process daemon;
+  `tests/m6.rs` covers views x locales x color depths x widths, key flows
+  (approve, chat, threads, board moves, commands, terminal attach and the
+  keyboard request) and live updates (moved-card highlight, incoming chat).
+- Try it: the "Try it locally" steps above, then run `polyph --home /tmp/a`.
+
 ## Next steps
 
-1. M6: the ratatui TUI on the local API: rooms, chat and threads, board,
-   agents with follow mode, approvals, merge queue, live terminals (attach),
-   activity with replay; honors `NO_COLOR`, works over SSH.
+1. M7: the Tauri 2 desktop app (React + TypeScript, `packages/ui` with
+   Tailwind v4, shadcn/ui, motion), the browser client and the status pill,
+   on the same local API; start with `packages/ui` tokens from DESIGN.md and
+   `voice.ts` matching `polyph-core::voice`. Whiteboards (Excalidraw) and
+   terminals (xterm.js) live there.
 2. Give `polyph-localagent` the Polyph MCP tools.
 3. Run the real-agent smoke tests, including review, resolve and planning.
 

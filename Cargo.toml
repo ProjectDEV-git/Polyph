@@ -13,6 +13,7 @@ members = [
   "crates/polyph-plugins",
   "crates/polyph-i18n",
   "crates/polyph-daemon",
+  "crates/polyph-tui",
   "crates/polyph-cli",
   "crates/polyph-relay",
   "crates/polyph-testkit",
@@ -53,6 +54,7 @@ polyph-term = { path = "crates/polyph-term", version = "0.1.0" }
 polyph-plugins = { path = "crates/polyph-plugins", version = "0.1.0" }
 polyph-i18n = { path = "crates/polyph-i18n", version = "0.1.0" }
 polyph-daemon = { path = "crates/polyph-daemon", version = "0.1.0" }
+polyph-tui = { path = "crates/polyph-tui", version = "0.1.0" }
 polyph-relay = { path = "crates/polyph-relay", version = "0.1.0" }
 polyph-testkit = { path = "crates/polyph-testkit", version = "0.1.0" }
 

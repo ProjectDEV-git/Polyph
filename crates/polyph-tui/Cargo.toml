@@ -1,0 +1,28 @@
+[package]
+name = "polyph-tui"
+description = "Polyph's terminal UI (ratatui), a client of the local daemon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+polyph-core = { workspace = true }
+polyph-i18n = { workspace = true }
+ratatui = "0.30"
+crossterm = { version = "0.29", features = ["event-stream"] }
+unicode-width = "0.2"
+vt100 = "0.16"
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros", "sync", "time", "net"] }
+tokio-tungstenite = { workspace = true, features = ["connect"] }
+futures-util = { workspace = true }
+base64 = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread"] }

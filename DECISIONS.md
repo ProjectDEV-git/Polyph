@@ -230,6 +230,30 @@ could not be followed exactly. Newest at the bottom of each section.
 - **`reqwest` 0.13 with rustls (ring)**, the same as the local agent, for all
   outgoing HTTPS.
 
+## Terminal UI
+
+- **A separate crate (`polyph-tui`)** with a small `Backend` trait: the CLI
+  passes a WebSocket connection, tests pass the daemon in-process, so tests
+  drive the real state, keys and drawing.
+- **State refreshes by parts**: events name what changed (chat, board,
+  agents...) and the loop refetches those parts, coalesced every 100 ms. The
+  API stays the single source of truth; the TUI keeps no shadow model.
+- **Calls run as their own tasks**, so prompting an agent (which waits for
+  the turn) never freezes the screen; terminal keystrokes go through one
+  ordered queue instead, merged into one write when they pile up.
+- **Colors come from DESIGN.md's OKLCH tokens** via the same conversion as
+  voices: true color with `COLORTERM=truecolor|24bit`, the nearest 256-color
+  index otherwise, none with `NO_COLOR` or `TERM=dumb` (reverse video marks
+  the selection).
+- **Shared terminals are drawn with `vt100`**, starting from the scrollback
+  the daemon keeps, so full-screen programs show correctly in previews.
+- **Ctrl-] detaches** (as telnet and many consoles do); crossterm reports it
+  as Ctrl-5, so both are accepted.
+- **Chat keeps document order for equal times**, like activity, so messages
+  sent in the same second appear in the order every member sees.
+- **Approvals in the activity feed credit the person who answered**, naming
+  the agent in the text.
+
 ## Process
 
 - **Design skills.** Impeccable, Emil Kowalski's design-engineering skill,

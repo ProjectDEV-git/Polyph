@@ -435,6 +435,7 @@ async fn call(api: &mut Api, method: &str, params: Value) -> anyhow::Result<Valu
 }
 
 fn main() {
+    let _ = UTC_OFFSET.set(time::UtcOffset::current_local_offset().map(|o| i64::from(o.whole_seconds())).unwrap_or(0));
     // The sandbox helper re-enters this binary before anything else runs.
     let raw: Vec<String> = std::env::args().collect();
     if raw.get(1).map(String::as_str) == Some("__sandbox") {
@@ -477,9 +478,29 @@ fn main() {
     std::process::exit(code);
 }
 
+/// Local time offset, read in `main` before any thread starts (the only time
+/// it can be read soundly on Unix).
+static UTC_OFFSET: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+
+async fn tui(ctx: &Ctx) -> anyhow::Result<()> {
+    let port = client::ensure_daemon(&ctx.paths, true).await.map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let token = std::fs::read_to_string(ctx.paths.token())?;
+    let (conn, events) = polyph_tui::conn::connect(port, &token).await?;
+    let cfg = polyph_daemon::config::UserConfig::load(&ctx.paths).unwrap_or_default();
+    let mode = if cfg.theme == "light" { polyph_tui::theme::Mode::Light } else { polyph_tui::theme::Mode::Dark };
+    let theme = polyph_tui::theme::Theme::new(polyph_tui::theme::Depth::detect(), mode);
+    let mut app = polyph_tui::App::new(Localizer::new(ctx.l.lang()), theme);
+    app.utc_offset = UTC_OFFSET.get().copied().unwrap_or(0);
+    polyph_tui::run(app, conn, events).await
+}
+
 async fn run(ctx: &Ctx, cmd: Option<Cmd>) -> anyhow::Result<()> {
     let Some(cmd) = cmd else {
-        // The terminal UI arrives in milestone 6; until then show help.
+        use std::io::IsTerminal;
+        // In a terminal: the TUI. Piped or scripted: help.
+        if std::io::stdout().is_terminal() && std::io::stdin().is_terminal() {
+            return tui(ctx).await;
+        }
         let l = &ctx.l;
         let mut c = localize(Cli::command(), l, "");
         c.print_help()?;
