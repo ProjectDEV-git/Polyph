@@ -24,3 +24,8 @@ packages/ui/src/i18n/locales.gen.ts
 apps/web/public/excalidraw/
 apps/desktop/public/excalidraw/
 apps/web/next-env.d.ts
+apps/web/public/phone/engine.*
+polyph-relay.db*
+apps/vscode/media/webview/
+apps/vscode/package.nls*.json
+.vscode-test/

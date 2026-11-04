@@ -96,6 +96,7 @@ impl Net {
             kx: id.public().kx.to_vec(),
             name_salt: salt.to_vec(),
             surface: None,
+            capabilities: vec![],
         };
         let out = self.nodes[via].core.post_knock(knock.clone());
         self.run(via, out);
@@ -173,6 +174,7 @@ fn denied_knock_tells_the_handshake_device() {
         kx: id.public().kx.to_vec(),
         name_salt: vec![1; 16],
         surface: None,
+        capabilities: vec![],
     };
     let out = net.nodes[0].core.post_knock(k.clone());
     net.run(0, out);

@@ -3168,10 +3168,12 @@ dependencies = [
  "polyph-i18n",
  "polyph-mcp",
  "polyph-merge",
+ "polyph-plugins",
  "polyph-proto",
  "polyph-relay",
  "polyph-sandbox",
  "polyph-term",
+ "qrcode",
  "reqwest",
  "rustls",
  "serde",
@@ -3245,8 +3247,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "polyph-phone"
+version = "0.1.0"
+dependencies = [
+ "polyph-core",
+ "polyph-proto",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "polyph-plugins"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml",
+]
 
 [[package]]
 name = "polyph-proto"
@@ -3354,6 +3375,7 @@ dependencies = [
  "polyph-i18n",
  "polyph-localagent",
  "polyph-mcp",
+ "polyph-phone",
  "polyph-proto",
  "polyph-relay",
  "polyph-sandbox",
@@ -3364,6 +3386,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "tokio-tungstenite 0.30.0",
  "unicode-width",
  "zbus",
 ]
@@ -3511,6 +3534,12 @@ dependencies = [
  "ar_archive_writer",
  "cc",
 ]
+
+[[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
 
 [[package]]
 name = "quick-error"

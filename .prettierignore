@@ -13,3 +13,7 @@ apps/web/out/
 apps/*/public/excalidraw/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
+apps/web/public/phone/engine.js
+apps/vscode/media/webview/
+apps/vscode/.vscode-test/
+apps/vscode/package.nls*.json

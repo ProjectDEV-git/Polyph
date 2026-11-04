@@ -196,3 +196,36 @@ app-pill-agents = { $n ->
 app-tray-show = Show Polyph
 app-tray-pill = Show the status pill
 app-tray-quit = Quit
+
+# Phone (the PWA) and pairing a phone from the app.
+app-phone-no-room-body = Join a room with the code a teammate sent you, or with the pairing link from your computer. Rooms are hosted from a computer running Polyph.
+app-phone-loading = Starting Polyph on this phone.
+app-phone-unsupported = This browser cannot run Polyph. It needs WebAssembly, WebSockets and IndexedDB.
+app-phone-failed = Polyph could not start on this phone: { $error }
+app-phone-install = Add Polyph to your home screen to open it like an app and get approval alerts.
+app-phone-alerts = Turn on alerts
+app-phone-leave = Leave this room on this phone
+app-phone-pair = Pair a phone
+app-phone-pair-hint = Open the link on your phone, or scan the code. The phone joins as you, so it can answer your agents' approvals. Approve its request when it arrives.
+app-phone-pair-make = Make a pairing link
+app-phone-pair-qr = QR code for the pairing link
+app-phone-pair-expires = Works once, for 15 minutes.
+
+# Agent hosts in the app.
+app-agent-on = Run on
+app-agent-on-here = This computer
+app-agent-on-any = Any of my agent hosts
+app-agent-on-host = Agent host { $host } ({ $n } running)
+app-agent-on-host-offline = Agent host { $host } (offline)
+app-agent-no-hosts = You have no agent host in this room. Add your own server with `polyph agent-host invite` on your computer.
+app-agent-requested = Asked your agent host to start it. It appears here when it starts.
+
+# Plugins in Settings.
+app-settings-plugins = Plugins
+app-settings-plugins-hint = Installed on this device with `polyph plugin add`. They run in the agent sandbox and reach only the hosts listed.
+app-plugins-empty = No plugins installed.
+app-plugin-tools = Tools for agents
+app-plugin-hooks = Runs on
+app-plugin-hosts = Network
+app-plugin-no-network = None
+app-yes = Yes

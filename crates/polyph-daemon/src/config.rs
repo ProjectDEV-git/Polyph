@@ -26,6 +26,10 @@ pub struct UserConfig {
     pub theme: String,
     /// Local API port; 0 picks a free port.
     pub api_port: u16,
+    /// Agent hosts: the directory (a git checkout) agents run in.
+    pub host_workdir: Option<String>,
+    /// Agent hosts: rooms this daemon joined as an agent host.
+    pub host_rooms: Vec<String>,
 }
 
 impl Default for UserConfig {
@@ -37,6 +41,8 @@ impl Default for UserConfig {
             lang: None,
             theme: "dark".into(),
             api_port: 47_850,
+            host_workdir: None,
+            host_rooms: vec![],
         }
     }
 }
@@ -73,7 +79,16 @@ impl UserConfig {
                 self.theme = value.to_string();
             }
             "api_port" => self.api_port = value.parse().map_err(|_| anyhow::anyhow!("api_port must be a number"))?,
-            other => anyhow::bail!("unknown setting {other}; known: name, relay, lang, theme, api_port"),
+            "host_workdir" => {
+                let p = std::path::Path::new(value);
+                if !p.is_dir() {
+                    anyhow::bail!("{value} is not a directory");
+                }
+                self.host_workdir = Some(p.canonicalize()?.to_string_lossy().into_owned());
+            }
+            other => {
+                anyhow::bail!("unknown setting {other}; known: name, relay, lang, theme, api_port, host_workdir")
+            }
         }
         Ok(())
     }
@@ -86,6 +101,7 @@ impl UserConfig {
             "lang" => self.lang.clone(),
             "theme" => Some(self.theme.clone()),
             "api_port" => Some(self.api_port.to_string()),
+            "host_workdir" => self.host_workdir.clone(),
             _ => None,
         }
     }

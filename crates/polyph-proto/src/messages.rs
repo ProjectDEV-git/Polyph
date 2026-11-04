@@ -372,6 +372,48 @@ pub struct Knock {
     pub name_salt: Vec<u8>,
     #[serde(default)]
     pub surface: Option<String>,
+    /// Device capabilities asked for, e.g. `agent-host` for a server that
+    /// runs this member's agents. Granted into the certificate on approval.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+}
+
+/// The certificate capability of a device that runs its member's agents.
+pub const AGENT_HOST: &str = "agent-host";
+
+/// Messages between a member's devices and that member's agent hosts.
+/// Receivers act only on requests from devices of the host's own member,
+/// and only trust replies sent by the host they name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "t", content = "c", rename_all = "snake_case")]
+pub enum HostMsg {
+    /// Start an agent on `host`, in the host's working directory.
+    Start {
+        req: ObjectId,
+        host: DeviceId,
+        kind: String,
+        preset: Option<String>,
+        task: Option<ObjectId>,
+        prompt: Option<String>,
+    },
+    Started {
+        req: ObjectId,
+        agent: AgentRef,
+    },
+    Failed {
+        req: ObjectId,
+        error: String,
+    },
+    /// A prompt for an agent running on `host`.
+    Prompt {
+        host: DeviceId,
+        agent: ObjectId,
+        text: String,
+    },
+    Stop {
+        host: DeviceId,
+        agent: ObjectId,
+    },
 }
 
 /// One file of a hosted working copy. `hash` is BLAKE3 of the content.
@@ -506,6 +548,8 @@ pub enum RoomMessage {
     },
     /// Hosted mode file mirroring.
     Mirror(MirrorMsg),
+    /// Work for a member's agent hosts (their own servers that run agents).
+    Host(HostMsg),
     Goodbye,
     /// A message kind this version does not know. Never sent.
     Unknown,
@@ -533,6 +577,7 @@ const KNOWN_KINDS: &[&str] = &[
     "terminal",
     "spectator_link",
     "mirror",
+    "host",
     "goodbye",
     "unknown",
 ];

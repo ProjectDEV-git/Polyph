@@ -17,7 +17,7 @@ import type { ReactNode } from "react";
 import { Mark } from "../components/mark";
 import { StatusMark } from "../components/status";
 import { VoiceDot, VoiceName, agentSteps } from "../components/voice";
-import { useApp, useS } from "../ctx";
+import { useApp, usePlatform, useS } from "../ctx";
 import { useT } from "../i18n";
 import type { View } from "../store";
 
@@ -189,6 +189,7 @@ export function Rail({ onPick }: { onPick?: () => void }) {
   const merges = useS((s) => s.merges.length);
   const app = useApp();
   const settings = useS((s) => s.view === "settings");
+  const offered = usePlatform().views;
   return (
     <nav aria-label={l.t("app-name")} className="flex h-full flex-col gap-3 px-3 py-3">
       <div className="flex h-8 items-center gap-2 px-2 text-ink">
@@ -197,7 +198,7 @@ export function Rail({ onPick }: { onPick?: () => void }) {
       </div>
       <RoomSwitcher />
       <div className="flex flex-col">
-        {NAV.map((n) => (
+        {NAV.filter((n) => !offered || offered.includes(n.view)).map((n) => (
           <NavItem
             key={n.view}
             view={n.view}

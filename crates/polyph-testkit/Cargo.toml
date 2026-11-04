@@ -28,6 +28,10 @@ name = "polyph-test-mcp"
 path = "src/bin/mcp.rs"
 
 [[bin]]
+name = "polyph-test-plugin-mcp"
+path = "src/bin/plugin_mcp.rs"
+
+[[bin]]
 name = "polyph-test-localagent"
 path = "src/bin/localagent.rs"
 
@@ -39,6 +43,9 @@ polyph-agents = { workspace = true }
 polyph-localagent = { workspace = true }
 polyph-mcp = { workspace = true }
 polyph-tui = { workspace = true }
+polyph-phone = { workspace = true }
+tokio-tungstenite = { workspace = true, features = ["connect"] }
+futures-util = { workspace = true }
 axum = { workspace = true, features = ["http1", "tokio", "json"] }
 parking_lot = { workspace = true }
 polyph-sandbox = { workspace = true }
@@ -61,4 +68,3 @@ polyph-relay = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 zbus = { version = "4", default-features = false, features = ["tokio"] }
-futures-util = { workspace = true }

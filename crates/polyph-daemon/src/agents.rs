@@ -408,6 +408,8 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
     let mut allow = Allowlist::default_for_agents();
     allow.hosts.extend(def.config.hosts.iter().cloned());
     allow.hosts.extend(project.sandbox.allow_hosts.iter().cloned());
+    // Plugins' tool servers run inside this agent's sandbox, on its proxy.
+    allow.hosts.extend(crate::plugins::hosts(&shared));
     let decider: Decider = {
         let (rt, shared, once) = (rt.clone(), shared.clone(), once.clone());
         Arc::new(move |host, port| {
@@ -469,6 +471,9 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
                 EnvVariable { name: polyph_mcp::ENV_TOKEN.into(), value: mcp_token.clone() },
             ],
         });
+    }
+    if !p.helper {
+        mcp.extend(crate::plugins::mcp_servers(&shared, &tmp.join("tmp")));
     }
     let (tx, rx) = mpsc::channel(1024);
     let pump_task = tokio::spawn(pump(rx, once.clone(), rt.clone(), shared.clone(), agent.clone()));

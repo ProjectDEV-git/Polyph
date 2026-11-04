@@ -172,3 +172,36 @@ app-pill-agents = { $n } 个智能体正在运行
 app-tray-show = 显示 Polyph
 app-tray-pill = 显示状态胶囊
 app-tray-quit = 退出
+
+# Phone (the PWA) and pairing a phone from the app.
+app-phone-no-room-body = 使用队友发来的加入码,或电脑上的配对链接加入房间。房间由运行 Polyph 的电脑托管。
+app-phone-loading = 正在此手机上启动 Polyph。
+app-phone-unsupported = 此浏览器无法运行 Polyph。需要 WebAssembly、WebSocket 和 IndexedDB。
+app-phone-failed = Polyph 无法在此手机上启动:{ $error }
+app-phone-install = 将 Polyph 添加到主屏幕,即可像应用一样打开并接收审批提醒。
+app-phone-alerts = 开启提醒
+app-phone-leave = 在此手机上离开此房间
+app-phone-pair = 配对手机
+app-phone-pair-hint = 在手机上打开链接或扫描二维码。手机以你的身份加入,因此可以回复你的智能体的审批请求。请求到达时请批准。
+app-phone-pair-make = 生成配对链接
+app-phone-pair-qr = 配对链接的二维码
+app-phone-pair-expires = 仅限一次,15 分钟内有效。
+
+# Agent hosts in the app.
+app-agent-on = 运行位置
+app-agent-on-here = 这台电脑
+app-agent-on-any = 我的任一智能体主机
+app-agent-on-host = 智能体主机 { $host }(运行中 { $n })
+app-agent-on-host-offline = 智能体主机 { $host }(离线)
+app-agent-no-hosts = 你在此房间中还没有智能体主机。在电脑上用 `polyph agent-host invite` 添加你自己的服务器。
+app-agent-requested = 已请求你的智能体主机启动它。启动后会显示在这里。
+
+# Plugins in Settings.
+app-settings-plugins = 插件
+app-settings-plugins-hint = 通过 `polyph plugin add` 安装在此设备上。它们在智能体沙箱中运行,只能访问列出的主机。
+app-plugins-empty = 尚未安装插件。
+app-plugin-tools = 智能体工具
+app-plugin-hooks = 运行于
+app-plugin-hosts = 网络
+app-plugin-no-network = 无
+app-yes = 是

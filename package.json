@@ -2,7 +2,9 @@
   "name": "polyph-monorepo",
   "private": true,
   "packageManager": "pnpm@10.28.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "check:i18n": "node scripts/check-i18n.mjs",
     "format": "prettier --write .",
@@ -11,7 +13,8 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "build": "pnpm -r --if-present build",
-    "test:e2e": "node scripts/e2e-web.mjs"
+    "test:e2e": "node scripts/e2e-web.mjs && node scripts/e2e-phone.mjs",
+    "build:phone": "node scripts/build-phone-wasm.mjs"
   },
   "devDependencies": {
     "prettier": "3.9.10"

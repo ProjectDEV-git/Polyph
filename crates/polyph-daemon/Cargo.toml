@@ -20,6 +20,7 @@ polyph-mcp = { workspace = true }
 polyph-git = { workspace = true }
 polyph-merge = { workspace = true }
 polyph-term = { workspace = true }
+polyph-plugins = { workspace = true }
 base64 = { workspace = true }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json"] }
 hmac = "0.12"
@@ -48,6 +49,7 @@ if-addrs = "0.13"
 keyring = { version = "3.6", features = ["apple-native", "windows-native", "async-secret-service", "tokio", "crypto-rust"] }
 yrs = "0.28"
 blake3 = "1.8"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "4", default-features = false, features = ["tokio"] }

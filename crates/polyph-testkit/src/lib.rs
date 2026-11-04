@@ -3,4 +3,5 @@
 pub mod fake_model;
 pub mod harness;
 pub mod load;
+pub mod phone;
 pub mod tui;

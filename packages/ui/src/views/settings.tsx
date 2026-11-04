@@ -1,7 +1,7 @@
 // Settings: this device, appearance, the room, integrations and usage.
 import { useEffect, useState, type ReactNode } from "react";
 import { Button, Input, Label, Select } from "../components/ui";
-import { useApp, useS } from "../ctx";
+import { useApp, usePlatform, useS } from "../ctx";
 import { LANGS, useT } from "../i18n";
 import { usePrefs } from "../prefs";
 import { Part } from "../store";
@@ -45,16 +45,34 @@ export function SettingsView() {
   const [workdir, setWorkdir] = useWorkdir();
   const [name, setName] = useState(me?.name ?? "");
   const [integrations, setIntegrations] = useState<Record<string, unknown> | null>(null);
+  const [plugins, setPlugins] = useState<
+    {
+      name: string;
+      version: string;
+      description: string;
+      tools: boolean;
+      hooks: string[];
+      hosts: string[];
+    }[]
+  >([]);
   const [usage, setUsage] = useState<{
     ledger: { room: Ledger; by_member: Record<string, Ledger> };
   } | null>(null);
   const [invite, setInvite] = useState<string | null>(null);
+  const [pairing, setPairing] = useState<{ link: string; svg?: string } | null>(null);
+  const platform = usePlatform();
+  const phone = platform.kind === "phone";
   const members = useS((s) => s.members);
   useEffect(() => setName(me?.name ?? ""), [me?.name]);
   useEffect(() => {
+    if (phone) return;
     app.api.call<Record<string, unknown>>("integrations.status").then(setIntegrations, () => {});
+    app.api.call<typeof plugins>("plugin.list").then(
+      (v) => setPlugins(Array.isArray(v) ? v : []),
+      () => {},
+    );
     if (room) app.api.call<typeof usage>("usage.get", { room: room.id }).then(setUsage, () => {});
-  }, [app, room]);
+  }, [app, room, phone]);
   const fmt = new Intl.NumberFormat(l.lang);
   const money = new Intl.NumberFormat(l.lang, {
     style: "currency",
@@ -64,32 +82,36 @@ export function SettingsView() {
   return (
     <div className="scroll-quiet min-h-0 flex-1 overflow-y-auto px-6">
       <Section title={l.t("app-settings-device")} hint={l.t("app-settings-device-hint")}>
-        <form
-          className="flex items-end gap-2"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            if (!name.trim()) return;
-            await app.act("config.set", { key: "name", value: name.trim() }, l.t("app-saved"));
-            void app.refresh(Part.ME | Part.MEMBERS);
-          }}
-        >
-          <div className="flex-1">
-            <Label htmlFor="st-name">{l.t("app-settings-name")}</Label>
-            <Input id="st-name" value={name} onChange={(e) => setName(e.target.value)} />
+        {!phone && (
+          <form
+            className="flex items-end gap-2"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!name.trim()) return;
+              await app.act("config.set", { key: "name", value: name.trim() }, l.t("app-saved"));
+              void app.refresh(Part.ME | Part.MEMBERS);
+            }}
+          >
+            <div className="flex-1">
+              <Label htmlFor="st-name">{l.t("app-settings-name")}</Label>
+              <Input id="st-name" value={name} onChange={(e) => setName(e.target.value)} />
+            </div>
+            <Button type="submit">{l.t("app-save")}</Button>
+          </form>
+        )}
+        {!phone && (
+          <div>
+            <Label htmlFor="st-workdir">{l.t("app-workdir")}</Label>
+            <Input
+              id="st-workdir"
+              className="font-mono"
+              value={workdir}
+              placeholder={l.t("app-workdir-placeholder")}
+              onChange={(e) => setWorkdir(e.target.value)}
+            />
+            <p className="mt-1 text-xs text-ink-2">{l.t("app-workdir-hint")}</p>
           </div>
-          <Button type="submit">{l.t("app-save")}</Button>
-        </form>
-        <div>
-          <Label htmlFor="st-workdir">{l.t("app-workdir")}</Label>
-          <Input
-            id="st-workdir"
-            className="font-mono"
-            value={workdir}
-            placeholder={l.t("app-workdir-placeholder")}
-            onChange={(e) => setWorkdir(e.target.value)}
-          />
-          <p className="mt-1 text-xs text-ink-2">{l.t("app-workdir-hint")}</p>
-        </div>
+        )}
         <dl>
           <Row k={l.t("app-settings-relay")} v={me?.relay ?? "—"} mono />
           <Row k={l.t("app-settings-keystore")} v={me?.keystore ?? "—"} />
@@ -127,7 +149,43 @@ export function SettingsView() {
           </div>
         </div>
       </Section>
-      {room && (
+      {phone && <PhoneSection room={room?.id ?? null} />}
+      {room && !phone && (
+        <Section title={l.t("app-phone-pair")} hint={l.t("app-phone-pair-hint")}>
+          <Button
+            className="self-start"
+            onClick={async () => {
+              const r = await app.act<{ link: string; svg?: string }>("phone.pair", {
+                room: room.id,
+              });
+              if (r) setPairing(r);
+            }}
+          >
+            {l.t("app-phone-pair-make")}
+          </Button>
+          {pairing && (
+            <div className="flex flex-col gap-2">
+              {pairing.svg && (
+                <div
+                  role="img"
+                  aria-label={l.t("app-phone-pair-qr")}
+                  className="size-[200px] rounded-card bg-s1 text-ink [&_svg]:size-full"
+                  dangerouslySetInnerHTML={{ __html: pairing.svg }}
+                />
+              )}
+              <a
+                href={pairing.link}
+                className="break-all font-mono text-xs text-ink-2 underline"
+                data-testid="pair-link"
+              >
+                {pairing.link}
+              </a>
+              <p className="text-xs text-ink-2">{l.t("app-phone-pair-expires")}</p>
+            </div>
+          )}
+        </Section>
+      )}
+      {room && !phone && (
         <Section title={l.t("app-settings-room")} hint={l.t("app-settings-room-hint")}>
           <div className="flex items-center gap-3">
             <Button
@@ -154,33 +212,65 @@ export function SettingsView() {
           </dl>
         </Section>
       )}
-      <Section
-        title={l.t("app-settings-integrations")}
-        hint={l.t("app-settings-integrations-hint")}
-      >
-        <dl>
-          <Row
-            k={l.t("app-github")}
-            v={
-              integrations?.github
-                ? l.t("app-connected")
-                : integrations
-                  ? l.t("app-not-connected")
-                  : "—"
-            }
-          />
-          <Row
-            k={l.t("app-linear")}
-            v={
-              integrations?.linear
-                ? l.t("app-connected")
-                : integrations
-                  ? l.t("app-not-connected")
-                  : "—"
-            }
-          />
-        </dl>
-      </Section>
+      {!phone && (
+        <Section
+          title={l.t("app-settings-integrations")}
+          hint={l.t("app-settings-integrations-hint")}
+        >
+          <dl>
+            <Row
+              k={l.t("app-github")}
+              v={
+                integrations?.github
+                  ? l.t("app-connected")
+                  : integrations
+                    ? l.t("app-not-connected")
+                    : "—"
+              }
+            />
+            <Row
+              k={l.t("app-linear")}
+              v={
+                integrations?.linear
+                  ? l.t("app-connected")
+                  : integrations
+                    ? l.t("app-not-connected")
+                    : "—"
+              }
+            />
+          </dl>
+        </Section>
+      )}
+      {!phone && (
+        <Section title={l.t("app-settings-plugins")} hint={l.t("app-settings-plugins-hint")}>
+          {plugins.length === 0 ? (
+            <p className="text-sm text-ink-2">{l.t("app-plugins-empty")}</p>
+          ) : (
+            <ul className="flex flex-col gap-3">
+              {plugins.map((p) => (
+                <li key={p.name} className="text-sm">
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-medium text-ink">{p.name}</span>
+                    <span className="num text-xs text-ink-2">{p.version}</span>
+                  </div>
+                  {p.description && <p className="text-ink-2">{p.description}</p>}
+                  <dl>
+                    {p.tools && <Row k={l.t("app-plugin-tools")} v={l.t("app-yes")} />}
+                    {p.hooks.length > 0 && (
+                      <Row k={l.t("app-plugin-hooks")} v={p.hooks.join(", ")} mono />
+                    )}
+                    <Row
+                      k={l.t("app-plugin-hosts")}
+                      v={p.hosts.length ? p.hosts.join(", ") : l.t("app-plugin-no-network")}
+                      mono={p.hosts.length > 0}
+                    />
+                  </dl>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
+      )}
       {usage && (
         <Section title={l.t("app-settings-usage")} hint={l.t("app-settings-usage-hint")}>
           <table className="w-full border-collapse text-sm">
@@ -220,5 +310,39 @@ export function SettingsView() {
         </Section>
       )}
     </div>
+  );
+}
+
+/** The phone's own settings: alerts, installing, and leaving the room. */
+function PhoneSection({ room }: { room: string | null }) {
+  const l = useT();
+  const app = useApp();
+  const [perm, setPerm] = useState(
+    typeof Notification === "undefined" ? "denied" : Notification.permission,
+  );
+  return (
+    <Section title={l.t("app-settings-room")} hint={l.t("app-phone-install")}>
+      {perm === "default" && (
+        <Button
+          className="self-start"
+          onClick={async () => setPerm(await Notification.requestPermission())}
+        >
+          {l.t("app-phone-alerts")}
+        </Button>
+      )}
+      {room && (
+        <Button
+          className="self-start"
+          variant="danger"
+          onClick={async () => {
+            await app.act("room.leave", { room });
+            app.set({ room: null });
+            void app.refresh(Part.ROOMS);
+          }}
+        >
+          {l.t("app-phone-leave")}
+        </Button>
+      )}
+    </Section>
   );
 }

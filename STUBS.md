@@ -12,9 +12,8 @@ LICENSE) are not built. `polyph` with no arguments opens the TUI in a terminal a
 otherwise.
 
 CLI commands not implemented yet (they arrive with their milestones):
-`login`, `logout`, `cloud *` (and `agent start --on cloud`), `plan`,
-`task *`, `memory *`, `term *`, `sync`, `spectate-link *`, `template *`,
-`skills *`, `plugin *`. (`polyph mcp` exists: agents start it.) People can
+`login`, `logout`, `cloud *`, `sync`, `spectate-link *`. (`agent start --on`,
+`agent-host`, `template`, `skills` and `plugin` arrived in M9.) (`polyph mcp` exists: agents start it.) People can
 list memory notes and message agents through the daemon API (`memory.list`,
 `inbox.send`) but not yet from the CLI. `polyph host --mode hosted` is
 accepted but hosted mode is M4.
@@ -151,9 +150,8 @@ accepted but hosted mode is M4.
 
 ## Milestone 7 gaps
 
-- **Browser-only members** (joining a room from a browser with no daemon,
-  using the wasm engine over the relay) come with the phone PWA in M8. The
-  browser client today is a window onto the person's own daemon.
+- **Browser-only members** arrived in M8 as the phone app (`/phone/`). The
+  desktop browser client is still a window onto the person's own daemon.
 - **Desktop packaging** is configured (`tauri.conf.json`, icons) but no
   installers are built or signed yet; the app expects `polyph` next to it or
   on PATH. Release work is M11.
@@ -171,6 +169,70 @@ accepted but hosted mode is M4.
 - **The Impeccable passes** were done by hand with the design-taste
   inspector (`inspect.mjs --app`); its remaining warnings are the third
   typeface (DESIGN.md's serif for room names) and honest empty space.
+
+## Milestone 8 gaps
+
+- **Nublet provider: skipped** (2026-11-04, the project owner's decision).
+  The brief names a Nublet provider, but Nublet's provider interface is not
+  in the repository and could not be found, so the work moved on to M9
+  without it. When it is picked up, the status feed (`polyph status
+  --watch`, NDJSON, versioned in `polyph-proto::status`) is what it would
+  read. Nothing else depends on it.
+- **One room per phone.** The phone engine holds one room; joining another
+  means leaving the first on that phone (Settings > Leave this room).
+- **No push when the phone app is closed.** Approval alerts show while the
+  app is open or in the background with its page alive. Web Push needs the
+  hosted push service (proprietary, `cloud/`, M10).
+- **Phone transcripts start at join.** Like late-joining daemons, the phone
+  sees agents' transcript events from when it is online; it keeps the last
+  1,000 per agent in memory, not on disk.
+- **Daemon-only views and actions on the phone**: terminals, merges,
+  starting or prompting agents, planning, integrations and usage need a
+  computer running Polyph; the phone hides those views and says so for
+  calls that reach the engine.
+- **Phone storage** is sealed with a non-extractable WebCrypto key, which
+  stops copies of the stored bytes from being read elsewhere, not script
+  running on the same origin. The site must stay free of third-party script.
+- **The website's own headers** for `/phone/` (CSP with `wasm-unsafe-eval`
+  and `connect-src wss:`) are set by the daemon for local testing only; the
+  website's hosting (M10) must send the same policy.
+- **wasm size**: 4.9 MB (1.1 MB gzipped), built with `opt-level = "s"` and
+  LTO but no `wasm-opt` pass (not installed here).
+- **LAN rooms cannot pair a phone**: a LAN relay's self-signed certificate
+  cannot be pinned by a browser; `phone.pair` refuses with an explanation.
+- **VS Code extension** is not published or packaged into a `.vsix` yet
+  (release work, M11); it has been run in VS Code 1.144 on Linux under
+  Xvfb. Its webview uses Polyph's own theme rather than VS Code's colors.
+- **Claims in VS Code** are matched against workspace folders' git roots;
+  a workspace that is not the room's repository simply shows no claims.
+
+## Milestone 9 gaps
+
+- **No brief for M9 in the repository.** Its scope was derived from what
+  earlier milestones left for it (see `PLAN.md`); check it against the
+  brief when that is available.
+- **Polyph-hosted cloud agents** (run by Polyph for a subscription) are not
+  built: they need accounts and billing (M10, proprietary `cloud/`). Agent
+  hosts are the person's own machines; `--on cloud` means "any of my hosts".
+- **Hosts keep no queue while offline**: a start, prompt or stop sent when
+  the host is offline is lost (the start times out after 60 seconds).
+- **One person per host daemon.** A shared server needs a separate
+  `POLYPH_HOME` and user account per person.
+- **Hosts' working copies are not synced**: the host works in its own
+  checkout; results reach others through task branches, the merge queue and
+  `[merge] push`, like any device.
+- **Agent hosts on Windows and macOS** have not been tried; tests ran on
+  Linux with Landlock.
+- **Plugins are not signed or sandboxed beyond the agent sandbox**, and there
+  is no plugin registry; people install folders they trust. On Windows the
+  sandbox is weak (see the Windows sandbox entry above), so plugins there
+  run with little isolation.
+- **Hook actions** are limited to chat posts; no card or thread actions yet.
+- **Built-in skill texts are English.** Template descriptions are
+  translated; the skill files a template writes into a repository are team
+  content and start in English.
+- **Plugins are listed, not managed, in the app**; adding and removing stay
+  in the CLI.
 
 ## Process gaps
 

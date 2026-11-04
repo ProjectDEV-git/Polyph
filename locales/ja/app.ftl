@@ -172,3 +172,36 @@ app-pill-agents = { $n } 個のエージェントが実行中
 app-tray-show = Polyph を表示
 app-tray-pill = ステータスピルを表示
 app-tray-quit = 終了
+
+# Phone (the PWA) and pairing a phone from the app.
+app-phone-no-room-body = チームメイトから届いたコード、またはコンピューターのペアリングリンクでルームに参加します。ルームは Polyph を実行しているコンピューターでホストされます。
+app-phone-loading = このスマートフォンで Polyph を起動しています。
+app-phone-unsupported = このブラウザーでは Polyph を実行できません。WebAssembly、WebSocket、IndexedDB が必要です。
+app-phone-failed = このスマートフォンで Polyph を起動できませんでした: { $error }
+app-phone-install = ホーム画面に Polyph を追加すると、アプリのように開けて承認の通知も受け取れます。
+app-phone-alerts = 通知をオンにする
+app-phone-leave = このスマートフォンでこのルームを退出
+app-phone-pair = スマートフォンをペアリング
+app-phone-pair-hint = スマートフォンでリンクを開くか、コードをスキャンしてください。あなたとして参加するため、あなたのエージェントの承認に応答できます。リクエストが届いたら承認してください。
+app-phone-pair-make = ペアリングリンクを作成
+app-phone-pair-qr = ペアリングリンクの QR コード
+app-phone-pair-expires = 1 回のみ、15 分間有効です。
+
+# Agent hosts in the app.
+app-agent-on = 実行場所
+app-agent-on-here = このコンピューター
+app-agent-on-any = 自分のエージェントホストのいずれか
+app-agent-on-host = エージェントホスト { $host }(実行中 { $n })
+app-agent-on-host-offline = エージェントホスト { $host }(オフライン)
+app-agent-no-hosts = このルームにはあなたのエージェントホストがありません。コンピューターで `polyph agent-host invite` を実行して自分のサーバーを追加してください。
+app-agent-requested = エージェントホストに開始を依頼しました。開始するとここに表示されます。
+
+# Plugins in Settings.
+app-settings-plugins = プラグイン
+app-settings-plugins-hint = `polyph plugin add` でこのデバイスにインストールされたもの。エージェントのサンドボックスで動き、記載されたホストにだけ接続できます。
+app-plugins-empty = プラグインはありません。
+app-plugin-tools = エージェント用ツール
+app-plugin-hooks = 実行イベント
+app-plugin-hosts = ネットワーク
+app-plugin-no-network = なし
+app-yes = はい

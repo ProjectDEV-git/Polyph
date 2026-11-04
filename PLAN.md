@@ -97,6 +97,30 @@ commit and an updated `HANDOFF.md`. Stubs go in `STUBS.md`.
 - [x] four locales (`locales/*/app.ftl`), phone width, light and dark themes, reduced motion
 - [x] tests: Vitest (voices, i18n, store, client, approvals), `pnpm test:e2e` (browser client against a real daemon), daemon unit tests for links, hosts, origins and static files
 ## M8 — PWA, VS Code extension, Nublet provider
+
+- [x] `polyph-phone`: a browser-only room member with no I/O (relay auth, joiner side of the join PAKE, one room: chat, threads, board, transcripts as they arrive, approvals, knocks), the daemon's API shapes, wasm-bindgen exports
+- [x] phone PWA (`apps/web` `/phone/`): engine in wasm over the relay, `PhoneClient` transport so the shared app runs unchanged, sealed IndexedDB storage, manifest, icons, service worker, approval alerts
+- [x] pairing: daemon `phone.pair`, `polyph phone` (link and terminal QR), Settings > Pair a phone (QR); the phone joins as the person's member and knocks like anyone
+- [x] VS Code extension (`apps/vscode`): daemon discovery and start, claim badges and editor notes, approvals as notifications, status bar, the shared app in a sidebar view and an editor tab through a message bridge, Pair a phone
+- [x] four locales (`app.ftl`, `cli.ftl`, `vscode.ftl`; manifest strings generated into `package.nls*.json`)
+- [x] tests: `polyph-testkit/tests/m8.rs` (phone engine through a real relay and daemon: join, chat, board, approvals, save/restore), Vitest (`PhoneClient`, extension with a stand-in `vscode` and a fake daemon), `scripts/e2e-phone.mjs` (Chromium at phone size, wasm engine, real daemon), `apps/vscode/test/e2e` (real VS Code, webview bundle)
+- [ ] ~~Nublet provider~~ **skipped** on 2026-11-04 by the project owner's decision: Nublet's provider interface is not in the repository. Recorded in `STUBS.md` and `DECISIONS.md`; pick it up when the interface is available.
 ## M9 — cloud agents and extensibility
+
+Scope note: the brief is not in the repository; this scope comes from what
+earlier milestones left for M9 (the `agent-host` certificate capability and
+`Surface::AgentHost` in the protocol, `agent start --on`, and the `plugin`,
+`skills` and `template` commands in `STUBS.md`) and from `PRODUCT.md`
+("some members run agents on their own servers so work continues with the
+laptop closed"). Polyph-run hosted agents are proprietary and wait for
+accounts and billing (M10).
+
+- [x] protocol: requested capabilities on join requests and knocks, granted into certificates; `host` room messages (start, started, failed, prompt, stop)
+- [x] agent hosts: enrollment (`polyph agent-host invite|join|workdir`), start/prompt/stop from any of the person's devices (`agent start --on`), approvals as for any agent, cloud flag in status feeds, Run on in the app, the phone starts agents on hosts
+- [x] skills: `.polyph/skills/` (project) and personal skills; MCP tools `list_skills`, `read_skill`; `polyph skills`
+- [x] plugins: manifest, per-device store, MCP tool servers in every agent session inside its sandbox, hooks on room events in a fresh sandbox with declared hosts only; `polyph plugin`; Settings lists them
+- [x] templates: four built-in (startup, hackathon, open-source, agency) and personal ones; `polyph template`
+- [x] tests: `m9.rs` (agent hosts, teammate refused, restart, workdir, phone with the laptop stopped), `m9_extend.rs` (templates, skills and a plugin tool through an agent, a hook answering once), crate unit tests
+- [x] docs: `docs/agent-hosts.md`, `docs/extending.md`
 ## M10 — website, accounts, billing
 ## M11 — release

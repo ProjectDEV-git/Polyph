@@ -297,6 +297,75 @@ could not be followed exactly. Newest at the bottom of each section.
 - **The keychain is read from a plain thread**: secret-service backends block
   on their own runtime, which panicked inside the daemon's async runtime.
 
+## Phone app and VS Code extension
+
+- **The phone engine is a state machine with no I/O** (`polyph-phone`),
+  like `polyph-core`: the page owns the WebSocket and the timers and passes
+  bytes in. The same code runs natively in `tests/m8.rs` against a real
+  relay and daemon, so the protocol is tested without a browser.
+- **It answers the daemon's API** (method names, parameters, reply shapes)
+  and `PhoneClient` implements the app's transport over it, so the phone
+  runs the same React app as the desktop and browser client; views a phone
+  cannot serve are hidden through `Platform.views`.
+- **A phone joins as its owner's member.** The pairing link carries the
+  person's member id, so the phone is another device of theirs and can
+  answer their agents' approvals at once (no escalation wait). It still
+  knocks and must be approved: a member id is visible to room members and
+  is not a credential; the one-time code and the approval are.
+- **The link keeps everything in the fragment** (`#join=…&member=…&relay=…`),
+  which browsers never send to the server hosting the page, and the page
+  removes it from the address bar at once (keeping Next.js's history state,
+  or the router reloads the page).
+- **Phone state is sealed in IndexedDB** with an AES-GCM key generated as
+  non-extractable, saved at once after joining and within a quarter second
+  of later changes (a page can be killed at any time).
+- **The engine loads at run time** from `/phone/engine.js` and `.wasm`
+  (built by `scripts/build-phone-wasm.mjs`, not committed), so the web
+  build and type-check do not need the wasm toolchain's output in source.
+- **The VS Code webview talks to the daemon through the extension**
+  (postMessage), not its own WebSocket: the API token stays in the
+  extension host and the daemon's origin checks stay strict.
+- **`@polyph/ui/core`** is the React-free part of the UI package (client,
+  strings, approval sentences) for the extension host.
+- **Manifest strings for VS Code** come from `locales/*/vscode.ftl` and are
+  written to `package.nls*.json` at build time, keeping one source of text.
+
+## Agent hosts and extensibility (M9)
+
+- **"Cloud agents" are agents on the person's own machines** (agent hosts).
+  The brief's open core keeps Polyph-run infrastructure proprietary, and
+  PRODUCT.md asks for agents on members' own servers, so the open engine
+  builds that; a hosted offering can sit on the same messages later.
+- **A host is another device of the same member**, with the `agent-host`
+  capability in its certificate (the field existed since M1). It needs no new
+  trust model: certificates already say who a device belongs to, and the
+  approver sees the capability in the knock.
+- **Hosts obey only their own member**, checked against the sender's
+  verified certificate, and requesters accept replies only from the host
+  they asked. Prompts travel in the room like inbox messages, so members can
+  read them, as they can read every agent's transcript.
+- **Only known capabilities are granted**: an unknown capability in a knock
+  is dropped rather than written into a certificate.
+- **Skills are files, read through MCP tools**: every agent kind gets them
+  the same way, with no agent-specific config, and project skills travel
+  with the repository through git.
+- **Plugins are per person and per device**, never installed by a
+  repository, so cloning a repository cannot run code on a teammate's
+  machine. Their tool servers run inside each agent's sandbox (started by
+  the agent from a copy, since the Polyph home is hidden from agents) and
+  their hooks in a fresh sandbox of their own; network is limited to hosts
+  the manifest declares, enforced by the same allowlisting proxy as agents.
+- **Hook output is data, not commands**: JSON lines with a fixed set of
+  actions (chat posts for now), labeled `plugin/<name>`, and hooks never run
+  on plugin posts, so plugins cannot loop on each other.
+
+## Skipped work
+
+- **The Nublet provider (M8) was skipped** on 2026-11-04 at the project
+  owner's request: Nublet's provider interface was not available, and an
+  integration guessed without it would have been wrong. The status feed it
+  would read already exists. Tracked in `STUBS.md` and `PLAN.md`.
+
 ## Process
 
 - **Design skills.** Impeccable, Emil Kowalski's design-engineering skill,

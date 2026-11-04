@@ -2,7 +2,7 @@
 import clsx from "clsx";
 import { Dialog } from "radix-ui";
 import { useEffect, useMemo, useState } from "react";
-import { useApp, useS } from "../ctx";
+import { useApp, usePlatform, useS } from "../ctx";
 import { useT } from "../i18n";
 import { usePrefs } from "../prefs";
 import { VIEWS } from "../store";
@@ -12,6 +12,7 @@ type Cmd = { id: string; label: string; hint?: string; run: () => void };
 export function Palette() {
   const l = useT();
   const app = useApp();
+  const offered = usePlatform().views;
   const rooms = useS((s) => s.rooms);
   const agents = useS((s) => s.agents);
   const [prefs, setPrefs] = usePrefs();
@@ -29,7 +30,7 @@ export function Palette() {
     return () => window.removeEventListener("keydown", on);
   }, []);
   const cmds = useMemo<Cmd[]>(() => {
-    const out: Cmd[] = VIEWS.map((v) => ({
+    const out: Cmd[] = VIEWS.filter((v) => !offered || offered.includes(v)).map((v) => ({
       id: `view-${v}`,
       label: l.t(`app-view-${v}`),
       hint: l.t("app-palette-view"),
@@ -56,7 +57,7 @@ export function Palette() {
       run: () => setPrefs({ theme: prefs.theme === "light" ? "dark" : "light" }),
     });
     return out;
-  }, [l, app, rooms, agents, prefs.theme, setPrefs]);
+  }, [l, app, rooms, agents, prefs.theme, setPrefs, offered]);
   const needle = q.trim().toLowerCase();
   const list = needle ? cmds.filter((c) => c.label.toLowerCase().includes(needle)) : cmds;
   const run = (c: Cmd | undefined) => {

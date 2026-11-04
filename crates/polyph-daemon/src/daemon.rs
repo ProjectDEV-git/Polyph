@@ -178,7 +178,11 @@ impl Shared {
         let data = std::fs::read(path)?;
         let pt = self.key.open(stem.as_bytes(), &data)?;
         let saved: SavedRoom = from_cbor(&pt)?;
-        Ok(RoomCore::load(self.identity.clone(), saved, self.clock.now())?)
+        let mut core = RoomCore::load(self.identity.clone(), saved, self.clock.now())?;
+        if core.is_agent_host(&core.me) {
+            core.surface = polyph_proto::messages::Surface::AgentHost;
+        }
+        Ok(core)
     }
 
     pub fn member_id(&self) -> anyhow::Result<MemberId> {
@@ -226,6 +230,8 @@ pub struct MemberInfo {
 pub struct Daemon {
     pub shared: Arc<Shared>,
     pub agents: crate::agents::Agents,
+    /// Start requests waiting for this member's agent hosts.
+    pub hosts: crate::hosts::Hosts,
     rooms: Mutex<HashMap<RoomId, Arc<RoomRuntime>>>,
     open: Mutex<Vec<RoomId>>,
     pub shutdown: tokio::sync::Notify,
@@ -290,12 +296,15 @@ impl Daemon {
         let d = Arc::new(Self {
             shared: shared.clone(),
             agents: Default::default(),
+            hosts: Default::default(),
             rooms: Mutex::new(HashMap::new()),
             open: Mutex::new(vec![]),
             shutdown: tokio::sync::Notify::new(),
         });
         let _ = shared.daemon.set(Arc::downgrade(&d));
         tokio::spawn(crate::notify::run(Arc::downgrade(&d), d.subscribe()));
+        tokio::spawn(crate::hosts::run(Arc::downgrade(&d), d.subscribe()));
+        tokio::spawn(crate::plugins::run(Arc::downgrade(&d), d.subscribe()));
         tokio::spawn(crate::github::run(Arc::downgrade(&d)));
         #[cfg(target_os = "linux")]
         {
@@ -693,6 +702,36 @@ impl Daemon {
                     }
                 }
                 Err(ApiError::Failed("could not find a free code; try again".into()))
+            }
+            "phone.pair" => {
+                // A one-time code plus this person's member id, as a link for
+                // their phone (crates/polyph-daemon/src/phone.rs).
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    base: Option<String>,
+                }
+                let p: P = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let relay = rt.ctx.lock().await.relay.clone();
+                if relay.pin.is_some() {
+                    return Err(ApiError::BadRequest(
+                        "this room uses a LAN relay with its own certificate, which phone browsers cannot reach; host it on an internet relay to pair a phone".into(),
+                    ));
+                }
+                let inv = Box::pin(self.call("room.invite", json!({ "room": rt.id.to_hex() }))).await?;
+                let code = inv["code"].as_str().unwrap_or_default().to_string();
+                let member = self.shared.member_id()?.to_hex();
+                let base = p.base.unwrap_or_else(crate::phone::default_base);
+                let link = crate::phone::link(&base, &code, &member, &relay.url);
+                ok(json!({
+                    "code": code,
+                    "expires_at": inv["expires_at"],
+                    "member": member,
+                    "relay": relay.url,
+                    "link": link,
+                    "svg": crate::phone::qr_svg(&link),
+                }))
             }
             "room.revoke_code" => {
                 #[derive(Deserialize)]
@@ -1489,6 +1528,91 @@ impl Daemon {
                 let found = crate::lan::discover(Duration::from_millis(p.timeout_ms.unwrap_or(2000))).await?;
                 ok(found)
             }
+            "agent.start" if params.get("on").and_then(Value::as_str).is_some_and(|s| !s.is_empty()) => {
+                let p: crate::hosts::StartOn = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                crate::hosts::start_on(self, &rt, p).await
+            }
+            "agent.hosts" => {
+                let p: RoomParam = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                ok(crate::hosts::list(&rt, now).await)
+            }
+            "host.invite" => {
+                let p: RoomParam = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                crate::hosts::invite(self, &rt).await
+            }
+            "host.join" => crate::hosts::join(self, params).await,
+            "plugin.list" => ok(crate::plugins::list(&self.shared)),
+            "plugin.add" => {
+                #[derive(Deserialize)]
+                struct P {
+                    path: std::path::PathBuf,
+                    #[serde(default)]
+                    replace: bool,
+                }
+                let p: P = param(&params)?;
+                let i = crate::plugins::store(&self.shared).add(&p.path, p.replace).map_err(ext_err)?;
+                ok(
+                    json!({ "name": i.manifest.name, "version": i.manifest.version, "hosts": i.manifest.permissions.hosts }),
+                )
+            }
+            "plugin.inspect" => {
+                #[derive(Deserialize)]
+                struct P {
+                    path: std::path::PathBuf,
+                }
+                let p: P = param(&params)?;
+                let m = crate::plugins::inspect(&p.path).map_err(ext_err)?;
+                ok(serde_json::to_value(m).unwrap_or_default())
+            }
+            "plugin.remove" => {
+                #[derive(Deserialize)]
+                struct P {
+                    name: String,
+                }
+                let p: P = param(&params)?;
+                crate::plugins::store(&self.shared).remove(&p.name).map_err(ext_err)?;
+                ok(json!({}))
+            }
+            "skills.list" | "skills.show" | "skills.add" => {
+                #[derive(Deserialize)]
+                struct P {
+                    cwd: Option<std::path::PathBuf>,
+                    name: Option<String>,
+                    from: Option<std::path::PathBuf>,
+                }
+                let p: P = param(&params)?;
+                let repo = p.cwd.as_deref().map(polyph_git_root);
+                let personal = self.shared.paths.home.join("skills");
+                match method {
+                    "skills.list" => ok(polyph_plugins::skills::discover(repo.as_deref(), &personal)),
+                    "skills.show" => {
+                        let name = p.name.ok_or_else(|| ApiError::BadRequest("name is required".into()))?;
+                        let (s, body) =
+                            polyph_plugins::skills::read(repo.as_deref(), &personal, &name).map_err(ext_err)?;
+                        ok(json!({ "skill": s, "text": body }))
+                    }
+                    _ => {
+                        let from = p.from.ok_or_else(|| ApiError::BadRequest("from is required".into()))?;
+                        let repo = repo.ok_or_else(|| ApiError::BadRequest("cwd is required".into()))?;
+                        ok(polyph_plugins::skills::add_to_project(&from, &repo).map_err(ext_err)?)
+                    }
+                }
+            }
+            "template.list" => ok(polyph_plugins::templates::list(&self.shared.paths.home.join("templates"))),
+            "template.apply" => {
+                #[derive(Deserialize)]
+                struct P {
+                    name: String,
+                    dir: std::path::PathBuf,
+                }
+                let p: P = param(&params)?;
+                let repo = polyph_git_root(&p.dir);
+                ok(polyph_plugins::templates::apply(&self.shared.paths.home.join("templates"), &p.name, &repo)
+                    .map_err(ext_err)?)
+            }
             "agent.start" => {
                 let p: crate::agents::StartParams = param(&params)?;
                 let rt = self.find(&p.room).await?;
@@ -1501,6 +1625,11 @@ impl Daemon {
                     text: String,
                 }
                 let p: P = param(&params)?;
+                if let Some((rt, host, agent)) = self.remote_agent(&p.agent).await {
+                    // Runs on one of my agent hosts: the turn shows in the transcript.
+                    crate::hosts::prompt_on(&rt, host, agent, &p.text).await;
+                    return ok(json!({ "forwarded": true }));
+                }
                 let h = self.agent(&p.agent).await?;
                 let rt = self
                     .rooms
@@ -1517,6 +1646,10 @@ impl Daemon {
                     agent: String,
                 }
                 let p: P = param(&params)?;
+                if let Some((rt, host, agent)) = self.remote_agent(&p.agent).await {
+                    crate::hosts::stop_on(&rt, host, agent).await;
+                    return ok(json!({ "forwarded": true }));
+                }
                 let h = self.agent(&p.agent).await?;
                 let rt = self
                     .rooms
@@ -1542,7 +1675,8 @@ impl Daemon {
                         }
                         _ => None,
                     });
-                    out.push(json!({ "id": id.to_hex(), "label": first.agent.label, "kind": first.agent.kind, "member": first.agent.member.to_hex(), "mine": local.contains_key(id), "state": state }));
+                    let host = c.core.is_agent_host(&first.agent.device);
+                    out.push(json!({ "id": id.to_hex(), "label": first.agent.label, "kind": first.agent.kind, "member": first.agent.member.to_hex(), "mine": local.contains_key(id), "state": state, "host": host }));
                 }
                 ok(out)
             }
@@ -1639,6 +1773,20 @@ impl Daemon {
     }
 
     /// Finds a running agent on this device by id prefix or label.
+    /// An agent of mine running on one of my agent hosts (not on this device).
+    async fn remote_agent(&self, q: &str) -> Option<(Arc<RoomRuntime>, polyph_proto::ids::DeviceId, ObjectId)> {
+        if self.agent(q).await.is_ok() {
+            return None;
+        }
+        let rooms: Vec<Arc<RoomRuntime>> = self.rooms.lock().await.values().cloned().collect();
+        for rt in rooms {
+            if let Some((host, id)) = crate::hosts::remote_agent(&rt, q).await {
+                return Some((rt, host, id));
+            }
+        }
+        None
+    }
+
     pub async fn agent(&self, q: &str) -> Result<Arc<crate::agents::AgentHandle>, ApiError> {
         let ql = q.to_lowercase();
         let map = self.agents.map.lock().await;
@@ -1745,7 +1893,7 @@ impl Daemon {
         let mut last =
             ApiError::NotFound("no room is waiting for this code; check it with the person who sent it".into());
         for (addr, lan) in candidates {
-            match self.join_via(&code, &name, &addr, lan, p.timeout_secs.unwrap_or(600)).await {
+            match self.join_via(&code, &name, &addr, lan, p.timeout_secs.unwrap_or(600), &p.capabilities).await {
                 Ok(v) => return Ok(v),
                 Err(e) => last = e,
             }
@@ -1760,6 +1908,7 @@ impl Daemon {
         addr: &RelayAddr,
         lan: bool,
         timeout_secs: u64,
+        caps: &[String],
     ) -> ApiResult {
         let seen = Arc::new(std::sync::Mutex::new(None));
         let mode = if lan && addr.pin.is_none() { TlsMode::Record(seen.clone()) } else { addr.tls() };
@@ -1815,6 +1964,7 @@ impl Daemon {
             name_salt: salt.to_vec(),
             surface: format!("{:?}", self.shared.opts.surface).to_lowercase(),
             link_device: false,
+            capabilities: caps.to_vec(),
         };
         let body = channel
             .seal(&to_cbor(&req).map_err(|e| ApiError::Failed(e.to_string()))?)
@@ -1877,6 +2027,9 @@ struct JoinParams {
     #[serde(default)]
     lan: bool,
     timeout_secs: Option<u64>,
+    /// Device capabilities to ask for (`agent-host` for an agent server).
+    #[serde(default)]
+    capabilities: Vec<String>,
 }
 
 async fn recv_pake(client: &mut RelayClient, session: u64, secs: u64) -> Option<Vec<u8>> {
@@ -1888,6 +2041,27 @@ async fn recv_pake(client: &mut RelayClient, session: u64, secs: u64) -> Option<
             RelayFrame::PakeEnded { session: s, .. } if s == session => return None,
             _ => continue,
         }
+    }
+}
+
+/// The repository root holding `dir`, or `dir` itself outside a repository.
+fn polyph_git_root(dir: &std::path::Path) -> std::path::PathBuf {
+    let mut d = dir.to_path_buf();
+    loop {
+        if d.join(".git").exists() {
+            return d;
+        }
+        if !d.pop() {
+            return dir.to_path_buf();
+        }
+    }
+}
+
+fn ext_err(e: polyph_plugins::Error) -> ApiError {
+    match e {
+        polyph_plugins::Error::NotFound(s) => ApiError::NotFound(s),
+        polyph_plugins::Error::Invalid(s) | polyph_plugins::Error::Exists(s) => ApiError::BadRequest(s),
+        polyph_plugins::Error::Io(e) => ApiError::Failed(e.to_string()),
     }
 }
 

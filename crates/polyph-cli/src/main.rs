@@ -80,6 +80,12 @@ enum Cmd {
         lan: bool,
     },
     Discover,
+    Phone {
+        room: Option<String>,
+        /// Phone app address (default: the website's /phone/).
+        #[arg(long)]
+        base: Option<String>,
+    },
     Leave {
         room: Option<String>,
     },
@@ -138,6 +144,23 @@ enum Cmd {
     Agent {
         #[command(subcommand)]
         cmd: AgentCmd,
+    },
+    #[command(name = "agent-host")]
+    AgentHost {
+        #[command(subcommand)]
+        cmd: HostCmd,
+    },
+    Plugin {
+        #[command(subcommand)]
+        cmd: PluginCmd,
+    },
+    Skills {
+        #[command(subcommand)]
+        cmd: SkillsCmd,
+    },
+    Template {
+        #[command(subcommand)]
+        cmd: TemplateCmd,
     },
     Agents {
         #[command(subcommand)]
@@ -213,13 +236,75 @@ enum Cmd {
 }
 
 #[derive(Subcommand, Debug)]
+enum PluginCmd {
+    List,
+    /// Install a plugin from a folder with a polyph-plugin.toml.
+    Add {
+        path: PathBuf,
+        /// Replace an installed plugin with the same name.
+        #[arg(long)]
+        replace: bool,
+    },
+    Remove {
+        name: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SkillsCmd {
+    /// Skills for this repository and your own.
+    List,
+    Show {
+        name: String,
+    },
+    /// Copy a skill folder into this repository's .polyph/skills.
+    Add {
+        path: PathBuf,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum TemplateCmd {
+    List,
+    /// Write a template's files into this repository (existing files are kept).
+    Apply {
+        name: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum HostCmd {
+    /// On your computer: make a one-time enrollment for a server.
+    Invite {
+        #[arg(long)]
+        room: Option<String>,
+    },
+    /// On the server: join a room as an agent host of the person who invited it.
+    Join {
+        code: String,
+        #[arg(long)]
+        member: String,
+        #[arg(long)]
+        relay: String,
+        /// The checkout agents work in on this server.
+        #[arg(long)]
+        workdir: PathBuf,
+        /// The name agents are labeled with (the person's own name).
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// On the server: change the directory agents work in.
+    Workdir { dir: PathBuf },
+}
+
+#[derive(Subcommand, Debug)]
 enum AgentCmd {
     Start {
         /// Agent name: claude, codex, gemini, opencode, local, or one from polyph.toml.
         name: String,
         #[arg(long)]
         task: Option<String>,
-        /// Run on your cloud agent host.
+        /// Run on one of your agent hosts: its device id, or "cloud" for any online one.
         #[arg(long)]
         on: Option<String>,
         /// Autonomy preset: ask-all, default or auto.
@@ -240,6 +325,11 @@ enum AgentCmd {
     },
     Follow {
         id: String,
+        #[arg(long)]
+        room: Option<String>,
+    },
+    /// Your agent hosts in the room.
+    Hosts {
         #[arg(long)]
         room: Option<String>,
     },
@@ -677,6 +767,21 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                 ctx.out(l.t("discover-hint"));
             }
         }
+        Cmd::Phone { room, base } => {
+            let room = ctx.room(&mut api, room).await?;
+            let v = call(&mut api, "phone.pair", json!({ "room": room, "base": base })).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else {
+                let link = v["link"].as_str().unwrap_or_default();
+                ctx.out(l.t("phone-scan"));
+                if let Some(qr) = polyph_daemon::phone::qr_text(link) {
+                    ctx.out(qr);
+                }
+                ctx.out(tr!(l, "phone-link", url = link, code = v["code"].as_str().unwrap_or_default()));
+                ctx.out(l.t("phone-approve"));
+            }
+        }
         Cmd::Leave { room } => {
             let room = ctx.room(&mut api, room).await?;
             let info = call(&mut api, "room.get", json!({ "room": room })).await?;
@@ -815,6 +920,154 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
             }
         },
         Cmd::Agent { cmd } => agent_cmd(ctx, &mut api, cmd).await?,
+        Cmd::Plugin { cmd: PluginCmd::List } => {
+            let v = call(&mut api, "plugin.list", json!({})).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else if v.as_array().is_none_or(|a| a.is_empty()) {
+                ctx.out(l.t("plugins-empty"));
+            } else {
+                for p in v.as_array().into_iter().flatten() {
+                    let hooks: Vec<&str> =
+                        p["hooks"].as_array().into_iter().flatten().filter_map(|x| x.as_str()).collect();
+                    let hosts: Vec<&str> =
+                        p["hosts"].as_array().into_iter().flatten().filter_map(|x| x.as_str()).collect();
+                    ctx.out(tr!(
+                        l,
+                        "plugin-line",
+                        name = p["name"].as_str().unwrap_or_default(),
+                        version = p["version"].as_str().unwrap_or_default(),
+                        description = p["description"].as_str().unwrap_or_default()
+                    ));
+                    if p["tools"] == true {
+                        ctx.out(format!("    {}", l.t("plugin-gives-tools")));
+                    }
+                    if !hooks.is_empty() {
+                        ctx.out(format!("    {}", tr!(l, "plugin-hooks", events = hooks.join(", "))));
+                    }
+                    if !hosts.is_empty() {
+                        ctx.out(format!("    {}", tr!(l, "plugin-hosts", hosts = hosts.join(", "))));
+                    }
+                }
+            }
+        }
+        Cmd::Plugin { cmd: PluginCmd::Add { path, replace } } => {
+            let path = path.canonicalize()?;
+            let v = call(&mut api, "plugin.add", json!({ "path": path, "replace": replace })).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else {
+                ctx.out(tr!(l, "plugin-added", name = v["name"].as_str().unwrap_or_default()));
+                let hosts: Vec<&str> = v["hosts"].as_array().into_iter().flatten().filter_map(|x| x.as_str()).collect();
+                if !hosts.is_empty() {
+                    ctx.out(tr!(l, "plugin-hosts", hosts = hosts.join(", ")));
+                }
+            }
+        }
+        Cmd::Plugin { cmd: PluginCmd::Remove { name } } => {
+            call(&mut api, "plugin.remove", json!({ "name": name })).await?;
+            ctx.out(l.t("plugin-removed"));
+        }
+        Cmd::Skills { cmd } => {
+            let cwd = std::env::current_dir()?;
+            match cmd {
+                SkillsCmd::List => {
+                    let v = call(&mut api, "skills.list", json!({ "cwd": cwd })).await?;
+                    if ctx.json {
+                        ctx.print_json(&v);
+                    } else if v.as_array().is_none_or(|a| a.is_empty()) {
+                        ctx.out(l.t("skills-empty"));
+                    } else {
+                        for s in v.as_array().into_iter().flatten() {
+                            let source = l.t(&format!("skill-source-{}", s["source"].as_str().unwrap_or("project")));
+                            ctx.out(tr!(
+                                l,
+                                "skill-line",
+                                name = s["name"].as_str().unwrap_or_default(),
+                                source = source,
+                                description = s["description"].as_str().unwrap_or_default()
+                            ));
+                        }
+                    }
+                }
+                SkillsCmd::Show { name } => {
+                    let v = call(&mut api, "skills.show", json!({ "cwd": cwd, "name": name })).await?;
+                    if ctx.json {
+                        ctx.print_json(&v);
+                    } else {
+                        ctx.out(v["text"].as_str().unwrap_or_default());
+                    }
+                }
+                SkillsCmd::Add { path } => {
+                    let from = path.canonicalize()?;
+                    let v = call(&mut api, "skills.add", json!({ "cwd": cwd, "from": from })).await?;
+                    ctx.out(tr!(l, "skill-added", name = v["name"].as_str().unwrap_or_default()));
+                }
+            }
+        }
+        Cmd::Template { cmd: TemplateCmd::List } => {
+            let v = call(&mut api, "template.list", json!({})).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else {
+                for t in v.as_array().into_iter().flatten() {
+                    let name = t["name"].as_str().unwrap_or_default();
+                    // Built-in descriptions come from the locale files.
+                    let description = if t["builtin"] == true {
+                        l.t(&format!("template-desc-{name}"))
+                    } else {
+                        t["description"].as_str().unwrap_or_default().to_string()
+                    };
+                    ctx.out(tr!(l, "template-line", name = name, description = description));
+                }
+            }
+        }
+        Cmd::Template { cmd: TemplateCmd::Apply { name } } => {
+            let dir = std::env::current_dir()?;
+            let v = call(&mut api, "template.apply", json!({ "name": name, "dir": dir })).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else {
+                for f in v["written"].as_array().into_iter().flatten() {
+                    ctx.out(tr!(l, "template-wrote", file = f.as_str().unwrap_or_default()));
+                }
+                for f in v["kept"].as_array().into_iter().flatten() {
+                    ctx.out(tr!(l, "template-kept", file = f.as_str().unwrap_or_default()));
+                }
+            }
+        }
+        Cmd::AgentHost { cmd: HostCmd::Invite { room } } => {
+            let room = ctx.room(&mut api, room).await?;
+            let v = call(&mut api, "host.invite", json!({ "room": room })).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else {
+                ctx.out(l.t("host-invite"));
+                ctx.out(format!("    {}", v["command"].as_str().unwrap_or_default()));
+                ctx.out(l.t("host-invite-approve"));
+            }
+        }
+        Cmd::AgentHost { cmd: HostCmd::Join { code, member, relay, workdir, name } } => {
+            if !ctx.json {
+                ctx.out(l.t("join-waiting"));
+            }
+            let v = call(
+                &mut api,
+                "host.join",
+                json!({ "code": code, "member": member, "relay": relay, "workdir": workdir, "name": name }),
+            )
+            .await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else {
+                ctx.out(tr!(l, "host-joined", name = v["name"].as_str().unwrap_or_default()));
+            }
+        }
+        Cmd::AgentHost { cmd: HostCmd::Workdir { dir } } => {
+            let dir = dir.canonicalize()?;
+            call(&mut api, "config.set", json!({ "key": "host_workdir", "value": dir })).await?;
+            ctx.out(l.t("config-set"));
+        }
         Cmd::Agents { cmd: AgentsCmd::Doctor } => {
             let cwd = std::env::current_dir()?;
             let v = call(&mut api, "agents.doctor", json!({ "cwd": cwd })).await?;
@@ -1042,10 +1295,43 @@ fn render_tools(l: &Localizer, calls: &[Value]) -> Vec<String> {
 async fn agent_cmd(ctx: &Ctx, api: &mut Api, cmd: AgentCmd) -> anyhow::Result<()> {
     let l = &ctx.l;
     match cmd {
-        AgentCmd::Start { name, task, on, preset, prompt, room } => {
-            if on.is_some() {
-                anyhow::bail!(l.t("agent-cloud-unavailable"));
+        AgentCmd::Start { name, task, on: Some(on), preset, prompt, room } => {
+            let room = ctx.room(api, room).await?;
+            let v = call(
+                api,
+                "agent.start",
+                json!({ "room": room, "kind": name, "on": on, "preset": preset, "task": task, "prompt": prompt }),
+            )
+            .await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else {
+                let host: String = v["host"].as_str().unwrap_or_default().chars().take(8).collect();
+                ctx.out(tr!(l, "agent-started-on", label = v["label"].as_str().unwrap_or_default(), host = host));
             }
+        }
+        AgentCmd::Hosts { room } => {
+            let room = ctx.room(api, room).await?;
+            let v = call(api, "agent.hosts", json!({ "room": room })).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else if v.as_array().is_none_or(|a| a.is_empty()) {
+                ctx.out(l.t("hosts-empty"));
+            } else {
+                for x in v.as_array().into_iter().flatten() {
+                    let dev: String = x["device"].as_str().unwrap_or_default().chars().take(8).collect();
+                    let state = if x["online"] == true { l.t("host-online") } else { l.t("host-offline") };
+                    ctx.out(tr!(
+                        l,
+                        "host-line",
+                        device = dev,
+                        state = state,
+                        agents = x["agents"].as_u64().unwrap_or(0)
+                    ));
+                }
+            }
+        }
+        AgentCmd::Start { name, task, on: None, preset, prompt, room } => {
             let room = ctx.room(api, room).await?;
             let cwd = std::env::current_dir()?;
             let v = call(

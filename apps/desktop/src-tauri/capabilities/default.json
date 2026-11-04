@@ -3,9 +3,5 @@
   "identifier": "default",
   "description": "What the app and pill windows may call.",
   "windows": ["main", "pill"],
-  "permissions": [
-    "core:default",
-    "core:window:allow-start-dragging",
-    "notification:default"
-  ]
+  "permissions": ["core:default", "core:window:allow-start-dragging", "notification:default"]
 }

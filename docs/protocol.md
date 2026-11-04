@@ -68,7 +68,10 @@ expires_at, capabilities }` signed with context `cert`.
 - `name_commit = BLAKE3-derive_key("polyph v1 display name", salt || name)`.
   The display name and 16-byte salt travel only in the encrypted `Profile`
   message; clients check them against the commitment.
-- `capabilities` marks special devices, e.g. `agent-host` for cloud agent servers.
+- `capabilities` marks special devices. The one defined is `agent-host`: a
+  server that runs its member's agents (section 9.7). A joiner asks for
+  capabilities in its `JoinRequest`; the knock shows them, and the approving
+  device copies only capabilities it knows into the certificate.
 
 A `CertChain` is the signed genesis plus certificates `c[0..n]`:
 
@@ -208,6 +211,11 @@ k_h2j, k_j2h = HK("polyph/v1/join/channel/h2j"), HK(".../j2h")
 relays with public certificates and is the SHA-256 fingerprint of the LAN
 relay's self-signed certificate in LAN mode, so a joiner verifies the LAN
 relay's identity with the code alone.
+
+The joiner's `JoinRequest { device, member, display_name, name_salt, surface,
+link_device, capabilities }` travels over that channel. A joiner may name an
+existing member id (a person's phone or agent host joining as another device
+of theirs); it is still a knock that an Owner or Maintainer must approve.
 
 Both sides exchange confirmation tags and compare in constant time. Then they
 use an ordered XChaCha20-Poly1305 channel with counter nonces
@@ -379,6 +387,30 @@ from the owner's device or (to give it back) from the current holder. A
 request becomes an approval of kind `TerminalInput` that only the terminal's
 owner may answer.
 
+### 9.7 Agent hosts
+
+`Host(HostMsg)` messages run agents on a member's agent host (a device whose
+certificate has the `agent-host` capability):
+
+- `Start { req, host, kind, preset, task, prompt }`, `Prompt { host, agent,
+  text }` and `Stop { host, agent }`, sent by any device of the member;
+- `Started { req, agent }` and `Failed { req, error }`, sent by the host.
+
+A host acts on a request only when it is the named `host`, its own
+certificate has the capability, and the sender's verified member is its own.
+A requester accepts a reply only from the device it asked, when that device
+is a host of the same member and (for `Started`) the agent's device is the
+sender. The host starts the agent in its configured working directory; the
+agent then works like any other (transcripts, claims, approvals).
+
+### 9.8 Browser-only members
+
+A phone or browser can be a member with no daemon: the room engine runs in
+WebAssembly (`crates/polyph-phone`) and talks to the relay directly, with
+the same messages as any device. Its `Presence.surface` is `phone`, so it is
+never a candidate for acting host (section 10.1). It sends `Host` requests
+to its member's agent hosts but runs no agents itself.
+
 ## 10. Acting host
 
 One online device per room is the **acting host**. It arbitrates claims,
@@ -387,7 +419,8 @@ announces itself.
 
 ### 10.1 Candidates and ranking
 
-Candidates are online daemon devices (not browser or phone clients) with a
+Candidates are online daemon devices, agent hosts included (not browser or
+phone clients), with a
 verified chain and role Member or higher. "Online" means a `Hello`,
 `Presence` or `ActingHost` heartbeat was received from it in the last 30 s;
 every daemon sends a presence heartbeat every 10 s.

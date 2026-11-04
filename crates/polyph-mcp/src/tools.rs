@@ -31,6 +31,8 @@ pub const FINISH: &str = "finish_task";
 pub const WHITEBOARDS: &str = "list_whiteboards";
 pub const READ_WB: &str = "read_whiteboard";
 pub const DRAW: &str = "draw_diagram";
+pub const SKILLS: &str = "list_skills";
+pub const READ_SKILL: &str = "read_skill";
 
 fn no_args() -> Value {
     json!({ "type": "object", "properties": {}, "additionalProperties": false })
@@ -252,6 +254,25 @@ diagram. If no whiteboard has the given name, one is created.",
                     } }
                 },
                 "required": ["board", "diagram", "nodes"],
+                "additionalProperties": false
+            })
+        },
+    },
+    ToolDef {
+        name: SKILLS,
+        description: "List the team's skills: written instructions for how this team does a kind of task (releases, \
+reviews, migrations, house style). Project skills come with the repository; personal ones are your owner's. Read the \
+ones that match your task with read_skill before you start, and follow them.",
+        schema: no_args,
+    },
+    ToolDef {
+        name: READ_SKILL,
+        description: "Read one skill by name (from list_skills). Follow its steps unless your owner says otherwise.",
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": { "name": { "type": "string" } },
+                "required": ["name"],
                 "additionalProperties": false
             })
         },

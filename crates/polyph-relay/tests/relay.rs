@@ -464,6 +464,7 @@ async fn join_with(j: &mut RelayClient, me: &DeviceIdentity, typed: &JoinCode) -
         name_salt: vec![2; 16],
         surface: "cli".into(),
         link_device: false,
+        capabilities: vec![],
     };
     j.send(ClientFrame::Pake { session, data: ch.seal(&to_cbor(&req).unwrap()).unwrap() }).await.unwrap();
     let RelayFrame::Pake { data, .. } = expect(j, "reply", |f| matches!(f, RelayFrame::Pake { .. })).await else {

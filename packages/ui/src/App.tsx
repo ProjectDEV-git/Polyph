@@ -1,6 +1,6 @@
 // The app root shared by the desktop shell and the browser client.
 import { useEffect, useMemo, useState } from "react";
-import { DaemonClient } from "./api/client";
+import { DaemonClient, type AppClient } from "./api/client";
 import { ThemeCtx } from "./components/voice";
 import { PlatformCtx, StoreCtx } from "./ctx";
 import { I18nProvider, Localizer, pickLang } from "./i18n";
@@ -28,13 +28,21 @@ function useSystemTheme(): Theme {
 
 export interface PolyphAppProps {
   /** `ws://127.0.0.1:<port>/ws?token=…` */
-  url: string;
+  url?: string;
+  /** A ready connection instead of `url` (the phone engine). */
+  client?: AppClient;
   platform: Platform;
   mode?: "app" | "pill";
   onOpenApp?: () => void;
 }
 
-export function PolyphApp({ url, platform, mode = "app", onOpenApp }: PolyphAppProps) {
+export function PolyphApp({
+  url,
+  client: given,
+  platform,
+  mode = "app",
+  onOpenApp,
+}: PolyphAppProps) {
   const [prefs] = usePrefs();
   const system = useSystemTheme();
   const theme: Theme = prefs.theme === "system" ? system : prefs.theme;
@@ -47,15 +55,15 @@ export function PolyphApp({ url, platform, mode = "app", onOpenApp }: PolyphAppP
   );
   const l = useMemo(() => new Localizer(lang), [lang]);
   const store = useMemo(() => {
-    const client = new DaemonClient(url);
+    const client: AppClient = given ?? new DaemonClient(url ?? "");
     const s = new Store(client);
     client.onState = (c) => s.setConn(c);
     client.onEvent = (p) => s.handleEvent(p);
     client.onStatus = (p) => s.setStatus(p);
     return s;
-  }, [url]);
+  }, [url, given]);
   useEffect(() => {
-    const c = store.api as DaemonClient;
+    const c = store.api as AppClient;
     c.start();
     return () => c.stop();
   }, [store]);

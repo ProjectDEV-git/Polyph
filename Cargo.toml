@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "crates/polyph-proto",
   "crates/polyph-core",
+  "crates/polyph-phone",
   "crates/polyph-agents",
   "crates/polyph-localagent",
   "crates/polyph-sandbox",
@@ -44,6 +45,7 @@ todo = "warn"
 # internal
 polyph-proto = { path = "crates/polyph-proto", version = "0.1.0" }
 polyph-core = { path = "crates/polyph-core", version = "0.1.0" }
+polyph-phone = { path = "crates/polyph-phone", version = "0.1.0" }
 polyph-agents = { path = "crates/polyph-agents", version = "0.1.0" }
 polyph-localagent = { path = "crates/polyph-localagent", version = "0.1.0" }
 polyph-sandbox = { path = "crates/polyph-sandbox", version = "0.1.0" }
@@ -94,3 +96,14 @@ dashmap = "6"
 # testing
 proptest = "1.12"
 tempfile = "3"
+
+# The phone engine's wasm build (scripts/build-phone-wasm.mjs): small over fast.
+# Stripped: wasm-bindgen warns it cannot read target features, which the
+# engine does not rely on (no reference types or threads).
+[profile.wasm]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

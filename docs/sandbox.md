@@ -68,3 +68,17 @@ Approvals go to the agent's owner first (all of their devices). After two
 minutes anyone with the Member role or higher can answer. Viewers never can.
 "Approve for this task" remembers the decision for that exact command, path
 or host for the rest of the agent's task.
+
+## Plugins
+
+Plugins (`docs/extending.md`) run under the same mechanisms:
+
+- A plugin's **tool server** is started by the agent, inside that agent's
+  sandbox, from a copy of the plugin in the agent's private temp directory
+  (Polyph's data directory, where plugins are installed, stays hidden). The
+  plugin's declared hosts join that agent's allowlist.
+- A plugin's **hooks** run in a fresh sandbox per run: a scratch copy of the
+  plugin is the only writable directory, the hidden paths above stay
+  hidden, and the proxy allows only the hosts the manifest declares and
+  refuses everything else without asking. Hooks have a time limit (10 s by
+  default, 60 s at most) and a 64 KiB output limit.

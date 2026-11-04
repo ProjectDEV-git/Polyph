@@ -12,8 +12,10 @@ import { LoadError } from "./common";
 // Fonts come from the app's own files (copied at build), never a CDN. Set
 // before Excalidraw's module runs: it builds its font URLs on load.
 if (typeof window !== "undefined") {
-  (window as unknown as { EXCALIDRAW_ASSET_PATH: string }).EXCALIDRAW_ASSET_PATH =
-    `${window.location.origin}/excalidraw/`;
+  // A host whose files are not at the page's origin (the VS Code webview)
+  // sets POLYPH_ASSET_BASE first.
+  const w = window as unknown as { EXCALIDRAW_ASSET_PATH: string; POLYPH_ASSET_BASE?: string };
+  w.EXCALIDRAW_ASSET_PATH = `${w.POLYPH_ASSET_BASE ?? `${window.location.origin}/`}excalidraw/`;
 }
 
 const Excalidraw = lazy(async () => {

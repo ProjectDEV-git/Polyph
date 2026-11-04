@@ -78,7 +78,8 @@ pub fn agents(ctx: &mut RoomCtx, theme: Theme, local: &[polyph_proto::ids::Objec
             state,
             task: task.and_then(|t| cards.iter().find(|c| c.id == t).map(|c| c.title.clone())),
             mine: local.contains(&a.id),
-            cloud: false,
+            // Runs on an agent host (a member's own server), not a laptop.
+            cloud: ctx.core.is_agent_host(&a.device),
         });
     }
     out

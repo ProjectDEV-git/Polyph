@@ -14,12 +14,13 @@
 //!   { "echo_prompt": true }
 //! ]] }
 //! ```
-//! `mcp` steps call the first MCP server from `session/new`, started the way a
-//! real agent starts it, and report "mcp <tool>: <text>". The string `$MSG` in
+//! `mcp` steps call the first MCP server from `session/new` (or the one named
+//! by `"server"`), started the way a real agent starts it, and report "mcp <tool>: <text>". The string `$MSG` in
 //! their arguments becomes the first `[message id]` in the current prompt.
 //! Results of each step are reported back as agent messages
 //! ("permission: allowed", "write: denied: ...") so tests can assert on them.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use polyph_agents::rpc;
@@ -106,7 +107,7 @@ async fn main() {
     let turn = Arc::new(Mutex::new(0usize));
     let cwd = Arc::new(Mutex::new(String::new()));
     let mcp_spec = Arc::new(Mutex::new(Value::Null));
-    let mcp: Arc<Mutex<Option<Mcp>>> = Arc::new(Mutex::new(None));
+    let mcp: Arc<Mutex<HashMap<String, Mcp>>> = Arc::new(Mutex::new(HashMap::new()));
     while let Some(req) = incoming.recv().await {
         match req.method.as_str() {
             "initialize" => {
@@ -114,7 +115,7 @@ async fn main() {
             }
             "session/new" => {
                 *cwd.lock().await = req.params.get("cwd").and_then(|c| c.as_str()).unwrap_or_default().to_string();
-                *mcp_spec.lock().await = req.params.pointer("/mcpServers/0").cloned().unwrap_or(Value::Null);
+                *mcp_spec.lock().await = req.params.get("mcpServers").cloned().unwrap_or(Value::Null);
                 req.respond(Ok(json!({ "sessionId": "fake-session" })));
             }
             "session/prompt" => {
@@ -160,7 +161,7 @@ async fn run_turn(
     cwd: &str,
     steps: Vec<Value>,
     prompt: &str,
-    mcp: &Mutex<Option<Mcp>>,
+    mcp: &Mutex<HashMap<String, Mcp>>,
     spec: &Value,
 ) -> Option<Value> {
     let mut usage = None;
@@ -174,11 +175,21 @@ async fn run_turn(
             let tool = call.get("tool").and_then(|t| t.as_str()).unwrap_or_default().to_string();
             let args =
                 substitute(call.get("args").unwrap_or(&json!({})), &first_message_id(prompt).unwrap_or_default());
+            let servers = spec.as_array().cloned().unwrap_or_default();
+            let want = call.get("server").and_then(|s| s.as_str());
+            let chosen = match want {
+                Some(n) => servers.iter().find(|s| s.get("name").and_then(|x| x.as_str()) == Some(n)),
+                None => servers.first(),
+            };
+            let key = chosen.and_then(|s| s.get("name")).and_then(|x| x.as_str()).unwrap_or_default().to_string();
             let mut guard = mcp.lock().await;
-            if guard.is_none() {
-                *guard = Mcp::start(spec).await;
+            if !guard.contains_key(&key)
+                && let Some(s) = chosen
+                && let Some(m) = Mcp::start(s).await
+            {
+                guard.insert(key.clone(), m);
             }
-            let text = match guard.as_mut() {
+            let text = match guard.get_mut(&key) {
                 None => "no mcp server".to_string(),
                 Some(m) => match m.request("tools/call", json!({ "name": tool, "arguments": args })).await {
                     Some(r) => r

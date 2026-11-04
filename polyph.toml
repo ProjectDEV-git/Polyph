@@ -1,0 +1,13 @@
+# Polyph project settings. See docs in the repository for every key.
+checks = []          # commands agents may run freely, e.g. "cargo test"
+
+[policy]
+preset = "default"
+
+[merge]
+reviewer = "claude"
+approval = true
+run_checks = true
+
+[claims]
+granularity = "file"
