@@ -32,8 +32,23 @@ const FILES = [
   json("packages/ui/package.json"),
 ];
 
+// The workspace pins its own crates too (`polyph-x = { path = ..., version = "..." }`
+// under [workspace.dependencies]); they must move with the version.
+const PIN = /(\npolyph-[\w-]+ = \{ path = "crates\/[^"]+", version = ")([^"]+)(")/g;
+FILES.push({
+  file: "Cargo.toml",
+  get: (s) => {
+    const pins = [...s.matchAll(PIN)].map((m) => m[2]);
+    return pins.length && pins.every((v) => v === pins[0])
+      ? pins[0]
+      : `mixed (${[...new Set(pins)].join(", ")})`;
+  },
+  set: (s, v) => s.replace(PIN, (_, a, _old, b) => `${a}${v}${b}`),
+  label: "Cargo.toml [workspace.dependencies] pins",
+});
+
 const read = (f) => readFileSync(join(root, f.file), "utf8");
-const found = FILES.map((f) => [f.file, f.get(read(f))]);
+const found = FILES.map((f) => [f.label ?? f.file, f.get(read(f))]);
 const args = process.argv.slice(2);
 
 if (args[0] === "--check") {

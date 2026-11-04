@@ -1,20 +1,31 @@
 name: Release
 
-# Pushing a tag such as v0.1.0 builds everything that ships and opens a
-# *draft* GitHub release; a person reviews it and publishes. Running it by
-# hand (workflow_dispatch) builds and checks the same files without a release.
-# See docs/release.md.
+# Builds everything that ships and, when asked to publish, opens a *draft*
+# GitHub release that a person reviews and publishes. See docs/release.md.
+#
+# - Push a tag such as v0.2.0: build and draft that release.
+# - Run it from the Actions tab with a version: build and draft a release of
+#   the chosen commit; the tag is created when the draft is published.
+# - Run it from the Actions tab with no version: build and check every file,
+#   publish nothing (a dry run).
+#
+# Nothing is published unless the full test workflow passes.
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, for example 0.2.0 (empty for a dry run)
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.ref }}-${{ inputs.version }}
   cancel-in-progress: false
 
 env:
@@ -22,20 +33,40 @@ env:
 
 jobs:
   version:
-    name: Versions match the tag
+    name: Version
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      publish: ${{ steps.v.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
       - id: v
         shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            node scripts/release/version.mjs --check "$GITHUB_REF_NAME"
-            node scripts/release/notes.mjs "$GITHUB_REF_NAME" > /dev/null
+            tag="$GITHUB_REF_NAME"
+          elif [[ -n "$INPUT_VERSION" ]]; then
+            tag="v${INPUT_VERSION#v}"
+          else
+            tag=""
           fi
+          if [[ -n "$tag" ]]; then
+            node scripts/release/version.mjs --check "$tag"
+            node scripts/release/notes.mjs "$tag" > /dev/null
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Dry run: everything is built and checked, nothing is published."
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$(node -p "require('./apps/web/package.json').version")" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Test
+    uses: ./.github/workflows/test.yml
 
   web:
     name: Website, browser client and phone app
@@ -43,24 +74,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-rust
         with:
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-      - name: wasm-bindgen (the version in Cargo.lock)
-        shell: bash
-        run: |
-          v=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p')
-          echo "WASM_BINDGEN=$v" >> "$GITHUB_ENV"
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: wasm-bindgen@${{ env.WASM_BINDGEN }}
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+          cache-key: web
+      - uses: ./.github/actions/wasm-bindgen
+      - uses: ./.github/actions/setup-node
       - run: pnpm --filter @polyph/web build
       - uses: actions/upload-artifact@v4
         with:
@@ -92,10 +111,10 @@ jobs:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/desktop-deps
+      - uses: ./.github/actions/setup-rust
         with:
-          key: ${{ matrix.target }}
+          cache-key: ${{ matrix.target }}
           workspaces: |
             . -> target
             apps/desktop/src-tauri -> target
@@ -103,11 +122,6 @@ jobs:
         with:
           name: web
           path: apps/web/out
-      - name: Linux packages for the desktop app
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev patchelf bubblewrap
       - name: Build polyph and polyph-relay
         run: cargo build --profile dist --locked -p polyph-cli -p polyph-relay
       - name: Pack the archive
@@ -115,12 +129,7 @@ jobs:
       - name: Smoke test the archive
         shell: bash
         run: scripts/release/smoke.sh "$(ls dist/polyph-*-${{ matrix.target }}.tar.gz dist/polyph-*-${{ matrix.target }}.zip 2>/dev/null | head -n1)"
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup-node
       - name: Desktop app with polyph inside
         shell: bash
         run: |
@@ -163,12 +172,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup-node
       - run: pnpm --filter polyph-vscode package
       - uses: actions/upload-artifact@v4
         with:
@@ -178,14 +182,17 @@ jobs:
 
   release:
     name: Draft release, image and provenance
-    needs: [version, build, vscode]
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [version, test, build, vscode]
+    if: needs.version.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
       packages: write
       id-token: write
       attestations: write
+    env:
+      TAG: ${{ needs.version.outputs.tag }}
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -236,6 +243,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          node scripts/release/notes.mjs "$GITHUB_REF_NAME" > notes.md
-          gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag \
-            --title "Polyph ${GITHUB_REF_NAME#v}" --notes-file notes.md
+          node scripts/release/notes.mjs "$TAG" > notes.md
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            where=(--verify-tag)
+          else
+            # Started from the Actions tab: the tag is made when the draft is published.
+            where=(--target "$GITHUB_SHA")
+          fi
+          gh release create "$TAG" dist/* --draft "${where[@]}" \
+            --title "Polyph $VERSION" --notes-file notes.md

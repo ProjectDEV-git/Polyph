@@ -17,6 +17,7 @@
     "build:phone": "node scripts/build-phone-wasm.mjs"
   },
   "devDependencies": {
+    "playwright": "1.63.0",
     "prettier": "3.9.10"
   }
 }

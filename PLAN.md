@@ -8,7 +8,7 @@ commit and an updated `HANDOFF.md`. Stubs go in `STUBS.md`.
 - [x] Cargo workspace (all crates from the layout), pnpm workspace
 - [x] Lints: clippy `-D warnings` with `unwrap_used`/`expect_used` denied outside tests, rustfmt, eslint, prettier
 - [x] i18n string check (`scripts/check-i18n.mjs`)
-- [x] CI on Linux, macOS, Windows (`.github/workflows/ci.yml`)
+- [x] CI on Linux, macOS, Windows (`.github/workflows/test.yml`, named `ci.yml` until M11)
 - [x] Design skills installed; `PRODUCT.md` and `DESIGN.md` written
 
 ## M1 — protocol and relay
@@ -151,4 +151,5 @@ earlier milestones left for "release" (`STUBS.md`, `HANDOFF.md`) and the
 - [x] `.github/workflows/release.yml`: on a `v*` tag, version check, web export with the phone engine, five targets (archive, smoke test, desktop packages), `.vsix`, `SHA256SUMS`, build provenance, relay image on GHCR (amd64, arm64), draft release with notes from `CHANGELOG.md`; macOS signing when secrets are set
 - [x] `deploy/relay` (Dockerfile, release Dockerfile, Compose with Caddy, systemd unit, example config), `deploy/cloud` (Dockerfile, Compose, config and env examples), `deploy/web` (Caddyfile with the site's headers)
 - [x] one version everywhere (`scripts/release/version.mjs`), `CHANGELOG.md`, `docs/release.md`; `docs/self-hosting.md` with Docker, systemd, EC2 and LAN mode; README install section; the website's download page
+- [x] workflows: `test.yml` (unit tests on three systems, the hosted service, TypeScript, end-to-end suites, desktop build, packaging), `release.yml` (runs `test.yml` first; tag, Actions-tab version, or dry run), `release-prepare.yml` (version bump pull request); shared setup in `.github/actions/`
 - [ ] not done: tagging and publishing the first release, Windows code signing, Marketplace publishing, deployments (see `STUBS.md` "Milestone 11 gaps")

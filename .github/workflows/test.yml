@@ -1,0 +1,154 @@
+name: Test
+
+# Every push and pull request: formatting, lints and unit tests on Linux,
+# macOS and Windows; the hosted service; TypeScript and translations; the
+# end-to-end suites (browser client, phone app, VS Code) against a real
+# daemon; the desktop app's build; and the release packaging path (archive
+# smoke test, install script, .vsix). The release workflow runs this first.
+
+on:
+  push:
+    branches: [Main, main, "claude/**"]
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # github.workflow is the caller's name when the release workflow calls
+  # this one, so a release never cancels (or is cancelled by) a plain run.
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install bubblewrap (Linux sandbox tests)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        # Run every test file even after a failure, so one platform problem
+        # does not hide the next.
+        run: cargo test --workspace --no-fail-fast
+      - name: Proto for wasm32
+        run: cargo build -p polyph-proto --target wasm32-unknown-unknown --no-default-features --features wasm,crdt
+      - name: Phone engine for wasm32
+        run: cargo clippy -p polyph-phone --target wasm32-unknown-unknown --features wasm -- -D warnings
+
+  cloud:
+    name: Hosted service (cloud/)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          workspaces: cloud -> ../target
+      - name: Format
+        run: cargo fmt --manifest-path cloud/Cargo.toml -- --check
+      - name: Clippy
+        run: cargo clippy --manifest-path cloud/Cargo.toml --target-dir target --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --manifest-path cloud/Cargo.toml --target-dir target
+
+  typescript:
+    name: TypeScript and translations
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node
+      - name: Hard-coded string check
+        run: pnpm check:i18n
+      - name: Format
+        run: pnpm format:check
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Lint
+        run: pnpm lint
+      - name: Test
+        run: pnpm test
+      - name: Impeccable detect
+        run: npx -y impeccable detect apps/web apps/desktop/src packages/ui || echo "::warning::impeccable detect reported findings"
+
+  e2e:
+    name: End-to-end and packaging (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          targets: wasm32-unknown-unknown
+          cache-key: e2e
+      - uses: ./.github/actions/wasm-bindgen
+      - uses: ./.github/actions/setup-node
+      - name: Chromium for Playwright
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Build polyph and polyph-relay
+        run: cargo build --locked -p polyph-cli -p polyph-relay
+      - name: Build the website, browser client and phone app
+        run: pnpm --filter @polyph/web build
+      - name: Browser client and phone app against a real daemon
+        run: pnpm test:e2e
+      - name: VS Code extension in a real VS Code
+        working-directory: apps/vscode
+        run: |
+          pnpm build
+          xvfb-run -a node test/e2e/run.mjs
+          node test/e2e/webview.mjs
+      - name: Release archive smoke test
+        run: |
+          node scripts/release/package.mjs --profile dev
+          scripts/release/smoke.sh dist/polyph-*-x86_64-unknown-linux-gnu.tar.gz
+      - name: Install script from a local release
+        run: |
+          cat dist/*.sha256 > dist/SHA256SUMS
+          python3 -m http.server 4320 --bind 127.0.0.1 --directory dist &
+          sleep 1
+          POLYPH_INSTALL_BASE=http://127.0.0.1:4320 POLYPH_PREFIX="$RUNNER_TEMP/prefix" sh scripts/install.sh
+          "$RUNNER_TEMP/prefix/bin/polyph" --version
+          test -f "$RUNNER_TEMP/prefix/share/polyph/web/app/index.html"
+      - name: Package the VS Code extension
+        run: pnpm --filter polyph-vscode package
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-packages
+          path: dist/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  desktop:
+    name: Desktop app (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/desktop-deps
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: desktop
+          workspaces: apps/desktop/src-tauri -> target
+      - uses: ./.github/actions/setup-node
+      - name: Front end
+        run: pnpm --filter @polyph/desktop build
+      - name: Clippy
+        working-directory: apps/desktop/src-tauri
+        run: cargo clippy --locked -- -D warnings

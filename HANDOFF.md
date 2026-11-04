@@ -297,8 +297,11 @@ target/debug/polyph --home /tmp/a room knocks     # then: polyph --home /tmp/a a
   archive), `desktop-prep.mjs` (sidecar), `version.mjs` (one version, tag
   check), `notes.mjs` (changelog section). `scripts/install.sh`,
   `scripts/install.ps1`. Cargo profile `dist`.
-- `.github/workflows/release.yml`; `docs/release.md` explains it, signing
-  secrets and verification.
+- `.github/workflows/test.yml` (all tests, end-to-end suites, packaging),
+  `release.yml` (gated on `test.yml`), `release-prepare.yml`;
+  `.github/actions/` for shared setup; `docs/release.md` explains them,
+  signing secrets and verification. Playwright is a root dev dependency
+  (1.63.0); the e2e scripts give their daemon a free port.
 - `apps/desktop/src-tauri/tauri.release.conf.json` (sidecar, web resources,
   package dependencies). The daemon's `web_dir` also looks in app bundles.
 - `apps/vscode`: `package` script, `media/icon.png`, `README.md`,
