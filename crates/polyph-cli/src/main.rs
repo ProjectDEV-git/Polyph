@@ -146,6 +146,12 @@ enum Cmd {
         #[arg(long)]
         room: Option<String>,
     },
+    Mirror {
+        /// Directory for your mirror of the room's shared working copy.
+        dir: PathBuf,
+        #[arg(long)]
+        room: Option<String>,
+    },
     Budget {
         #[command(subcommand)]
         cmd: BudgetCmd,
@@ -471,13 +477,32 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
             }
         }
         Cmd::Room { cmd } => room_cmd(ctx, &mut api, cmd).await?,
-        Cmd::Host { quick, lan, no_approval, name, bridge, mode: _ } => {
+        Cmd::Host { quick, lan, no_approval, name, bridge, mode } => {
+            if mode != "distributed" && mode != "hosted" {
+                anyhow::bail!(tr!(l, "host-bad-mode", mode = mode.as_str()));
+            }
             let name = name.unwrap_or_default();
             let room = call(&mut api, "room.create", json!({ "name": name, "quick": quick || name.is_empty(), "require_approval": !no_approval, "lan": lan, "bridge": bridge })).await?;
             let rid = room["id"].as_str().unwrap_or_default().to_string();
+            let shared = if mode == "hosted" {
+                let dir = std::env::current_dir()?;
+                Some(call(&mut api, "mirror.host", json!({ "room": rid, "dir": dir })).await?)
+            } else {
+                None
+            };
             let inv = call(&mut api, "room.invite", json!({ "room": rid })).await?;
+            if let Some(s) = &shared
+                && !ctx.json
+            {
+                ctx.out(tr!(
+                    l,
+                    "hosted-sharing",
+                    dir = s["root"].as_str().unwrap_or_default(),
+                    files = s["files"].as_u64().unwrap_or(0)
+                ));
+            }
             if ctx.json {
-                ctx.print_json(&json!({ "room": room, "invite": inv }));
+                ctx.print_json(&json!({ "room": room, "invite": inv, "hosted": shared }));
             } else {
                 if room["quick"].as_bool() == Some(true) {
                     ctx.out(l.t("quick-created"));
@@ -724,6 +749,15 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                 if !any {
                     ctx.out(l.t("sandbox-none"));
                 }
+            }
+        }
+        Cmd::Mirror { dir, room } => {
+            let room = ctx.room(&mut api, room).await?;
+            let v = call(&mut api, "mirror.open", json!({ "room": room, "dir": dir })).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else {
+                ctx.out(tr!(l, "mirror-opened", dir = v["root"].as_str().unwrap_or_default()));
             }
         }
         Cmd::Usage { room } => {

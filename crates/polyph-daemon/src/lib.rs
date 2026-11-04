@@ -11,12 +11,14 @@ pub mod daemon;
 pub mod events;
 pub mod export;
 pub mod lan;
+pub mod mirror;
 pub mod paths;
 pub mod plan;
 pub mod runtime;
 pub mod secrets;
 pub mod status;
 pub mod tasks;
+pub mod watch;
 
 pub use clock::Clock;
 pub use daemon::{Daemon, DaemonOptions};

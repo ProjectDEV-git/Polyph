@@ -51,12 +51,17 @@ pub struct AgentHandle {
     pub helper: bool,
     /// A handoff brief from the card, given with the first prompt.
     pub brief: Mutex<Option<String>>,
+    /// Files this agent was just allowed to write through the protocol; the
+    /// layer-3 watcher leaves these alone.
+    pub acp_writes: parking_lot::Mutex<HashMap<PathBuf, std::time::Instant>>,
     /// Hops of the agent message that started the current turn (0 when a person did).
     pub trigger_hops: std::sync::atomic::AtomicU8,
     _proxy: ProxyHandle,
     tmp: PathBuf,
     pump: JoinHandle<()>,
     waker: JoinHandle<()>,
+    /// Claims layer 3: the worktree watcher (see `watch`).
+    watcher: parking_lot::Mutex<Option<JoinHandle<()>>>,
 }
 
 impl std::fmt::Debug for AgentHandle {
@@ -69,6 +74,9 @@ impl Drop for AgentHandle {
     fn drop(&mut self) {
         self.pump.abort();
         self.waker.abort();
+        if let Some(w) = self.watcher.lock().take() {
+            w.abort();
+        }
         let _ = std::fs::remove_dir_all(&self.tmp);
     }
 }
@@ -144,13 +152,60 @@ pub(crate) async fn request_approval(
 fn approval_key(action: &Action) -> Option<String> {
     match action {
         Action::Execute { command } => Some(format!("exec:{command}")),
-        Action::Edit { paths } => {
+        Action::Edit { paths, .. } => {
             Some(format!("edit:{}", paths.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>().join(",")))
         }
         Action::Network { host, port } => Some(format!("net:{host}:{port}")),
         Action::Read { path } => Some(format!("read:{}", path.to_string_lossy())),
         _ => None,
     }
+}
+
+/// Asks the arbiter for `targets` and allows the action if all are granted.
+async fn claim_and_allow(
+    h: &AgentHandle,
+    rt: &RoomRuntime,
+    shared: &Shared,
+    targets: &[ClaimTarget],
+    reason: &str,
+) -> Answer {
+    let rx = {
+        let mut ctx = rt.ctx.lock().await;
+        let now = shared.clock.now();
+        match ctx.core.request_claims(&h.agent, targets, reason, h.task, polyph_core::room::DEFAULT_LEASE, now) {
+            Ok((req, fx)) => {
+                let (tx, rx) = oneshot::channel();
+                ctx.claim_waiters.insert(req, tx);
+                apply(rt, &mut ctx, shared, fx).await;
+                rx
+            }
+            Err(_) => return Answer::Deny { note: Some("could not claim the files".into()) },
+        }
+    };
+    match tokio::time::timeout(Duration::from_secs(15), rx).await {
+        Ok(Ok((_granted, denied))) if denied.is_empty() => Answer::Allow { always: false },
+        Ok(Ok((_, denied))) => {
+            let who: Vec<String> = denied.iter().map(|c| format!("{} ({})", c.target, c.owner.label)).collect();
+            Answer::Deny {
+                note: Some(format!("claimed by someone else: {}. Use ask_agent to coordinate.", who.join(", "))),
+            }
+        }
+        _ => Answer::Deny { note: Some("the claim arbiter did not answer; try again".into()) },
+    }
+}
+
+/// With `[claims] granularity = "symbol"`: the symbols a whole-file write
+/// changes, as claim targets. None when the write must claim the file
+/// (a new file, an unknown language, or changes outside any symbol).
+fn symbol_targets(worktree: &Path, path: &Path, new: &str) -> Option<Vec<ClaimTarget>> {
+    let rel = path.strip_prefix(worktree).ok()?.to_string_lossy().replace('\\', "/");
+    let lang = polyph_merge::symbols::Lang::from_path(&rel)?;
+    let old = std::fs::read_to_string(path).ok()?;
+    let names = polyph_merge::symbols::changed_symbols(&old, new, lang)?;
+    if names.is_empty() {
+        return None;
+    }
+    Some(names.into_iter().map(|n| ClaimTarget { path: rel.clone(), symbol: Some(n) }).collect())
 }
 
 /// Decides one request from an agent: policy first, then claims or a human.
@@ -160,6 +215,30 @@ async fn decide(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, action: Acti
         && h.approved.lock().await.contains(k)
     {
         return Answer::Allow { always: true };
+    }
+    // Symbol claims: two agents may edit different functions of one file.
+    if let Action::Edit { paths, content: Some(new) } = &action
+        && paths.len() == 1
+        && h.preset != Preset::AskAll
+        && !h.helper
+        && h.project.symbol_claims()
+        && let Some(targets) = symbol_targets(&h.worktree, &paths[0], new)
+    {
+        let blocked: Vec<String> = {
+            let ctx = rt.ctx.lock().await;
+            let now = shared.clock.now();
+            targets
+                .iter()
+                .filter_map(|t| ctx.core.claims.holder(t, Some(&h.agent), now))
+                .map(|c| format!("{} ({})", c.target, c.owner.label))
+                .collect()
+        };
+        if !blocked.is_empty() {
+            return Answer::Deny {
+                note: Some(format!("claimed by someone else: {}. Use ask_agent to coordinate.", blocked.join(", "))),
+            };
+        }
+        return claim_and_allow(h, rt, shared, &targets, "editing").await;
     }
     let verdict = {
         let ctx = rt.ctx.lock().await;
@@ -190,39 +269,7 @@ async fn decide(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, action: Acti
         Verdict::Deny(note) => Answer::Deny { note: Some(note) },
         Verdict::ClaimAndAllow(files) => {
             let targets: Vec<ClaimTarget> = files.iter().map(|f| ClaimTarget::parse(f)).collect();
-            let rx = {
-                let mut ctx = rt.ctx.lock().await;
-                let now = shared.clock.now();
-                match ctx.core.request_claims(
-                    &h.agent,
-                    &targets,
-                    "editing",
-                    h.task,
-                    polyph_core::room::DEFAULT_LEASE,
-                    now,
-                ) {
-                    Ok((req, fx)) => {
-                        let (tx, rx) = oneshot::channel();
-                        ctx.claim_waiters.insert(req, tx);
-                        apply(rt, &mut ctx, shared, fx).await;
-                        rx
-                    }
-                    Err(_) => return Answer::Deny { note: Some("could not claim the files".into()) },
-                }
-            };
-            match tokio::time::timeout(Duration::from_secs(15), rx).await {
-                Ok(Ok((_granted, denied))) if denied.is_empty() => Answer::Allow { always: false },
-                Ok(Ok((_, denied))) => {
-                    let who: Vec<String> = denied.iter().map(|c| format!("{} ({})", c.target, c.owner.label)).collect();
-                    Answer::Deny {
-                        note: Some(format!(
-                            "claimed by someone else: {}. Use ask_agent to coordinate.",
-                            who.join(", ")
-                        )),
-                    }
-                }
-                _ => Answer::Deny { note: Some("the claim arbiter did not answer; try again".into()) },
-            }
+            claim_and_allow(h, rt, shared, &targets, "editing").await
         }
         Verdict::Ask(kind) => {
             set_state(h, rt, shared, AgentState::WaitingApproval, None).await;
@@ -266,7 +313,19 @@ async fn pump(
                         }
                         tokio::time::sleep(Duration::from_millis(20)).await;
                     };
+                    let edits = match &action {
+                        Action::Edit { paths, .. } => paths.clone(),
+                        _ => vec![],
+                    };
                     let a = decide(&h, &rt, &shared, action).await;
+                    if matches!(a, Answer::Allow { .. }) && !edits.is_empty() {
+                        let now = std::time::Instant::now();
+                        let mut w = h.acp_writes.lock();
+                        w.retain(|_, t| now.duration_since(*t) < std::time::Duration::from_secs(60));
+                        for p in edits {
+                            w.insert(p, now);
+                        }
+                    }
                     let _ = reply.send(a);
                 });
             }
@@ -440,14 +499,19 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
         task_wt: task_wt.clone(),
         helper: p.helper,
         brief: Mutex::new(task_card.as_ref().and_then(|c| c.handoff.clone())),
+        acp_writes: parking_lot::Mutex::new(HashMap::new()),
         trigger_hops: std::sync::atomic::AtomicU8::new(0),
         _proxy: proxy,
         tmp,
         pump: pump_task,
         waker: waker_task,
+        watcher: parking_lot::Mutex::new(None),
     });
     let _ = once.set(handle.clone());
     rt.ctx.lock().await.coord.wakers.insert(id, wake_tx);
+    if handle.project.watch() && !p.helper {
+        *handle.watcher.lock() = crate::watch::spawn(handle.clone(), rt.clone(), shared.clone());
+    }
     if let (Some(t), Some(wt)) = (task, &task_wt) {
         crate::tasks::update_card(
             &rt,

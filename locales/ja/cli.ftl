@@ -172,3 +172,7 @@ budget-room = ルーム
 budget-state-ok = 正常
 budget-state-warning = 残りわずか
 budget-state-exceeded = 上限到達
+help-mirror = ルームの共有作業コピーをディレクトリにミラーします（ホスト型モード）。そこで起動したエージェントは、クレームに従ってホストのファイルを編集します。
+hosted-sharing = { $dir } をルームの作業コピーとして共有しています（{ $files } ファイル）。メンバーは `polyph mirror <dir>` でミラーできます。
+mirror-opened = ルームの作業コピーを { $dir } にミラーしています。
+host-bad-mode = 不明なモード { $mode } です。distributed か hosted を指定してください。

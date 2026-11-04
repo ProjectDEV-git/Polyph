@@ -405,6 +405,17 @@ impl Repo {
         }
     }
 
+    /// Which of `paths` (relative to this working copy) git ignores.
+    pub fn ignored(&self, paths: &[String]) -> Result<Vec<String>> {
+        if paths.is_empty() {
+            return Ok(vec![]);
+        }
+        let input: String = paths.iter().map(|p| format!("{p}\0")).collect();
+        // Exit status 1 means "none ignored", so only stdout matters.
+        let (_, out, _) = run(&self.root, &["check-ignore", "-z", "--stdin"], &[], Some(input.as_bytes()))?;
+        Ok(out.split('\0').filter(|s| !s.is_empty()).map(str::to_string).collect())
+    }
+
     /// Adds a line to `.git/info/exclude` unless it is there.
     pub fn exclude(&self, pattern: &str) -> Result<()> {
         let p = self.common_dir()?.join("info").join("exclude");
@@ -522,6 +533,7 @@ mod tests {
         r.exclude("/.polyph/").unwrap();
         let ex = std::fs::read_to_string(r.common_dir().unwrap().join("info/exclude")).unwrap();
         assert_eq!(ex.matches("/.polyph/").count(), 1);
+        assert_eq!(r.ignored(&[".polyph/x".into(), "src/a.rs".into()]).unwrap(), vec![".polyph/x"]);
     }
 
     #[test]

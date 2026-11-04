@@ -172,3 +172,7 @@ budget-room = 房间
 budget-state-ok = 正常
 budget-state-warning = 即将用完
 budget-state-exceeded = 已用完
+help-mirror = 将房间的共享工作副本镜像到一个目录（托管模式）。在其中启动的智能体会在认领规则下编辑主机上的文件。
+hosted-sharing = 正在将 { $dir } 共享为房间的工作副本（{ $files } 个文件）。成员可用 `polyph mirror <dir>` 进行镜像。
+mirror-opened = 正在将房间的工作副本镜像到 { $dir }。
+host-bad-mode = 未知模式 { $mode }：请使用 distributed 或 hosted。

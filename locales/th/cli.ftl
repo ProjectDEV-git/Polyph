@@ -172,3 +172,7 @@ budget-room = ห้อง
 budget-state-ok = ปกติ
 budget-state-warning = ใกล้หมด
 budget-state-exceeded = หมดแล้ว
+help-mirror = มิเรอร์สำเนางานที่ใช้ร่วมกันของห้องลงในไดเรกทอรี (โหมดโฮสต์) เอเจนต์ที่เริ่มในนั้นจะแก้ไฟล์ของโฮสต์ตามการจองไฟล์
+hosted-sharing = กำลังแชร์ { $dir } เป็นสำเนางานของห้อง ({ $files } ไฟล์) สมาชิกมิเรอร์ได้ด้วย `polyph mirror <dir>`
+mirror-opened = กำลังมิเรอร์สำเนางานของห้องไปที่ { $dir }
+host-bad-mode = ไม่รู้จักโหมด { $mode } ใช้ distributed หรือ hosted

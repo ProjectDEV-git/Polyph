@@ -114,6 +114,8 @@ pub struct RoomCtx {
     pub lan: Option<crate::lan::LanRoom>,
     /// Inboxes, reply waiters and the loop guard for this device's agents.
     pub coord: crate::coord::Coord,
+    /// Hosted mode: this device's side of the shared working copy.
+    pub mirror: Option<crate::mirror::Mirror>,
 }
 
 impl std::fmt::Debug for RoomCtx {
@@ -153,6 +155,7 @@ impl RoomRuntime {
                 outbox: VecDeque::new(),
                 claim_waiters: HashMap::new(),
                 coord: Default::default(),
+                mirror: None,
                 code_waiters: VecDeque::new(),
                 approval_waiters: HashMap::new(),
                 transcripts: HashMap::new(),
@@ -192,6 +195,12 @@ pub async fn apply(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, effects
     for e in effects {
         match e {
             Effect::Send(m) => send_msg(ctx, &m).await,
+            Effect::Event(RoomEvent::Mirror { from, msg }) => {
+                // File contents stay out of the local event stream.
+                for m in crate::mirror::handle(ctx, shared, from, *msg) {
+                    send_msg(ctx, &RoomMessage::Mirror(m)).await;
+                }
+            }
             Effect::Event(ev) => {
                 match &ev {
                     RoomEvent::JoinReady { knock, approved } => {
@@ -242,6 +251,11 @@ pub async fn apply(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, effects
     }
     ctx.core.commit_rotation();
     ctx.dirty = true;
+}
+
+/// Seals and publishes one message (queued while disconnected).
+pub async fn send(ctx: &mut RoomCtx, m: &RoomMessage) {
+    send_msg(ctx, m).await
 }
 
 async fn send_msg(ctx: &mut RoomCtx, m: &RoomMessage) {

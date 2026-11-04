@@ -196,3 +196,7 @@ budget-room = room
 budget-state-ok = ok
 budget-state-warning = warning
 budget-state-exceeded = used up
+help-mirror = Mirror the room's shared working copy into a directory (hosted mode). Agents you start there edit the host's files under claims.
+hosted-sharing = Sharing { $dir } as the room's working copy ({ $files } files). Members mirror it with `polyph mirror <dir>`.
+mirror-opened = Mirroring the room's working copy into { $dir }.
+host-bad-mode = Unknown mode { $mode }: use distributed or hosted.

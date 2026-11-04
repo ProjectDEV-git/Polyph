@@ -206,6 +206,11 @@ pub enum RoomEvent {
         by: MemberId,
         for_me: bool,
     },
+    /// Hosted-mode mirroring, for the daemon's mirror module.
+    Mirror {
+        from: DeviceId,
+        msg: Box<polyph_proto::messages::MirrorMsg>,
+    },
     /// A message to an agent. `for_me` when the agent runs on this device.
     Inbox {
         message: InboxMessage,
@@ -647,6 +652,16 @@ impl RoomCore {
                 out.push(Effect::Event(RoomEvent::Agent { event: ev }));
             }
             RoomMessage::Approval(a) => out.extend(self.on_approval(from, role, a, now)),
+            RoomMessage::Mirror(m) if writer => {
+                // A device proposes changes only for its own agents.
+                let honest = match &m {
+                    polyph_proto::messages::MirrorMsg::Propose { agent: Some(a), .. } => a.device == from,
+                    _ => true,
+                };
+                if honest {
+                    out.push(Effect::Event(RoomEvent::Mirror { from, msg: Box::new(m) }));
+                }
+            }
             RoomMessage::Inbox { id, to, from_member, from_agent, thread, reply_to, text, at, hops } if writer => {
                 // The sender speaks only for itself and its own agents.
                 let honest = self.sender_member(&from) == Some(from_member)

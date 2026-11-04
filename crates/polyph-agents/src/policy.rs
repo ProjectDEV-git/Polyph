@@ -32,14 +32,35 @@ impl std::str::FromStr for Preset {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
-    Read { path: PathBuf },
-    Edit { paths: Vec<PathBuf> },
-    Execute { command: String },
-    Network { host: String, port: u16 },
-    PolyphTool { name: String },
-    Push { remote: String, branch: String },
-    Merge { branch: String, into: String },
-    Other { title: String },
+    Read {
+        path: PathBuf,
+    },
+    /// `content` is the new text when the agent writes one whole file.
+    Edit {
+        paths: Vec<PathBuf>,
+        content: Option<String>,
+    },
+    Execute {
+        command: String,
+    },
+    Network {
+        host: String,
+        port: u16,
+    },
+    PolyphTool {
+        name: String,
+    },
+    Push {
+        remote: String,
+        branch: String,
+    },
+    Merge {
+        branch: String,
+        into: String,
+    },
+    Other {
+        title: String,
+    },
 }
 
 /// Who holds the claim on a file, from the agent's point of view.
@@ -110,7 +131,7 @@ pub fn decide(preset: Preset, action: &Action, cx: &Context<'_>) -> Verdict {
                 Verdict::Ask(ApprovalKind::OutsideWorktree { path: path.to_string_lossy().into_owned(), write: false })
             }
         },
-        Action::Edit { paths } => {
+        Action::Edit { paths, .. } => {
             let mut rel = vec![];
             for p in paths {
                 match relative_in(cx.worktree, p) {
@@ -196,13 +217,16 @@ mod tests {
             decide(Preset::Default, &Action::Read { path: "../../etc/passwd".into() }, &c),
             Verdict::Ask(_)
         ));
-        assert_eq!(decide(Preset::Default, &Action::Edit { paths: vec!["/w/mine.rs".into()] }, &c), Verdict::Allow);
         assert_eq!(
-            decide(Preset::Default, &Action::Edit { paths: vec!["new.rs".into()] }, &c),
+            decide(Preset::Default, &Action::Edit { paths: vec!["/w/mine.rs".into()], content: None }, &c),
+            Verdict::Allow
+        );
+        assert_eq!(
+            decide(Preset::Default, &Action::Edit { paths: vec!["new.rs".into()], content: None }, &c),
             Verdict::ClaimAndAllow(vec!["new.rs".into()])
         );
         assert!(
-            matches!(decide(Preset::Default, &Action::Edit { paths: vec!["theirs.rs".into()] }, &c), Verdict::Deny(m) if m.contains("Mai/claude"))
+            matches!(decide(Preset::Default, &Action::Edit { paths: vec!["theirs.rs".into()], content: None }, &c), Verdict::Deny(m) if m.contains("Mai/claude"))
         );
         assert_eq!(decide(Preset::Default, &Action::Execute { command: "cargo  test".into() }, &c), Verdict::Allow);
         assert!(matches!(
@@ -218,6 +242,9 @@ mod tests {
             Verdict::Ask(_)
         ));
         assert_eq!(decide(Preset::Auto, &Action::Execute { command: "make".into() }, &c), Verdict::Allow);
-        assert!(matches!(decide(Preset::AskAll, &Action::Edit { paths: vec!["mine.rs".into()] }, &c), Verdict::Ask(_)));
+        assert!(matches!(
+            decide(Preset::AskAll, &Action::Edit { paths: vec!["mine.rs".into()], content: None }, &c),
+            Verdict::Ask(_)
+        ));
     }
 }

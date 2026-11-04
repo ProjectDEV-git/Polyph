@@ -927,6 +927,24 @@ impl Daemon {
                 let h = self.agent(&p.agent).await?;
                 crate::tasks::handoff(self.clone(), h, p.to_kind, p.note).await
             }
+            "mirror.host" | "mirror.open" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    dir: PathBuf,
+                }
+                let p: P = param(&params)?;
+                if method == "mirror.host" {
+                    crate::mirror::host(self, &p.room, &p.dir).await
+                } else {
+                    crate::mirror::open(self, &p.room, &p.dir).await
+                }
+            }
+            "mirror.status" => {
+                let p: RoomParam = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                ok(crate::mirror::status(&rt).await)
+            }
             "merge.queue" => {
                 let p: RoomParam = param(&params)?;
                 let rt = self.find(&p.room).await?;

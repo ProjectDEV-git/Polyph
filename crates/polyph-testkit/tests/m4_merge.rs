@@ -319,6 +319,12 @@ async fn the_resolver_agent_settles_a_real_disagreement_with_both_intents() {
     let (bid, bbr) = start_task(&h, 1, &rid, "fake-b", r, &c2).await;
     // Ann's agent finishes first; then Bo's, which changed the same line.
     h.nodes[0].call("agent.prompt", json!({ "agent": aid, "text": "double" })).await.unwrap();
+    // Bo must have seen the claim before its release means anything.
+    h.until("claim reaches Bo", || async {
+        h.nodes[1].call("claims.list", json!({ "room": rid })).await.unwrap().as_array().unwrap().len() == 1
+    })
+    .await
+    .unwrap();
     h.nodes[0].call("task.finish", json!({ "agent": aid })).await.unwrap();
     wait_state(&h, 0, &rid, &abr, "merged").await;
     h.until("claim released", || async {
@@ -328,7 +334,11 @@ async fn the_resolver_agent_settles_a_real_disagreement_with_both_intents() {
     .unwrap();
     h.nodes[1].call("agent.prompt", json!({ "agent": bid, "text": "fee" })).await.unwrap();
     let bm = messages(&h, 1, &rid, &bid).await;
-    assert!(bm.contains(&"write: ok".to_string()), "{bm:?}");
+    if !bm.contains(&"write: ok".to_string()) {
+        let ca = h.nodes[0].call("claims.list", json!({ "room": rid })).await.unwrap();
+        let cb = h.nodes[1].call("claims.list", json!({ "room": rid })).await.unwrap();
+        panic!("{bm:?}\nAnn: {ca}\nBo: {cb}");
+    }
     h.nodes[1].call("task.finish", json!({ "agent": bid })).await.unwrap();
     let e = wait_state(&h, 1, &rid, &bbr, "merged").await;
     assert_eq!(e["resolved"], json!([["src/lib.rs", "agent:fake-resolver"]]), "{e}");
@@ -517,4 +527,115 @@ async fn a_task_can_be_handed_to_another_agent() {
     assert_eq!(card["assignee"], "Ann/fake-b");
     let log = git(r, &["log", "--format=%s", &abr]);
     assert!(log.starts_with("Work in progress, handed over by Ann/fake-a"), "{log}");
+}
+
+const TWO: &str = "pub fn charge(n: i64) -> i64 {\n    n\n}\n\npub fn refund(n: i64) -> i64 {\n    -n\n}\n";
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn symbol_claims_let_two_agents_share_a_file() {
+    let (h, rid, repo, _s) = setup(
+        vec![
+            ("fake-a", json!({ "turns": [
+                [ { "write": { "path": "src/lib.rs", "content": TWO.replace("    n\n", "    n * 2\n") } } ],
+                [ { "write": { "path": "src/lib.rs", "content": TWO.replace("    n\n", "    n * 2\n").replace("    -n\n", "    0\n") } } ]
+            ] })),
+            ("fake-b", json!({ "turns": [[ { "write": { "path": "src/lib.rs", "content": TWO.replace("    -n\n", "    -n - 1\n") } } ]] })),
+        ],
+        "[claims]\ngranularity = \"symbol\"\n",
+    )
+    .await;
+    let r = repo.path();
+    std::fs::write(r.join("src/lib.rs"), TWO).unwrap();
+    git(r, &["commit", "-qam", "two functions"]);
+    let c1 = add_card(&h, &rid, "Double charges", "").await;
+    let c2 = add_card(&h, &rid, "Refund fee", "").await;
+    h.until("cards reach Bo", || async { cards(&h, 1, &rid).await.len() == 2 }).await.unwrap();
+    let (aid, _) = start_task(&h, 0, &rid, "fake-a", r, &c1).await;
+    let (bid, _) = start_task(&h, 1, &rid, "fake-b", r, &c2).await;
+    h.nodes[0].call("agent.prompt", json!({ "agent": aid, "text": "charge" })).await.unwrap();
+    h.until("Bo sees the symbol claim", || async {
+        h.nodes[1].call("claims.list", json!({ "room": rid })).await.unwrap().as_array().unwrap().len() == 1
+    })
+    .await
+    .unwrap();
+    // Different function of the same file: allowed.
+    h.nodes[1].call("agent.prompt", json!({ "agent": bid, "text": "refund" })).await.unwrap();
+    assert!(messages(&h, 1, &rid, &bid).await.contains(&"write: ok".to_string()));
+    let cl = h.nodes[0].call("claims.list", json!({ "room": rid })).await.unwrap();
+    let held: Vec<(String, String)> = cl
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                format!("{}#{}", c["target"]["path"].as_str().unwrap(), c["target"]["symbol"].as_str().unwrap_or("")),
+                c["owner"]["label"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert!(held.contains(&("src/lib.rs#charge".into(), "Ann/fake-a".into())), "{held:?}");
+    assert!(held.contains(&("src/lib.rs#refund".into(), "Bo/fake-b".into())), "{held:?}");
+    // The same function Bo's agent holds: denied.
+    h.nodes[0].call("agent.prompt", json!({ "agent": aid, "text": "refund too" })).await.unwrap();
+    let am = messages(&h, 0, &rid, &aid).await;
+    assert!(am.iter().any(|m| m.starts_with("write: denied") && m.contains("src/lib.rs#refund (Bo/fake-b)")), "{am:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_watcher_catches_edits_outside_the_protocol() {
+    let (h, rid, repo, _s) = setup(
+        vec![
+            ("fake-a", json!({ "turns": [[ { "write": { "path": "src/lib.rs", "content": with(REFUND) } } ]] })),
+            (
+                "fake-b",
+                json!({ "turns": [
+                [
+                    { "run": { "command": "sed", "args": ["-i", "s/charge/charge2/", "src/lib.rs"] } },
+                    { "run": { "command": "cp", "args": ["src/lib.rs", "src/new.rs"] } }
+                ],
+                [ { "echo_prompt": true } ]
+            ] }),
+            ),
+        ],
+        // Declared checks run without asking (commands with shell operators never do).
+        "checks = [\"sed -i s/charge/charge2/ src/lib.rs\", \"cp src/lib.rs src/new.rs\"]\n",
+    )
+    .await;
+    let r = repo.path();
+    let c1 = add_card(&h, &rid, "Refunds", "").await;
+    let c2 = add_card(&h, &rid, "Scratch", "").await;
+    h.until("cards reach Bo", || async { cards(&h, 1, &rid).await.len() == 2 }).await.unwrap();
+    let (aid, _) = start_task(&h, 0, &rid, "fake-a", r, &c1).await;
+    let (bid, _) = start_task(&h, 1, &rid, "fake-b", r, &c2).await;
+    h.nodes[0].call("agent.prompt", json!({ "agent": aid, "text": "refunds" })).await.unwrap();
+    h.until("Bo sees Ann's claim", || async {
+        h.nodes[1].call("claims.list", json!({ "room": rid })).await.unwrap().as_array().unwrap().len() == 1
+    })
+    .await
+    .unwrap();
+    // Bo's agent edits through its terminal, bypassing the file tools.
+    h.nodes[1].call("agent.prompt", json!({ "agent": bid, "text": "hack" })).await.unwrap();
+    assert!(messages(&h, 1, &rid, &bid).await.iter().filter(|m| *m == "run: exit 0").count() == 2);
+    // The free file is claimed for it.
+    h.until("new.rs claimed for Bo's agent", || async {
+        let cl = h.nodes[0].call("claims.list", json!({ "room": rid })).await.unwrap();
+        cl.as_array().unwrap().iter().any(|c| c["target"]["path"] == "src/new.rs" && c["owner"]["label"] == "Bo/fake-b")
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    // The held file produces a warning at its next turn.
+    h.nodes[1].call("agent.prompt", json!({ "agent": bid, "text": "next" })).await.unwrap();
+    let said = messages(&h, 1, &rid, &bid).await;
+    let p = said.iter().rev().find(|m| m.starts_with("prompt:")).unwrap();
+    assert!(p.contains("You changed src/lib.rs outside Polyph's file tools, but Ann/fake-a holds src/lib.rs"), "{p}");
+    // Nothing happens for a person editing while no agent is working.
+    std::fs::write(
+        r.join(".polyph/worktrees").read_dir().unwrap().next().unwrap().unwrap().path().join("src/person.rs"),
+        "x",
+    )
+    .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    let cl = h.nodes[0].call("claims.list", json!({ "room": rid })).await.unwrap();
+    assert!(!cl.as_array().unwrap().iter().any(|c| c["target"]["path"] == "src/person.rs"), "{cl}");
 }
