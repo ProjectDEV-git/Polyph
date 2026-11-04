@@ -3,6 +3,11 @@
 //! Hosts on the allowlist pass; anything else asks the decider, which turns
 //! it into an approval request. Listens on loopback TCP and, on Unix, on a
 //! Unix socket that sandboxed namespaces reach through the helper.
+//!
+//! Plain HTTP requests to [`INTERNAL_HOST`] never leave the machine: they go to
+//! the daemon's [`Internal`] handler. This is how the Polyph MCP server inside
+//! the sandbox reaches its daemon under every sandbox mechanism, and because
+//! each agent has its own proxy, the daemon knows which agent is calling.
 
 use std::future::Future;
 use std::net::SocketAddr;
@@ -18,6 +23,23 @@ use tracing::debug;
 
 /// Decides about a host not on the allowlist. Returns true to allow.
 pub type Decider = Arc<dyn Fn(String, u16) -> Pin<Box<dyn Future<Output = bool> + Send>> + Send + Sync>;
+
+/// Host name answered by the daemon itself (see the module docs).
+pub const INTERNAL_HOST: &str = "polyph.internal";
+/// Largest request body the internal host accepts.
+pub const INTERNAL_MAX_BODY: usize = 1024 * 1024;
+
+#[derive(Debug, Clone)]
+pub struct InternalRequest {
+    pub method: String,
+    pub path: String,
+    /// Value of the `Authorization` header.
+    pub auth: Option<String>,
+    pub body: Vec<u8>,
+}
+
+/// Answers requests to [`INTERNAL_HOST`] with (status, JSON body).
+pub type Internal = Arc<dyn Fn(InternalRequest) -> Pin<Box<dyn Future<Output = (u16, Vec<u8>)> + Send>> + Send + Sync>;
 
 #[derive(Clone, Debug, Default)]
 pub struct Allowlist {
@@ -93,17 +115,27 @@ impl ProxyHandle {
 
 /// Starts the proxy. `unix_dir` (Unix only) is where the socket is created.
 pub async fn start(allow: Allowlist, decide: Decider, unix_dir: Option<PathBuf>) -> anyhow::Result<ProxyHandle> {
+    start_with(allow, decide, None, unix_dir).await
+}
+
+/// Like [`start`], with a handler for [`INTERNAL_HOST`].
+pub async fn start_with(
+    allow: Allowlist,
+    decide: Decider,
+    internal: Option<Internal>,
+    unix_dir: Option<PathBuf>,
+) -> anyhow::Result<ProxyHandle> {
     let tcp = TcpListener::bind("127.0.0.1:0").await?;
     let addr = tcp.local_addr()?;
     let allow = Arc::new(allow);
     let mut tasks = vec![];
     {
-        let (allow, decide) = (allow.clone(), decide.clone());
+        let (allow, decide, internal) = (allow.clone(), decide.clone(), internal.clone());
         tasks.push(tokio::spawn(async move {
             while let Ok((s, _)) = tcp.accept().await {
-                let (allow, decide) = (allow.clone(), decide.clone());
+                let (allow, decide, internal) = (allow.clone(), decide.clone(), internal.clone());
                 tokio::spawn(async move {
-                    let _ = handle(s, allow, decide).await;
+                    let _ = handle(s, allow, decide, internal).await;
                 });
             }
         }));
@@ -117,9 +149,9 @@ pub async fn start(allow: Allowlist, decide: Decider, unix_dir: Option<PathBuf>)
             let ul = tokio::net::UnixListener::bind(&p)?;
             tasks.push(tokio::spawn(async move {
                 while let Ok((s, _)) = ul.accept().await {
-                    let (allow, decide) = (allow.clone(), decide.clone());
+                    let (allow, decide, internal) = (allow.clone(), decide.clone(), internal.clone());
                     tokio::spawn(async move {
-                        let _ = handle(s, allow, decide).await;
+                        let _ = handle(s, allow, decide, internal).await;
                     });
                 }
             }));
@@ -129,7 +161,7 @@ pub async fn start(allow: Allowlist, decide: Decider, unix_dir: Option<PathBuf>)
     };
     #[cfg(not(unix))]
     let unix_path = {
-        let _ = (unix_dir, allow, decide);
+        let _ = (unix_dir, allow, decide, internal);
         None
     };
     Ok(ProxyHandle { tcp: addr, unix: unix_path, tasks })
@@ -141,6 +173,7 @@ async fn handle<S: AsyncRead + AsyncWrite + Unpin>(
     stream: S,
     allow: Arc<Allowlist>,
     decide: Decider,
+    internal: Option<Internal>,
 ) -> anyhow::Result<()> {
     let mut reader = BufReader::new(stream);
     let mut head = String::new();
@@ -175,6 +208,49 @@ async fn handle<S: AsyncRead + AsyncWrite + Unpin>(
         let (h, p) = split_host_port(authority, 80);
         (h, p, Some(path))
     };
+    if let Some(path) = &rest_path
+        && host.eq_ignore_ascii_case(INTERNAL_HOST)
+    {
+        let header = |name: &str| {
+            head.lines().skip(1).find_map(|l| {
+                let (k, v) = l.split_once(':')?;
+                k.trim().eq_ignore_ascii_case(name).then(|| v.trim().to_string())
+            })
+        };
+        let len: usize = header("content-length").and_then(|v| v.parse().ok()).unwrap_or(0);
+        let (status, body) = match &internal {
+            None => (404, br#"{"error":"not available"}"#.to_vec()),
+            Some(_) if len > INTERNAL_MAX_BODY => (413, br#"{"error":"request too large"}"#.to_vec()),
+            Some(f) => {
+                let mut body = vec![0u8; len];
+                tokio::time::timeout(
+                    Duration::from_secs(30),
+                    tokio::io::AsyncReadExt::read_exact(&mut reader, &mut body),
+                )
+                .await??;
+                f(InternalRequest { method, path: path.clone(), auth: header("authorization"), body }).await
+            }
+        };
+        let reason = match status {
+            200 => "OK",
+            401 => "Unauthorized",
+            404 => "Not Found",
+            413 => "Payload Too Large",
+            _ => "Error",
+        };
+        let out = reader.get_mut();
+        out.write_all(
+            format!(
+                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .as_bytes(),
+        )
+        .await?;
+        out.write_all(&body).await?;
+        out.flush().await?;
+        return Ok(());
+    }
     let ok = allow.allows(&host) || decide(host.clone(), port).await;
     if !ok {
         debug!(%host, port, "proxy denied");
@@ -295,5 +371,26 @@ mod tests {
         s.read_to_string(&mut out).await.unwrap();
         assert!(out.starts_with("HTTP/1.1 403"), "{out}");
         assert_eq!(asked.lock().unwrap().as_slice(), ["unlisted.example:443"]);
+    }
+
+    #[tokio::test]
+    async fn internal_host_is_answered_locally() {
+        let decide: Decider = Arc::new(|_, _| Box::pin(async { panic!("internal requests are never decided") }));
+        let internal: Internal = Arc::new(|r: InternalRequest| {
+            Box::pin(async move {
+                let ok = r.auth.as_deref() == Some("Bearer t0k");
+                let body = format!(r#"{{"path":"{}","len":{},"ok":{ok}}}"#, r.path, r.body.len());
+                (if ok { 200 } else { 401 }, body.into_bytes())
+            })
+        });
+        let p = start_with(Allowlist::default(), decide, Some(internal), None).await.unwrap();
+        let mut s = TcpStream::connect(p.tcp).await.unwrap();
+        s.write_all(b"POST http://polyph.internal/mcp HTTP/1.1\r\nHost: polyph.internal\r\nAuthorization: Bearer t0k\r\nContent-Length: 5\r\n\r\nhello")
+            .await
+            .unwrap();
+        let mut out = String::new();
+        s.read_to_string(&mut out).await.unwrap();
+        assert!(out.starts_with("HTTP/1.1 200"), "{out}");
+        assert!(out.ends_with(r#"{"path":"/mcp","len":5,"ok":true}"#), "{out}");
     }
 }

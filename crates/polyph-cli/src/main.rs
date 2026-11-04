@@ -141,6 +141,7 @@ enum Cmd {
         #[command(subcommand)]
         cmd: SandboxCmd,
     },
+    Mcp,
     Usage {
         #[arg(long)]
         room: Option<String>,
@@ -433,6 +434,8 @@ async fn run(ctx: &Ctx, cmd: Option<Cmd>) -> anyhow::Result<()> {
             h.shutdown().await;
             Ok(())
         }
+        // Started by agents inside their sandbox; speaks MCP on stdin/stdout.
+        Cmd::Mcp => polyph_mcp::run_stdio().await,
         Cmd::Completions { shell } => {
             let mut c = Cli::command();
             clap_complete::generate(shell, &mut c, "polyph", &mut std::io::stdout());
@@ -813,7 +816,7 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
             call(&mut api, "budget.set", json!({ "room": room, "budgets": budgets })).await?;
             ctx.out(l.t("budget-saved"));
         }
-        Cmd::Daemon { .. } | Cmd::Relay { .. } | Cmd::Completions { .. } => {}
+        Cmd::Daemon { .. } | Cmd::Relay { .. } | Cmd::Completions { .. } | Cmd::Mcp => {}
     }
     Ok(())
 }

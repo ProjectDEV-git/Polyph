@@ -14,7 +14,9 @@ brief is the source of all requirements.
   `STUBS.md` (LAN bridge joins, mDNS untested in CI).
 - **Milestone 3 (agents and sandbox): done**, with gaps in `STUBS.md`
   (Windows isolation, seccomp, late-joiner transcripts).
-- **Milestone 4 (coordination): next.**
+- **Milestone 4 (coordination): in progress.** Done: the MCP server and its
+  bridge, claim/team-state/inbox/memory tools, loop guard. Not done: see
+  `PLAN.md` and `STUBS.md` ("Milestone 4 so far").
 
 ## How to build and test
 
@@ -65,6 +67,17 @@ pnpm install && pnpm check:i18n
 - Tests: `polyph-testkit/tests/m3.rs` (fake ACP agent through daemons and
   the sandbox) and `tests/localagent.rs` (local agent against a scripted
   model).
+- `polyph-mcp`: the MCP stdio server (`polyph mcp`) with tools `claim_files`,
+  `release_files`, `list_claims`, `team_state`, `ask_agent`, `reply`,
+  `read_inbox`, `remember`, `recall`, `forget`. The daemon passes it to every
+  agent in `session/new`; it calls the daemon at `http://polyph.internal`
+  through the agent's proxy (`polyph_sandbox::proxy::start_with`).
+- Daemon `coord` module: tool handlers, inboxes delivered at turn boundaries,
+  wakes for agent messages, loop guard, revoked-claim notices, team digest.
+  API `memory.list`, `inbox.send`.
+- `polyph-core::memory`: note layout in the Memory document and re-anchoring.
+- Tests: `polyph-testkit/tests/m4.rs`; the fake agent has `mcp` and
+  `echo_prompt` steps and starts the MCP server like a real agent.
 
 Smoke tests against real agents (`POLYPH_SMOKE=1`): **not run** — Claude
 Code, Codex and Ollama are not installed in the build environment. Run them
@@ -93,11 +106,13 @@ target/debug/polyph --home /tmp/a room knocks     # then: polyph --home /tmp/a a
 
 ## Next steps
 
-1. M4: `polyph-mcp` (rmcp server with claim/memory/inbox/whiteboard tools,
-   registered in `session/new`), `polyph-git` worktrees and merge queue,
-   layer-3 file watcher, team-state digest, planner, memory anchoring, inboxes
-   and loop guard, handoff, `polyph-merge`, reviewer, secrets redaction
-   (gitleaks rules) applied before anything leaves the daemon.
+1. Rest of M4: `polyph-git` worktrees (one per task) and the merge queue,
+   claims layer 3 (file watcher) and symbol claims, hosted-mode mirror,
+   planner (schema already in `polyph-proto::plan`), handoff (claims already
+   transfer in `ClaimTable::transfer`), `polyph-merge` intent-aware merge,
+   reviewer, secrets redaction (gitleaks rules) before anything leaves the
+   daemon. Add board/task and handoff tools to `polyph-mcp`.
+2. Give `polyph-localagent` the Polyph MCP tools.
 
 ## Known issues
 

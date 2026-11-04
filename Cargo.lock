@@ -2538,6 +2538,7 @@ dependencies = [
  "polyph-agents",
  "polyph-daemon",
  "polyph-i18n",
+ "polyph-mcp",
  "polyph-proto",
  "polyph-relay",
  "polyph-sandbox",
@@ -2580,6 +2581,7 @@ dependencies = [
  "parking_lot",
  "polyph-agents",
  "polyph-core",
+ "polyph-mcp",
  "polyph-proto",
  "polyph-relay",
  "polyph-sandbox",
@@ -2629,6 +2631,13 @@ dependencies = [
 [[package]]
 name = "polyph-mcp"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "polyph-sandbox",
+ "serde",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "polyph-merge"
@@ -2733,6 +2742,7 @@ dependencies = [
  "polyph-agents",
  "polyph-daemon",
  "polyph-localagent",
+ "polyph-mcp",
  "polyph-proto",
  "polyph-relay",
  "polyph-sandbox",

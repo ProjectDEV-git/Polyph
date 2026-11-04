@@ -432,6 +432,10 @@ pub enum RoomMessage {
         reply_to: Option<ObjectId>,
         text: String,
         at: i64,
+        /// Agent-to-agent hops since a human last spoke in this exchange (0 for
+        /// a human's message). Receivers stop waking agents past a limit.
+        #[serde(default)]
+        hops: u8,
     },
     Terminal(TerminalMsg),
     /// A spectator view key was created or revoked by the owner.

@@ -127,6 +127,31 @@ could not be followed exactly. Newest at the bottom of each section.
   the endpoint rejects native tools, and summarizes old turns at 75% of the
   context window.
 
+## Coordination
+
+- **The MCP server reaches the daemon through the agent's own proxy.** Plain
+  HTTP requests to the reserved host `polyph.internal` are answered by the
+  daemon instead of being forwarded. Every sandbox mechanism already lets the
+  agent reach its proxy (bubblewrap through the forwarder, Landlock by TCP
+  port, Seatbelt, Windows), so no new socket or sandbox rule is needed, and
+  because each agent has its own proxy the daemon knows which agent called. A
+  per-agent token is checked as well, since loopback ports are reachable by
+  other local processes.
+- **MCP is hand-rolled, not `rmcp`.** The server is a stdio relay with four
+  methods (`initialize`, `ping`, `tools/list`, `tools/call`) and static tool
+  definitions; like the ACP types, our own lean JSON handling is smaller and
+  does not churn with the SDK. It speaks protocol revisions 2025-06-18,
+  2025-03-26 and 2024-11-05.
+- **People's messages never wake someone else's agent.** Waking an agent with
+  a person's words is steering, which needs the agent's owner; those messages
+  are added to the agent's next prompt instead. Messages from agents wake an
+  idle agent, within the loop guard (`docs/protocol.md` 9.2).
+- **Inbox `hops`** was added to the existing `Inbox` message with a default
+  of 0, so older peers stay compatible.
+- **Memory notes re-anchor by line text** plus the nearest non-blank lines
+  around it, not by git blame: it works on uncommitted files and in every
+  member's own copy, and needs no repository access.
+
 ## Process
 
 - **Design skills.** Impeccable, Emil Kowalski's design-engineering skill,

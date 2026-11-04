@@ -51,10 +51,16 @@ commit and an updated `HANDOFF.md`. Stubs go in `STUBS.md`.
 - [x] testkit fake ACP agent; tests; opt-in smoke tests
 
 ## M4 — coordination
-- [ ] MCP server (rmcp) with all tools; claims three layers; worktrees; merge queue
-- [ ] hosted-mode mirror; team-state digest; planner; memory anchoring
-- [ ] inboxes + loop guard; handoff; intent-aware merge; reviewer; secrets redaction
-- [ ] tests per brief
+- [x] MCP server (`polyph mcp`) given to every agent in `session/new`, reaching the daemon through the agent's proxy
+- [x] MCP tools: claim/release/list claims, team state, ask/reply/inbox, remember/recall/forget
+- [ ] remaining MCP tools: whiteboard (M5), task/board tools, handoff
+- [ ] claims layer 2 (symbols) beyond explicit `path#symbol`, layer 3 (file watcher); worktrees; merge queue
+- [ ] hosted-mode mirror; planner
+- [x] team-state digest; memory notes with anchoring
+- [x] inboxes + loop guard (hops, per-pair rate, wakes per hour); delivery at turn boundaries; revoked-claim notices
+- [ ] handoff; intent-aware merge; reviewer; secrets redaction
+- [x] tests: `polyph-testkit/tests/m4.rs` (claims, ask/reply, loop guard, memory through real daemons and the sandbox)
+- [ ] remaining tests per brief
 
 ## M5 — board, terminals, integrations
 - [ ] kanban, threads, activity with replay, whiteboards + agent tools

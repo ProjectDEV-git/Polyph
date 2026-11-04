@@ -11,6 +11,7 @@ fn bins() -> AgentBins {
     AgentBins {
         fake_agent: env!("CARGO_BIN_EXE_polyph-fake-agent").into(),
         sandbox_helper: env!("CARGO_BIN_EXE_polyph-test-sandbox-exec").into(),
+        mcp: env!("CARGO_BIN_EXE_polyph-test-mcp").into(),
     }
 }
 

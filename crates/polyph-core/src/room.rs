@@ -36,6 +36,38 @@ pub const APPROVAL_ESCALATION_SECS: i64 = 120;
 const TABLE_INTERVAL: i64 = 30;
 /// Hue not chosen yet.
 pub const NO_HUE: u16 = u16::MAX;
+/// Longest inbox message accepted, in bytes.
+pub const MAX_INBOX_TEXT: usize = 16 * 1024;
+
+/// A directed message to an agent (from a person or another agent).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InboxMessage {
+    pub id: ObjectId,
+    pub to: AgentRef,
+    pub from_member: MemberId,
+    pub from_agent: Option<AgentRef>,
+    pub thread: Option<ObjectId>,
+    pub reply_to: Option<ObjectId>,
+    pub text: String,
+    pub at: i64,
+    pub hops: u8,
+}
+
+impl InboxMessage {
+    fn into_wire(self) -> RoomMessage {
+        RoomMessage::Inbox {
+            id: self.id,
+            to: self.to,
+            from_member: self.from_member,
+            from_agent: self.from_agent,
+            thread: self.thread,
+            reply_to: self.reply_to,
+            text: self.text,
+            at: self.at,
+            hops: self.hops,
+        }
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum RoomError {
@@ -172,6 +204,11 @@ pub enum RoomEvent {
         id: ObjectId,
         decision: Decision,
         by: MemberId,
+        for_me: bool,
+    },
+    /// A message to an agent. `for_me` when the agent runs on this device.
+    Inbox {
+        message: InboxMessage,
         for_me: bool,
     },
     /// A transcript event from an agent (ours or a teammate's).
@@ -610,6 +647,16 @@ impl RoomCore {
                 out.push(Effect::Event(RoomEvent::Agent { event: ev }));
             }
             RoomMessage::Approval(a) => out.extend(self.on_approval(from, role, a, now)),
+            RoomMessage::Inbox { id, to, from_member, from_agent, thread, reply_to, text, at, hops } if writer => {
+                // The sender speaks only for itself and its own agents.
+                let honest = self.sender_member(&from) == Some(from_member)
+                    && from_agent.as_ref().is_none_or(|a| a.device == from && a.member == from_member);
+                if honest && text.len() <= MAX_INBOX_TEXT {
+                    let for_me = to.device == self.me;
+                    let message = InboxMessage { id, to, from_member, from_agent, thread, reply_to, text, at, hops };
+                    out.push(Effect::Event(RoomEvent::Inbox { message, for_me }));
+                }
+            }
             _ => {}
         }
         out
@@ -1206,6 +1253,48 @@ impl RoomCore {
             Effect::Send(RoomMessage::Claim(ClaimMsg::Release { claims: mine })),
             Effect::Event(RoomEvent::ClaimsChanged { count: self.claims.len() }),
         ]
+    }
+
+    // ---------- inboxes ----------
+
+    /// Sends a message to an agent's inbox. `from_agent` must run on this device.
+    #[allow(clippy::too_many_arguments)]
+    pub fn send_inbox(
+        &mut self,
+        to: AgentRef,
+        from_agent: Option<AgentRef>,
+        thread: Option<ObjectId>,
+        reply_to: Option<ObjectId>,
+        text: &str,
+        hops: u8,
+        now: i64,
+    ) -> Result<(InboxMessage, Vec<Effect>)> {
+        if !self.role().can_write() {
+            return Err(RoomError::Forbidden);
+        }
+        if from_agent.as_ref().is_some_and(|a| a.device != self.me) {
+            return Err(RoomError::Invalid("that agent does not run on this device"));
+        }
+        if text.trim().is_empty() || text.len() > MAX_INBOX_TEXT {
+            return Err(RoomError::Invalid("message is empty or too long"));
+        }
+        let message = InboxMessage {
+            id: ObjectId::random()?,
+            to,
+            from_member: self.my_member,
+            from_agent,
+            thread,
+            reply_to,
+            text: text.to_string(),
+            at: now,
+            hops,
+        };
+        let for_me = message.to.device == self.me;
+        let fx = vec![
+            Effect::Send(message.clone().into_wire()),
+            Effect::Event(RoomEvent::Inbox { message: message.clone(), for_me }),
+        ];
+        Ok((message, fx))
     }
 
     // ---------- approvals ----------

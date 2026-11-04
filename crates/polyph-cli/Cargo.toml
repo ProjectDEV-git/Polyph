@@ -21,6 +21,7 @@ polyph-relay = { workspace = true }
 polyph-i18n = { workspace = true }
 polyph-sandbox = { workspace = true }
 polyph-agents = { workspace = true }
+polyph-mcp = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "signal", "process", "io-std", "io-util"] }
 tokio-tungstenite = { workspace = true, features = ["connect"] }
 futures-util = { workspace = true }

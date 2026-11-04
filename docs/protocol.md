@@ -297,6 +297,39 @@ Layouts are in `crates/polyph-proto/src/crdt.rs`.
 - A member returning when nobody is online fetches snapshots, decrypts the
   newest one it can, merges it, then syncs with peers when they appear.
 
+### 9.1 Memory notes
+
+The `Memory` document holds a Y.Map `notes`: note id (hex) to a JSON string
+with `id`, `path` (repository-relative, normalized; a trailing `/` pins a
+directory), `line` (1-based, or null for the whole file), `anchor`, `text`,
+`author` (member id hex), `agent` (label or null) and `at`. The anchor keeps
+the trimmed text of the pinned line and of the nearest non-blank lines above
+and below it. Readers re-place a note against their own copy of the file:
+the line itself must match, neighbors and distance from the old line break
+ties, and a note whose line is gone is shown as possibly stale. Layout and
+placement are in `crates/polyph-core/src/memory.rs`.
+
+### 9.2 Inboxes
+
+`Inbox { id, to, from_member, from_agent, thread, reply_to, text, at, hops }`
+is a directed message to one agent, readable by every member like any room
+message. Receivers accept it only if `from_member` is the sender's member and
+`from_agent`, when present, runs on the sending device. Text is at most
+16 KiB.
+
+`hops` counts agent-to-agent steps since a person last spoke: 0 for a
+person's message, and one more than the hops of the message that started the
+sending agent's turn otherwise. The daemon running the target agent:
+
+- wakes an idle agent for a message from another agent only while
+  `hops < 4`, and at most 12 times per hour per agent;
+- never wakes an agent for a person's message (that would be steering
+  someone else's agent); it is delivered at the agent's next turn;
+- limits each agent to 8 messages per target agent per 10 minutes.
+
+Messages that do not wake an agent are not dropped: they are added to the
+agent's next prompt. Older peers decode messages without `hops` as 0.
+
 ## 10. Acting host
 
 One online device per room is the **acting host**. It arbitrates claims,

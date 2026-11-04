@@ -134,6 +134,7 @@ help-agents = 检查已安装的智能体。
 help-agents-doctor = 检查哪些智能体已安装并登录，以及如何解决问题。
 help-sandbox = 智能体沙箱工具。
 help-sandbox-test = 尝试被禁止的写入和网络访问，报告哪些被拦截。
+help-mcp = 供智能体使用的 Polyph MCP 服务器（认领、团队状态、消息、笔记）。智能体会自动启动它，无需手动运行。
 help-usage = 显示令牌用量和预估费用。
 help-budget = 管理预算。
 help-budget-set = 为房间或某位成员设置预算。

@@ -6,7 +6,6 @@ here should be described as done anywhere else.
 ## Not started (later milestones)
 
 Crates that currently contain only a placeholder `lib.rs`:
-`polyph-mcp`,
 `polyph-git`, `polyph-merge`, `polyph-term`, `polyph-plugins`. Directories
 `apps/`, `packages/`, `integrations/`, `deploy/` and `cloud/` (except its
 LICENSE) are not built. The TUI does not exist yet: `polyph` with no
@@ -15,7 +14,9 @@ arguments prints help.
 CLI commands not implemented yet (they arrive with their milestones):
 `login`, `logout`, `cloud *` (and `agent start --on cloud`), `plan`,
 `task *`, `memory *`, `term *`, `sync`, `spectate-link *`, `template *`,
-`skills *`, `plugin *`, `mcp`. `polyph host --mode hosted` is
+`skills *`, `plugin *`. (`polyph mcp` exists: agents start it.) People can
+list memory notes and message agents through the daemon API (`memory.list`,
+`inbox.send`) but not yet from the CLI. `polyph host --mode hosted` is
 accepted but hosted mode is M4.
 
 ## Partial work in finished milestones
@@ -74,6 +75,25 @@ accepted but hosted mode is M4.
   Code, Codex and Ollama but have not been run: none is installed here.
 - **Security contact address** in `docs/security.md` is not set.
 - **Relay self-hosting docs** for EC2, LAN and cloud agents come with M11.
+
+## Milestone 4 so far
+
+- **MCP tools not built yet:** whiteboard tools (M5), board and task tools,
+  handoff. The tools that exist are in `crates/polyph-mcp/src/tools.rs`.
+- **Local agent ignores MCP servers.** `polyph-localagent` does not read
+  `mcpServers` from `session/new`, so it has no Polyph tools; it still gets
+  claims through its ACP writes.
+- **Container mode and MCP.** The MCP server command is the host's `polyph`
+  binary, which is not inside a container image; container-mode agents get
+  no Polyph tools until the binary is mounted into the container.
+- **Inboxes are in memory.** Unread messages live in the daemon of the
+  device running the agent and are lost if that daemon restarts. The
+  messages themselves still pass through the relay buffer.
+- **Reply to a person.** `reply` only answers agents; a person's message is
+  answered in the agent's normal output.
+- **Claims layers 2 and 3** (symbol claims from code structure, file watcher),
+  worktrees, merge queue, hosted mode, planner, handoff, intent-aware merge,
+  reviewer and secrets redaction are not started.
 
 ## Process gaps
 

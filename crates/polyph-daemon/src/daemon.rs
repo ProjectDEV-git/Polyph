@@ -98,6 +98,8 @@ pub struct DaemonOptions {
     pub sandbox_helper: Vec<String>,
     /// Force a sandbox mechanism instead of picking the best available.
     pub sandbox: Option<polyph_sandbox::Mechanism>,
+    /// Command line of the MCP server given to agents (`polyph mcp` by default).
+    pub mcp_command: Vec<String>,
     /// Agents defined by the embedding program (tests add the fake agent).
     pub extra_agents: std::collections::BTreeMap<String, polyph_agents::registry::AgentConfig>,
 }
@@ -116,6 +118,9 @@ impl DaemonOptions {
                 .map(|p| vec![p.to_string_lossy().into_owned(), "__sandbox".into()])
                 .unwrap_or_default(),
             sandbox: None,
+            mcp_command: std::env::current_exe()
+                .map(|p| vec![p.to_string_lossy().into_owned(), "mcp".into()])
+                .unwrap_or_default(),
             extra_agents: Default::default(),
         }
     }
@@ -863,6 +868,44 @@ impl Daemon {
                 let rt = self.find(&p.room).await?;
                 let c = rt.ctx.lock().await;
                 ok(c.core.claims.all())
+            }
+            "memory.list" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    #[serde(default)]
+                    path: String,
+                }
+                let p: P = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let mut c = rt.ctx.lock().await;
+                let all = polyph_core::memory::notes(c.core.doc(&DocName::Memory));
+                ok(polyph_core::memory::notes_for(&all, &p.path))
+            }
+            "inbox.send" => {
+                // A person writes to an agent. The agent reads it at its next turn.
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    agent: String,
+                    text: String,
+                }
+                let p: P = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let mut c = rt.ctx.lock().await;
+                let want = p.agent.to_lowercase();
+                let to = c
+                    .transcripts
+                    .values()
+                    .filter_map(|log| log.front().map(|e| e.agent.clone()))
+                    .find(|a| a.id.to_hex().starts_with(&want) || a.label.to_lowercase() == want)
+                    .ok_or_else(|| ApiError::NotFound("no such agent".into()))?;
+                let (m, fx) = c
+                    .core
+                    .send_inbox(to, None, None, None, &p.text, 0, now)
+                    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+                apply(&rt, &mut c, &self.shared, fx).await;
+                ok(json!({ "id": m.id.to_hex() }))
             }
             "approvals.list" => {
                 let p: RoomParam = param(&params)?;

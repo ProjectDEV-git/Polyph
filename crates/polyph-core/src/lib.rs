@@ -4,7 +4,8 @@
 pub mod claims;
 pub mod docs;
 pub mod election;
+pub mod memory;
 pub mod room;
 pub mod voice;
 
-pub use room::{Effect, RoomCore, RoomError, RoomEvent, SavedRoom};
+pub use room::{Effect, InboxMessage, RoomCore, RoomError, RoomEvent, SavedRoom};
