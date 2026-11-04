@@ -7,3 +7,9 @@ packages/proto-wasm/pkg/
 .claude/
 locales/
 *.md
+packages/ui/test/voice-golden.json
+packages/ui/src/i18n/locales.gen.ts
+apps/web/out/
+apps/*/public/excalidraw/
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/

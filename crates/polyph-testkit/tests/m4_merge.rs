@@ -18,6 +18,12 @@ fn bins() -> AgentBins {
 }
 
 /// A fake agent kind whose script is `script`.
+/// Agents' scripts live outside `/tmp`: bubblewrap gives agents a private,
+/// empty `/tmp`, so a script there would be invisible to them.
+fn scripts_dir() -> tempfile::TempDir {
+    tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap()
+}
+
 fn scripted(dir: &Path, name: &str, script: Value) -> AgentConfig {
     let p = dir.join(format!("{name}.json"));
     std::fs::write(&p, script.to_string()).unwrap();
@@ -100,7 +106,7 @@ async fn wait_state(h: &Harness, i: usize, rid: &str, branch: &str, state: &str)
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_tasks_merge_keeping_both_intents() {
-    let scripts = tempfile::tempdir().unwrap();
+    let scripts = scripts_dir();
     let mut h = Harness::new().await.unwrap();
     h.agents = Some(bins());
     h.extra_agents.insert(
@@ -244,7 +250,7 @@ async fn two_tasks_merge_keeping_both_intents() {
 
 /// Ann and Bo in a room, a repo on main with `toml`, and the given agent kinds.
 async fn setup(kinds: Vec<(&str, Value)>, toml: &str) -> (Harness, String, tempfile::TempDir, tempfile::TempDir) {
-    let scripts = tempfile::tempdir().unwrap();
+    let scripts = scripts_dir();
     let mut h = Harness::new().await.unwrap();
     h.agents = Some(bins());
     for (k, s) in kinds {

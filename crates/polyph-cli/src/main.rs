@@ -38,6 +38,11 @@ enum Cmd {
         cmd: DaemonCmd,
     },
     Whoami,
+    Web {
+        /// Print the link instead of opening the browser.
+        #[arg(long)]
+        no_open: bool,
+    },
     Room {
         #[command(subcommand)]
         cmd: RoomCmd,
@@ -478,6 +483,27 @@ fn main() {
     std::process::exit(code);
 }
 
+/// Opens a URL in the person's browser.
+fn open_browser(url: &str) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    let mut c = std::process::Command::new("open");
+    #[cfg(target_os = "windows")]
+    let mut c = {
+        let mut c = std::process::Command::new("rundll32");
+        c.arg("url.dll,FileProtocolHandler");
+        c
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let mut c = std::process::Command::new("xdg-open");
+    let status = c
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()?;
+    if status.success() { Ok(()) } else { Err(std::io::Error::other("no browser")) }
+}
+
 /// Local time offset, read in `main` before any thread starts (the only time
 /// it can be read soundly on Unix).
 static UTC_OFFSET: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
@@ -616,6 +642,18 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                     name = r["name"].as_str().unwrap_or_default(),
                     role = ctx.role(r["role"].as_str().unwrap_or("member"))
                 ));
+            }
+        }
+        Cmd::Web { no_open } => {
+            let v = call(&mut api, "web.link", json!({})).await?;
+            let port = client::daemon_port(&ctx.paths).unwrap_or(0);
+            let url = format!("http://127.0.0.1:{port}/app/#code={}", v["code"].as_str().unwrap_or_default());
+            if ctx.json {
+                ctx.print_json(&json!({ "url": url }));
+            } else if no_open || open_browser(&url).is_err() {
+                ctx.out(tr!(l, "web-link", url = url.as_str()));
+            } else {
+                ctx.out(l.t("web-opened"));
             }
         }
         Cmd::Discover => {

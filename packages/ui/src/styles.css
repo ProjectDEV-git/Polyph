@@ -1,0 +1,175 @@
+/* Polyph app styles: DESIGN.md tokens as CSS variables, mapped into Tailwind v4.
+   Fonts are bundled from npm (OFL), never loaded from a CDN. */
+@import "tailwindcss";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-sans-thai/400.css";
+@import "@fontsource/ibm-plex-sans-thai/500.css";
+@import "@fontsource/ibm-plex-sans-jp/400.css";
+@import "@fontsource/ibm-plex-sans-jp/500.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource-variable/newsreader/opsz.css";
+@import "@xterm/xterm/css/xterm.css";
+/* Excalidraw does not export its CSS under the "style" condition; import the file. */
+@import "../node_modules/@excalidraw/excalidraw/dist/prod/index.css";
+
+@source ".";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: oklch(0.165 0.008 265);
+  --surface-1: oklch(0.195 0.009 265);
+  --surface-2: oklch(0.225 0.01 265);
+  --surface-3: oklch(0.265 0.011 265);
+  --line: oklch(0.3 0.01 265);
+  --text: oklch(0.93 0.006 265);
+  --text-2: oklch(0.74 0.01 265);
+  --text-3: oklch(0.6 0.01 265);
+  --accent: oklch(0.8 0.09 205);
+  --accent-ink: oklch(0.2 0.02 205);
+  --running: oklch(0.78 0.14 150);
+  --waiting: oklch(0.83 0.13 80);
+  --blocked: oklch(0.75 0.14 50);
+  --error: oklch(0.7 0.17 25);
+  --float-shadow: 0 8px 24px oklch(0 0 0 / 0.35), 0 1px 0 oklch(1 0 0 / 0.04) inset;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: oklch(0.985 0.003 265);
+  --surface-1: oklch(0.965 0.004 265);
+  --surface-2: oklch(1 0 0);
+  --surface-3: oklch(0.94 0.006 265);
+  --line: oklch(0.89 0.006 265);
+  --text: oklch(0.22 0.012 265);
+  --text-2: oklch(0.45 0.012 265);
+  --text-3: oklch(0.56 0.01 265);
+  --accent: oklch(0.52 0.11 215);
+  --accent-ink: oklch(0.99 0 0);
+  --running: oklch(0.52 0.13 150);
+  --waiting: oklch(0.58 0.12 75);
+  --blocked: oklch(0.56 0.15 45);
+  --error: oklch(0.53 0.19 25);
+  --float-shadow: 0 8px 24px oklch(0.2 0.02 265 / 0.12), 0 0 0 1px oklch(0.89 0.006 265);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-s1: var(--surface-1);
+  --color-s2: var(--surface-2);
+  --color-s3: var(--surface-3);
+  --color-line: var(--line);
+  --color-ink: var(--text);
+  --color-ink-2: var(--text-2);
+  --color-ink-3: var(--text-3);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-running: var(--running);
+  --color-waiting: var(--waiting);
+  --color-blocked: var(--blocked);
+  --color-error: var(--error);
+  --font-sans:
+    "IBM Plex Sans", "IBM Plex Sans Thai", "IBM Plex Sans JP", "Noto Sans SC", "PingFang SC",
+    "Microsoft YaHei", system-ui, sans-serif;
+  --font-serif:
+    "Newsreader Variable", "Newsreader", "Noto Serif Thai", "Noto Serif JP", "Noto Serif SC",
+    Georgia, serif;
+  --font-mono:
+    "IBM Plex Mono", "Noto Sans Mono", ui-monospace, "SF Mono", "Cascadia Mono", monospace;
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 13px;
+  --text-sm--line-height: 20px;
+  --text-base: 15px;
+  --text-base--line-height: 22px;
+  --text-lg: 18px;
+  --text-lg--line-height: 24px;
+  --text-xl: 24px;
+  --text-xl--line-height: 30px;
+  --text-2xl: 28px;
+  --text-2xl--line-height: 34px;
+  --radius-control: 6px;
+  --radius-card: 8px;
+  --radius-dialog: 12px;
+  --shadow-float: var(--float-shadow);
+  --ease-out-app: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in-app: cubic-bezier(0.4, 0, 1, 1);
+}
+
+@layer base {
+  html,
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 20px;
+    -webkit-font-smoothing: antialiased;
+  }
+  :lang(th) {
+    line-height: 1.7;
+  }
+  :lang(th) h1,
+  :lang(th) h2 {
+    line-height: 1.35;
+  }
+  :lang(ja) em,
+  :lang(zh) em,
+  :lang(zh-Hans) em {
+    font-style: normal;
+    font-weight: 600;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  ::selection {
+    background: color-mix(in oklch, var(--accent) 35%, transparent);
+  }
+  button {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: default;
+  }
+}
+
+@layer components {
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+  /* The 3px voice gutter on transcript and chat lines. */
+  .voice-gutter {
+    border-inline-start: 3px solid var(--voice, var(--line));
+    padding-inline-start: 9px;
+  }
+  .scroll-quiet {
+    scrollbar-width: thin;
+    scrollbar-color: var(--surface-3) transparent;
+  }
+}
+
+@keyframes polyph-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.status-running-dot {
+  animation: polyph-pulse 1.2s var(--ease-out-app) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-running-dot {
+    animation: none;
+  }
+}

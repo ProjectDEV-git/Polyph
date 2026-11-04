@@ -6,6 +6,7 @@ help-daemon-stop = デーモンを停止します。
 help-daemon-status = デーモンが動いているか表示します。
 help-daemon-logs = デーモンのログを表示します。
 help-whoami = このデバイス、あなたの名前、使用中のリレーを表示します。
+help-web = このコンピューターのデーモンにつながるブラウザクライアントを開きます。
 help-room = ルームの作成・オープン・管理を行います。
 help-room-create = 永続的なルームを作成します。
 help-room-open = ルームを開いて接続します。
@@ -176,3 +177,6 @@ help-mirror = ルームの共有作業コピーをディレクトリにミラー
 hosted-sharing = { $dir } をルームの作業コピーとして共有しています（{ $files } ファイル）。メンバーは `polyph mirror <dir>` でミラーできます。
 mirror-opened = ルームの作業コピーを { $dir } にミラーしています。
 host-bad-mode = 不明なモード { $mode } です。distributed か hosted を指定してください。
+web-link = このリンクをブラウザで開いてください（1 回限り、2 分間有効）:
+    { $url }
+web-opened = ブラウザクライアントを開きました。リンクは 1 回だけ使えます。

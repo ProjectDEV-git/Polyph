@@ -86,6 +86,16 @@ commit and an updated `HANDOFF.md`. Stubs go in `STUBS.md`.
 - [x] four locales (`locales/*/tui.ftl`), Thai and CJK widths, narrow terminals
 - [x] tests: `polyph-testkit/tests/m6.rs` (every view x locale x color depth x width; key flows; live updates)
 ## M7 — desktop app, browser client, status pill
+
+- [x] `docs/app.md`: the app brief (question, voices as the face, shell, views, states, pill)
+- [x] `packages/ui`: DESIGN tokens for Tailwind v4, bundled fonts, `voice.ts` checked against Rust, Fluent strings from `locales/`, daemon client, store refreshed by parts
+- [x] views: chat with threads, board (drag and keyboard moves, plans), agents (live transcript, prompt, inbox, start, stop), activity with replay, merge queue, terminals (xterm.js, keyboard requests), whiteboards (Excalidraw, synced per element), settings, host and join, people waiting to join, command palette
+- [x] approvals stack stating exactly what will happen; approve once / for the task / deny with a note; one-line finding under the room name
+- [x] browser client (`apps/web`, Next.js static export) served by the daemon; `polyph web` one-time links; Host and Origin checks; CSP
+- [x] desktop app (`apps/desktop`, Tauri 2): starts or finds the daemon, tray, always-on-top status pill window, native notifications, single instance
+- [x] status pill (desktop window and `/pill/` in the browser) from the status feed, first approval answerable inline
+- [x] four locales (`locales/*/app.ftl`), phone width, light and dark themes, reduced motion
+- [x] tests: Vitest (voices, i18n, store, client, approvals), `pnpm test:e2e` (browser client against a real daemon), daemon unit tests for links, hosts, origins and static files
 ## M8 — PWA, VS Code extension, Nublet provider
 ## M9 — cloud agents and extensibility
 ## M10 — website, accounts, billing

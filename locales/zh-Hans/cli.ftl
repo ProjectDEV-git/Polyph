@@ -6,6 +6,7 @@ help-daemon-stop = 停止守护进程。
 help-daemon-status = 查看守护进程是否在运行。
 help-daemon-logs = 显示守护进程日志。
 help-whoami = 显示本设备、你的名字和所用的中继。
+help-web = 打开连接本机守护进程的浏览器客户端。
 help-room = 创建、打开和管理房间。
 help-room-create = 创建一个持久房间。
 help-room-open = 打开房间并连接。
@@ -176,3 +177,6 @@ help-mirror = 将房间的共享工作副本镜像到一个目录（托管模式
 hosted-sharing = 正在将 { $dir } 共享为房间的工作副本（{ $files } 个文件）。成员可用 `polyph mirror <dir>` 进行镜像。
 mirror-opened = 正在将房间的工作副本镜像到 { $dir }。
 host-bad-mode = 未知模式 { $mode }：请使用 distributed 或 hosted。
+web-link = 在浏览器中打开此链接（仅可使用一次，两分钟内有效）：
+    { $url }
+web-opened = 已打开浏览器客户端。链接只能使用一次。

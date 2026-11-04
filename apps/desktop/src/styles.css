@@ -1,0 +1,7 @@
+@import "@polyph/ui/styles.css";
+
+/* The pill window is transparent; only the pill itself is drawn. */
+body.pill,
+body.pill #root {
+  background: transparent;
+}

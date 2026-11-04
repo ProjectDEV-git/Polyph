@@ -149,6 +149,29 @@ accepted but hosted mode is M4.
   done by hand against PRODUCT.md and DESIGN.md (the Impeccable skill is not
   installed in this environment).
 
+## Milestone 7 gaps
+
+- **Browser-only members** (joining a room from a browser with no daemon,
+  using the wasm engine over the relay) come with the phone PWA in M8. The
+  browser client today is a window onto the person's own daemon.
+- **Desktop packaging** is configured (`tauri.conf.json`, icons) but no
+  installers are built or signed yet; the app expects `polyph` next to it or
+  on PATH. Release work is M11.
+- **macOS and Windows** builds of the desktop app have not been run; it was
+  built and run on Linux (WebKitGTK under Xvfb).
+- **Shared terminals keep the owner's size**: the app shows them at their
+  size with scrolling and does not resize them to the window.
+- **Integrations are read-only in the app**: connecting GitHub or Linear and
+  managing webhooks stay in the CLI.
+- **Excalidraw's built-in font fallback** to a CDN is blocked by the page
+  policy (fonts are bundled), which logs blocked requests in the console.
+- **Simplified Chinese UI font** relies on platform fonts; the Noto Sans SC
+  subset named in DESIGN.md is not bundled yet.
+- **Agent-made whiteboard shapes** are not yet outlined in their voice.
+- **The Impeccable passes** were done by hand with the design-taste
+  inspector (`inspect.mjs --app`); its remaining warnings are the third
+  typeface (DESIGN.md's serif for room names) and honest empty space.
+
 ## Process gaps
 
 - **Apple design skill not installed.** It installs through a Claude Code

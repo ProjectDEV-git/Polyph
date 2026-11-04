@@ -254,6 +254,49 @@ could not be followed exactly. Newest at the bottom of each section.
 - **Approvals in the activity feed credit the person who answered**, naming
   the agent in the text.
 
+## Desktop app, browser client and status pill
+
+- **One React app for three surfaces.** `packages/ui` holds the whole app
+  (`PolyphApp`), with `mode="pill"` for the status pill; the Tauri shell and
+  the Next.js client only provide the connection and a `Platform` (notify,
+  open links, toggle the pill). Brief in `docs/app.md`.
+- **The browser client talks to the person's own daemon**, which serves the
+  static export of `apps/web` (`POLYPH_WEB_DIR`, else next to the binary).
+  A browser-only room member (the wasm engine over the relay) waits for M8,
+  with the phone PWA that needs it.
+- **Browsers sign in with one-time links**: `polyph web` asks for a code
+  (`web.link`, API token only), the page trades it at `/web/session` for an
+  in-memory session token and drops it from the address bar, so the API
+  token never appears in a URL or history. Codes last two minutes and work
+  once; sessions end when the daemon stops.
+- **Browser-facing routes check `Host` (loopback names only) and `Origin`**
+  (the daemon's own pages and the Tauri webview), against DNS rebinding and
+  other sites' pages. Pages carry a strict CSP; Excalidraw's CDN fallback for
+  its fonts is blocked by it, and its fonts are copied into each app.
+- **State is fetched by parts and refreshed on events**, exactly like the TUI
+  (`partsFor` mirrors `parts_for`), with transcript lines and terminal bytes
+  applied straight from events. Replies that are not the expected shape
+  become empty lists rather than errors deep in a view.
+- **`voice.ts` is checked against Rust**: `polyph-core` writes
+  `packages/ui/test/voice-golden.json` (with `POLYPH_UPDATE_GOLDEN=1`) and
+  both test suites compare against it.
+- **Locales are bundled at build time** into `locales.gen.ts` (generated,
+  not committed) so Vite, Next.js and Vitest read the same Fluent files
+  without loaders.
+- **Fonts come from npm (`@fontsource`, OFL)** and are bundled into each app;
+  nothing loads from a font CDN.
+- **Dark is the default theme**; "match the system" is a choice in Settings.
+- **The "Needs you" column appears only while something waits**; otherwise
+  the title row's one-line finding says nothing needs you.
+- **The desktop shell finds or starts the daemon itself** (the same
+  `daemon.json` and `api.token` as the CLI), keeps Polyph in the tray when
+  the window closes, and leaves the daemon running on Quit.
+- **Test agents' scripts live outside `/tmp`** (`CARGO_TARGET_TMPDIR`):
+  under bubblewrap agents get a private, empty `/tmp`, so scripts kept there
+  were invisible. The merge tests only passed on machines without bubblewrap.
+- **The keychain is read from a plain thread**: secret-service backends block
+  on their own runtime, which panicked inside the daemon's async runtime.
+
 ## Process
 
 - **Design skills.** Impeccable, Emil Kowalski's design-engineering skill,

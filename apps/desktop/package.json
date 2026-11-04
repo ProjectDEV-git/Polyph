@@ -1,0 +1,30 @@
+{
+  "name": "@polyph/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node ../../scripts/bundle-locales.mjs && node ../../scripts/copy-excalidraw-assets.mjs public && vite",
+    "build": "node ../../scripts/bundle-locales.mjs && node ../../scripts/copy-excalidraw-assets.mjs public && vite build",
+    "typecheck": "node ../../scripts/bundle-locales.mjs && tsc --noEmit",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@polyph/ui": "workspace:*",
+    "@tauri-apps/api": "2.12.4",
+    "@tauri-apps/plugin-notification": "2.8.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.4",
+    "@tauri-apps/cli": "2.12.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.2.1",
+    "tailwindcss": "4.3.4",
+    "typescript": "6.0.3",
+    "vite": "8.3.5"
+  }
+}

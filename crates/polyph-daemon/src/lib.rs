@@ -28,6 +28,7 @@ pub mod status;
 pub mod tasks;
 pub mod terms;
 pub mod watch;
+pub mod web;
 
 pub use clock::Clock;
 pub use daemon::{Daemon, DaemonOptions};

@@ -7,6 +7,7 @@ help-daemon-stop = Stop the daemon.
 help-daemon-status = Show whether the daemon is running.
 help-daemon-logs = Print the daemon log.
 help-whoami = Show this device, your name and your relay.
+help-web = Open the browser client for this computer’s daemon.
 help-room = Create, open and manage rooms.
 help-room-create = Create a persistent room.
 help-room-open = Open a room and connect to it.
@@ -200,3 +201,6 @@ help-mirror = Mirror the room's shared working copy into a directory (hosted mod
 hosted-sharing = Sharing { $dir } as the room's working copy ({ $files } files). Members mirror it with `polyph mirror <dir>`.
 mirror-opened = Mirroring the room's working copy into { $dir }.
 host-bad-mode = Unknown mode { $mode }: use distributed or hosted.
+web-link = Open this link in your browser (it works once, for two minutes):
+    { $url }
+web-opened = Opened the browser client. The link works once.
