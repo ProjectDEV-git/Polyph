@@ -42,6 +42,8 @@ jobs:
         run: cargo test --workspace
       - name: Proto for wasm32
         run: cargo build -p polyph-proto --target wasm32-unknown-unknown --no-default-features --features wasm,crdt
+      - name: Phone engine for wasm32
+        run: cargo clippy -p polyph-phone --target wasm32-unknown-unknown --features wasm -- -D warnings
 
   node:
     name: TypeScript and i18n

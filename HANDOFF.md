@@ -37,6 +37,7 @@ brief is the source of all requirements.
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build -p polyph-proto --target wasm32-unknown-unknown --no-default-features --features wasm,crdt
+cargo clippy -p polyph-phone --target wasm32-unknown-unknown --features wasm -- -D warnings
 pnpm install && pnpm check:i18n
 pnpm --filter @polyph/ui test && pnpm -r typecheck
 pnpm --filter @polyph/web build && cargo build -p polyph-cli && pnpm test:e2e

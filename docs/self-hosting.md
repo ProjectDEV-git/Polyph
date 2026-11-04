@@ -59,6 +59,12 @@ Point clients at your relay:
 polyph config set relay wss://relay.example.com/ws
 ```
 
-## EC2 walkthrough, LAN mode and cloud agents
+## Agent hosts
+
+To run agents on your own server, so work continues with your laptop
+closed, see `docs/agent-hosts.md`. An agent host needs no relay of its own;
+it connects to the room's relay like any device.
+
+## EC2 walkthrough and LAN mode
 
 Written in milestone 11 together with `deploy/relay/`. See `STUBS.md`.

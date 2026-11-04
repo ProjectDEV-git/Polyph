@@ -111,6 +111,34 @@ network goes through the daemon's allowlisting proxy; anything else becomes an
 approval request. `polyph sandbox test` reports which protections work on a
 given machine. See `docs/sandbox.md` (M3).
 
+### A lost phone
+
+The phone app keeps its device key and room state in the browser's IndexedDB,
+sealed with an AES-GCM key the browser generated as non-extractable. Copies
+of the stored bytes (a backup, a synced profile) cannot be opened elsewhere;
+someone holding the unlocked phone can use the app. Remove the phone's
+membership from another device (`polyph room remove`), which rotates the
+room key. The pairing link carries a one-time code, the person's member id
+and the relay in the URL fragment, which browsers never send to the server
+hosting the page; the page clears it from the address bar at once.
+
+### An agent host
+
+An agent host holds its member's agents and a checkout of the code, like
+that member's laptop. It accepts work only from devices of its own member
+(checked against their certificates), and its certificate capability is
+visible to the room. Treat it as one of your own devices: keep its OS
+patched and its disk encrypted, and remove its membership if it is lost.
+
+### Plugins
+
+Plugins are code a person chose to install on their own device; a
+repository cannot install one. Their tool servers run inside each agent's
+sandbox and their hooks in a fresh sandbox of their own, reaching only the
+network hosts the manifest declares. Within those limits a plugin can do
+what an agent can (read the worktree, call Polyph tools through the agent),
+so install only plugins you trust. They are not signed yet (`STUBS.md`).
+
 ### Secrets in shared content
 
 Before diffs, file mirrors, tool output, terminal streams or chat leave a

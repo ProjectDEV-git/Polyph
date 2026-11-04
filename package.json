@@ -2,7 +2,9 @@
   "name": "polyph-monorepo",
   "private": true,
   "packageManager": "pnpm@10.28.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "check:i18n": "node scripts/check-i18n.mjs",
     "format": "prettier --write .",
