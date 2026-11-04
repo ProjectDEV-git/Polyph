@@ -64,6 +64,9 @@ pub struct Harness {
     pub agents: Option<AgentBins>,
     /// More agent definitions for every node (for example the local agent).
     pub extra_agents: std::collections::BTreeMap<String, polyph_agents::registry::AgentConfig>,
+    /// D-Bus for the status service: "off" (default here, so tests never
+    /// touch the developer's session bus) or a private bus address.
+    pub dbus: String,
 }
 
 impl Harness {
@@ -81,6 +84,7 @@ impl Harness {
             nodes: vec![],
             agents: None,
             extra_agents: Default::default(),
+            dbus: "off".into(),
         })
     }
 
@@ -98,6 +102,7 @@ impl Harness {
         opts.lan_bind = std::net::IpAddr::from([127, 0, 0, 1]);
         opts.mdns = false;
         opts.file_keystore = true;
+        opts.dbus = self.dbus.clone();
         if let Some(b) = &self.agents {
             opts.sandbox_helper = vec![b.sandbox_helper.clone()];
             opts.mcp_command = vec![b.mcp.clone()];

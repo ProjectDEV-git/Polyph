@@ -100,6 +100,9 @@ pub struct DaemonOptions {
     pub sandbox: Option<polyph_sandbox::Mechanism>,
     /// Command line of the MCP server given to agents (`polyph mcp` by default).
     pub mcp_command: Vec<String>,
+    /// D-Bus for the status service (Linux): "off", "session" (default, when
+    /// a session bus exists) or a bus address.
+    pub dbus: String,
     /// Agents defined by the embedding program (tests add the fake agent).
     pub extra_agents: std::collections::BTreeMap<String, polyph_agents::registry::AgentConfig>,
 }
@@ -118,6 +121,7 @@ impl DaemonOptions {
                 .map(|p| vec![p.to_string_lossy().into_owned(), "__sandbox".into()])
                 .unwrap_or_default(),
             sandbox: None,
+            dbus: "session".into(),
             mcp_command: std::env::current_exe()
                 .map(|p| vec![p.to_string_lossy().into_owned(), "mcp".into()])
                 .unwrap_or_default(),
@@ -293,6 +297,20 @@ impl Daemon {
         let _ = shared.daemon.set(Arc::downgrade(&d));
         tokio::spawn(crate::notify::run(Arc::downgrade(&d), d.subscribe()));
         tokio::spawn(crate::github::run(Arc::downgrade(&d)));
+        #[cfg(target_os = "linux")]
+        {
+            let addr = match d.shared.opts.dbus.as_str() {
+                "off" => None,
+                "session" => std::env::var("DBUS_SESSION_BUS_ADDRESS").ok().map(|_| None),
+                other => Some(Some(other.to_string())),
+            };
+            if let Some(addr) = addr
+                && let Err(e) = crate::dbus::serve(&d, addr).await
+            {
+                // Optional: a desktop without a session bus just has no D-Bus status.
+                tracing::info!(error = %e, "D-Bus status service not started");
+            }
+        }
         {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<crate::coord::FinishJob>();
             let _ = shared.finisher.set(tx);
@@ -1666,7 +1684,8 @@ impl Daemon {
                 created_at: a.created_at,
             })
             .collect();
-        StatusSnapshot {
+        drop(c);
+        let mut s = StatusSnapshot {
             room: Some(info.id),
             room_name: Some(info.name),
             connected: info.connected,
@@ -1674,7 +1693,9 @@ impl Daemon {
             agents: vec![],
             approvals,
             budgets: vec![],
-        }
+        };
+        crate::status::fill(self, &rt, &mut s).await;
+        s
     }
 
     /// Joins a room with a code (the joiner side of docs/protocol.md 7.3).

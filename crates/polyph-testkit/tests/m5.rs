@@ -386,3 +386,77 @@ async fn notifications_and_webhooks() {
     call(&h, a, "webhook.remove", json!({ "id": w["id"] })).await;
     assert_eq!(call(&h, a, "webhook.list", json!({})).await.as_array().unwrap().len(), 1);
 }
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn status_feed_on_dbus() {
+    use futures_util::StreamExt;
+    // A private session bus for this test.
+    let mut bus = tokio::process::Command::new("dbus-daemon")
+        .args(["--session", "--nofork", "--print-address=1"])
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("dbus-daemon");
+    let mut out = tokio::io::BufReader::new(bus.stdout.take().unwrap());
+    let mut addr = String::new();
+    tokio::io::AsyncBufReadExt::read_line(&mut out, &mut addr).await.unwrap();
+    let addr = addr.trim().to_string();
+
+    let mut h = Harness::new().await.unwrap();
+    h.agents = Some(bins());
+    h.dbus = addr.clone();
+    let a = h.add("Ann").await.unwrap();
+    let room = call(&h, a, "room.create", json!({ "name": "pill" })).await;
+    let rid = room["id"].as_str().unwrap().to_string();
+
+    let conn = zbus::connection::Builder::address(addr.as_str()).unwrap().build().await.unwrap();
+    let proxy =
+        zbus::Proxy::new(&conn, "org.polyph.Status1", "/org/polyph/Status", "org.polyph.Status1").await.unwrap();
+    let mut events = proxy.receive_signal("Event").await.unwrap();
+    let snap: String = proxy.call("Snapshot", &()).await.unwrap();
+    let snap: Value = serde_json::from_str(&snap).unwrap();
+    assert_eq!(snap["room_name"], "pill");
+    let pending: u32 = proxy.get_property("ApprovalsPending").await.unwrap();
+    assert_eq!(pending, 0);
+    // busctl sees the same service.
+    let o = std::process::Command::new("busctl")
+        .args([
+            &format!("--address={addr}"),
+            "get-property",
+            "org.polyph.Status1",
+            "/org/polyph/Status",
+            "org.polyph.Status1",
+            "RoomName",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "s \"pill\"");
+
+    // An agent starts, with its owner's voice color; a card moves.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("polyph.toml"), "").unwrap();
+    call(&h, a, "agent.start", json!({ "room": rid, "kind": "fake", "cwd": dir.path(), "preset": "default" })).await;
+    let c = call(&h, a, "board.add", json!({ "room": rid, "title": "Ship it", "column": "ready" })).await;
+    call(&h, a, "board.move", json!({ "room": rid, "card": c["id"], "column": "in_progress" })).await;
+    let mut seen: Vec<Value> = vec![];
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !(seen.iter().any(|e| e["type"] == "agent_started") && seen.iter().any(|e| e["type"] == "task_moved")) {
+        let m = match tokio::time::timeout_at(deadline, events.next()).await {
+            Ok(Some(m)) => m,
+            _ => panic!("status events so far: {seen:?}"),
+        };
+        let line: String = m.body().deserialize().unwrap();
+        seen.push(serde_json::from_str(&line).unwrap());
+    }
+    let started = seen.iter().find(|e| e["type"] == "agent_started").unwrap();
+    assert_eq!(started["agent"]["label"], "Ann/fake");
+    assert!(started["agent"]["color"].as_str().unwrap().starts_with("oklch("), "{started}");
+    assert_eq!(started["v"], 1);
+    let moved = seen.iter().find(|e| e["type"] == "task_moved").unwrap();
+    assert_eq!((moved["title"].as_str(), moved["column"].as_str()), (Some("Ship it"), Some("in_progress")));
+    // Content never travels on the bus: only states, names, counts, colors.
+    assert!(!seen.iter().any(|e| e.to_string().contains("description")));
+    drop(h);
+    let _ = bus.kill().await;
+}

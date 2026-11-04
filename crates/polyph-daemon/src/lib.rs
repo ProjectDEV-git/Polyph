@@ -9,6 +9,8 @@ pub mod clock;
 pub mod config;
 pub mod coord;
 pub mod daemon;
+#[cfg(target_os = "linux")]
+pub mod dbus;
 pub mod events;
 pub mod export;
 pub mod feed;

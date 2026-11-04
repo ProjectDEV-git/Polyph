@@ -2727,6 +2727,7 @@ dependencies = [
  "toml",
  "tracing",
  "yrs",
+ "zbus",
  "zeroize",
 ]
 
@@ -2886,6 +2887,7 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "futures-util",
  "hex",
  "hmac",
  "parking_lot",
@@ -2901,6 +2903,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "zbus",
 ]
 
 [[package]]

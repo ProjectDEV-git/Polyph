@@ -150,7 +150,7 @@ async fn session(st: ApiState, socket: WebSocket) {
                 };
                 let Ok(req) = serde_json::from_str::<Value>(&text) else { continue };
                 if req.get("method").and_then(|m| m.as_str()) == Some("status.watch") {
-                    let mut f = StatusFeed::default();
+                    let mut f = StatusFeed::new(st.daemon.shared.clock.now());
                     let snap = f.snapshot(st.daemon.status().await);
                     let _ = tx.send(json!({ "jsonrpc": "2.0", "id": req.get("id").cloned().unwrap_or(Value::Null), "result": {} }).to_string()).await;
                     let _ = tx.send(json!({ "jsonrpc": "2.0", "method": "status", "params": snap }).to_string()).await;
