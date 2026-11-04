@@ -174,6 +174,8 @@ export class Store {
   private boardSubs = new Set<DocListener>();
   /** Native notification hook (desktop) for `notification` events. */
   onNotification: (text: string, kind: string) => void = () => {};
+  /** A new approval for this person's agents (the phone notifies itself; daemons send `notification`). */
+  onApproval: (a: Approval) => void = () => {};
 
   constructor(readonly api: Transport) {}
 
@@ -230,6 +232,13 @@ export class Store {
     if (e.type === "notification" && e.notification?.text) {
       this.say(String(e.notification.text));
       this.onNotification(String(e.notification.text), String(e.notification.kind ?? ""));
+    }
+    if (
+      e.type === "approval_pending" &&
+      e.approval &&
+      e.approval.agent?.member === this.state.me?.member
+    ) {
+      this.onApproval(e.approval as Approval);
     }
     if (e.type === "doc_changed" && e.doc && typeof e.doc === "object" && "whiteboard" in e.doc) {
       for (const f of this.boardSubs) f(e.doc.whiteboard);

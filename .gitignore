@@ -24,3 +24,4 @@ packages/ui/src/i18n/locales.gen.ts
 apps/web/public/excalidraw/
 apps/desktop/public/excalidraw/
 apps/web/next-env.d.ts
+packages/ui/src/member/pkg/

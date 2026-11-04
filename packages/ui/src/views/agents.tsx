@@ -6,7 +6,7 @@ import type { AgentEvent } from "../api/types";
 import { StatusIcon, StatusMark, statusOf } from "../components/status";
 import { Button, Empty, Input, Label, Rows, Select, Textarea } from "../components/ui";
 import { VoiceName, agentSteps, hueOf, useVoice } from "../components/voice";
-import { useApp, useS } from "../ctx";
+import { useApp, usePlatform, useS } from "../ctx";
 import { useT } from "../i18n";
 import { Part } from "../store";
 import { clock } from "../time";
@@ -313,6 +313,7 @@ export function AgentsView() {
   const selected = useS((s) => s.agent);
   const load = useS((s) => s.load[Part.AGENTS]);
   const [starting, setStarting] = useState(false);
+  const phone = usePlatform().kind === "phone";
   const steps = agentSteps(agents);
   const list = [...agents].sort(
     (a, b) =>
@@ -330,12 +331,14 @@ export function AgentsView() {
         aria-label={l.t("app-view-agents")}
         className="flex w-72 shrink-0 flex-col border-e border-line"
       >
-        <div className="flex h-12 items-center px-3">
-          <Button variant="secondary" onClick={() => setStarting(true)}>
-            <Play size={14} strokeWidth={1.5} />
-            {l.t("app-start-agent")}
-          </Button>
-        </div>
+        {!phone && (
+          <div className="flex h-12 items-center px-3">
+            <Button variant="secondary" onClick={() => setStarting(true)}>
+              <Play size={14} strokeWidth={1.5} />
+              {l.t("app-start-agent")}
+            </Button>
+          </div>
+        )}
         <ul className="scroll-quiet min-h-0 flex-1 overflow-y-auto px-2 pb-2">
           {load === "loading" && agents.length === 0 && <Rows n={3} />}
           {list.map((a) => (

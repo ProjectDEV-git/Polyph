@@ -136,11 +136,12 @@ fn content_type(p: &Path) -> &'static str {
     }
 }
 
-/// The page policy: scripts and styles from this origin only, the WebSocket
-/// back to the daemon, no frames, no third-party requests.
-const CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; \
-img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; \
-worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'none'";
+/// The page policy: scripts and styles from this origin only (plus the phone
+/// app's WebAssembly engine), the WebSocket back to the daemon or out to a
+/// relay, no frames, no other third-party requests.
+const CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; \
+img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws://127.0.0.1:* ws://localhost:* wss:; \
+worker-src 'self' blob:; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'none'";
 
 /// Serves a file from the client's static export. Paths that leave the
 /// directory are refused; a directory serves its `index.html`.

@@ -204,4 +204,6 @@ export interface Knock {
   device: Hex;
   requested_role: string;
   at: number;
+  /** Another device of someone already in the room. */
+  link?: boolean;
 }

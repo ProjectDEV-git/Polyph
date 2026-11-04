@@ -107,3 +107,149 @@ async fn a_linked_device_answers_its_persons_approvals() {
     let r: Value = prompt.await.unwrap().map_err(|e| e.to_string()).unwrap();
     assert_eq!(r["stop_reason"], "end_turn");
 }
+
+/// Drives a browser member (`polyph-web`) over a real WebSocket, the way the
+/// phone PWA's JavaScript does.
+struct Phone {
+    m: polyph_web::Member,
+    ws: tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+}
+
+impl Phone {
+    async fn connect(url: &str, name: &str) -> Phone {
+        use futures_util::SinkExt;
+        let (ws, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+        let id = polyph_proto::identity::DeviceIdentity::generate().unwrap();
+        let mut p = Phone { m: polyph_web::Member::new(id, name, url), ws };
+        p.m.connected();
+        for f in p.m.take_frames() {
+            p.ws.send(tokio_tungstenite::tungstenite::Message::Binary(f.into())).await.unwrap();
+        }
+        p
+    }
+
+    /// Exchanges frames until `done` sees a matching event (or 15 s pass).
+    async fn until(&mut self, now: &dyn Fn() -> i64, done: impl Fn(&Value) -> bool) -> Vec<Value> {
+        use futures_util::{SinkExt, StreamExt};
+        let mut seen = vec![];
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            for f in self.m.take_frames() {
+                self.ws.send(tokio_tungstenite::tungstenite::Message::Binary(f.into())).await.unwrap();
+            }
+            let evs = self.m.take_events();
+            let hit = evs.iter().any(&done);
+            seen.extend(evs);
+            if hit {
+                return seen;
+            }
+            let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+            assert!(!left.is_zero(), "timed out; events: {seen:?}");
+            match tokio::time::timeout(left.min(std::time::Duration::from_millis(200)), self.ws.next()).await {
+                Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(b)))) => self.m.on_frame(&b, now()),
+                Ok(Some(Ok(_))) | Err(_) => self.m.tick(now()),
+                Ok(_) => panic!("relay closed"),
+            }
+        }
+    }
+
+    /// Exchanges frames for `ms` milliseconds.
+    async fn pump(&mut self, now: &dyn Fn() -> i64, ms: u64) {
+        use futures_util::{SinkExt, StreamExt};
+        let end = tokio::time::Instant::now() + std::time::Duration::from_millis(ms);
+        while tokio::time::Instant::now() < end {
+            for f in self.m.take_frames() {
+                self.ws.send(tokio_tungstenite::tungstenite::Message::Binary(f.into())).await.unwrap();
+            }
+            if let Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(b)))) =
+                tokio::time::timeout(std::time::Duration::from_millis(50), self.ws.next()).await
+            {
+                self.m.on_frame(&b, now());
+            }
+        }
+    }
+
+    fn call(&mut self, method: &str, params: Value, now: i64) -> Value {
+        self.m.call(method, &params, now).unwrap()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_phone_with_no_daemon_links_chats_and_approves() {
+    let (h, rid) = room().await;
+    let b = 1;
+    let bo = my_member(&h, b, &rid).await;
+    let clock = h.clock.clone();
+    let now = move || clock.now();
+    let url = format!("ws://{}/ws", h.relay.addr);
+
+    // Bo links his phone; Ann admits it.
+    let link = h.nodes[b].call("room.link", json!({ "room": rid })).await.unwrap();
+    let mut phone = Phone::connect(&url, "Bo").await;
+    phone.pump(&now, 500).await;
+    phone.m.start_join(link["code"].as_str().unwrap(), Some(&bo)).unwrap();
+    let ann = h.nodes[0].daemon.clone();
+    let rid2 = rid.clone();
+    let admit = tokio::spawn(async move {
+        let mut rx = ann.subscribe();
+        loop {
+            let e = rx.recv().await.unwrap();
+            if e.kind() == "knock" {
+                let kid = e.event["knock"]["id"].as_str().unwrap().to_string();
+                ann.call("knock.decide", json!({ "room": rid2, "knock": kid, "approve": true })).await.unwrap();
+                return;
+            }
+        }
+    });
+    phone.until(&now, |e| e["event"]["type"] == "joined" || e["event"]["type"] == "join_failed").await;
+    admit.await.unwrap();
+    assert!(phone.m.room.is_some(), "the phone joined");
+    phone.pump(&now, 300).await;
+    let who = phone.call("whoami", json!({}), now());
+    assert_eq!(who["member"], bo, "the phone is Bo");
+
+    // Chat both ways.
+    h.nodes[0].call("chat.send", json!({ "room": rid, "text": "hello phone" })).await.unwrap();
+    phone.until(&now, |e| e["event"]["type"] == "chat").await;
+    let chat = phone.call("chat.list", json!({}), now());
+    assert!(chat.as_array().unwrap().iter().any(|m| m["text"] == "hello phone"), "{chat}");
+    phone.call("chat.send", json!({ "text": "from the train" }), now());
+    phone.pump(&now, 500).await;
+    h.until("Ann sees the phone's message", || async {
+        let c = h.nodes[0].call("chat.list", json!({ "room": rid })).await.unwrap();
+        c.as_array().unwrap().iter().any(|m| m["text"] == "from the train" && m["name"] == "Bo")
+    })
+    .await
+    .unwrap();
+
+    // Bo's agent asks; the phone answers.
+    let dir = tempfile::tempdir().unwrap();
+    let script = json!({ "turns": [[ { "permission": { "kind": "execute", "title": "Run cargo publish", "command": "cargo publish" } } ]] });
+    std::fs::write(dir.path().join(".fake-script.json"), script.to_string()).unwrap();
+    std::fs::write(dir.path().join("polyph.toml"), "").unwrap();
+    let r = h.nodes[b]
+        .call("agent.start", json!({ "room": rid, "kind": "fake", "cwd": dir.path(), "preset": "default" }))
+        .await
+        .unwrap();
+    let id = r["id"].as_str().unwrap().to_string();
+    let bd = h.nodes[b].daemon.clone();
+    let prompt = tokio::spawn(async move { bd.call("agent.prompt", json!({ "agent": id, "text": "publish" })).await });
+    phone.until(&now, |e| e["event"]["type"] == "approval_pending").await;
+    let list = phone.call("approvals.list", json!({}), now());
+    let aid = list[0]["id"].as_str().unwrap().to_string();
+    assert_eq!(list[0]["kind"]["c"]["command"], "cargo publish");
+    phone.call("approve", json!({ "id": aid }), now());
+    phone.pump(&now, 500).await;
+    let r: Value = tokio::time::timeout(std::time::Duration::from_secs(20), prompt)
+        .await
+        .expect("the agent continued")
+        .unwrap()
+        .map_err(|e| e.to_string())
+        .unwrap();
+    assert_eq!(r["stop_reason"], "end_turn");
+
+    // The room survives a save and reload.
+    let saved = phone.m.save().unwrap();
+    let id2 = polyph_proto::identity::DeviceIdentity::generate().unwrap();
+    assert!(polyph_web::Member::load(id2, "Bo", &saved, now()).is_ok());
+}

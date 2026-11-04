@@ -169,7 +169,9 @@ function KnockCard({ k }: { k: Knock }) {
   };
   return (
     <article className="rounded-card bg-s2 p-3 shadow-float" data-testid="knock">
-      <p className="text-sm text-ink">{l.t("app-knock", { name: k.display_name })}</p>
+      <p className="text-sm text-ink">
+        {l.t(k.link ? "app-knock-link" : "app-knock", { name: k.display_name })}
+      </p>
       <p className="mt-1.5 text-xs text-ink-2">{ago(l, k.at)}</p>
       <div className="mt-3 flex gap-2">
         <Button variant="primary" size="sm" onClick={() => void decide(true)}>

@@ -26,7 +26,12 @@ pub struct UserConfig {
     pub theme: String,
     /// Local API port; 0 picks a free port.
     pub api_port: u16,
+    /// Where the phone app is served, for link QR codes (`room.link`).
+    pub phone_url: String,
 }
+
+/// The hosted phone app; self-hosters point `phone_url` at their own copy.
+pub const DEFAULT_PHONE_URL: &str = "https://polyph.dev/m/";
 
 impl Default for UserConfig {
     fn default() -> Self {
@@ -37,6 +42,7 @@ impl Default for UserConfig {
             lang: None,
             theme: "dark".into(),
             api_port: 47_850,
+            phone_url: DEFAULT_PHONE_URL.into(),
         }
     }
 }
@@ -73,7 +79,13 @@ impl UserConfig {
                 self.theme = value.to_string();
             }
             "api_port" => self.api_port = value.parse().map_err(|_| anyhow::anyhow!("api_port must be a number"))?,
-            other => anyhow::bail!("unknown setting {other}; known: name, relay, lang, theme, api_port"),
+            "phone_url" => {
+                if !(value.starts_with("https://") || value.starts_with("http://")) {
+                    anyhow::bail!("phone_url must be an http(s) URL");
+                }
+                self.phone_url = value.to_string();
+            }
+            other => anyhow::bail!("unknown setting {other}; known: name, relay, lang, theme, api_port, phone_url"),
         }
         Ok(())
     }
@@ -86,6 +98,7 @@ impl UserConfig {
             "lang" => self.lang.clone(),
             "theme" => Some(self.theme.clone()),
             "api_port" => Some(self.api_port.to_string()),
+            "phone_url" => Some(self.phone_url.clone()),
             _ => None,
         }
     }

@@ -58,6 +58,9 @@ hmac = "0.12"
 sha2 = "0.10"
 hex = { workspace = true }
 polyph-relay = { workspace = true }
+polyph-web = { workspace = true }
+tokio-tungstenite = { workspace = true, features = ["connect"] }
+futures-util = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 zbus = { version = "4", default-features = false, features = ["tokio"] }

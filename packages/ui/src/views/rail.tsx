@@ -17,7 +17,7 @@ import type { ReactNode } from "react";
 import { Mark } from "../components/mark";
 import { StatusMark } from "../components/status";
 import { VoiceDot, VoiceName, agentSteps } from "../components/voice";
-import { useApp, useS } from "../ctx";
+import { useApp, usePlatform, useS } from "../ctx";
 import { useT } from "../i18n";
 import type { View } from "../store";
 
@@ -184,8 +184,12 @@ export function VoiceStack({ onPick }: { onPick?: () => void }) {
   );
 }
 
+/** Views that need a daemon on this device (shared terminals, whiteboard canvas). */
+const PHONE_HIDDEN: View[] = ["terminals", "whiteboards"];
+
 export function Rail({ onPick }: { onPick?: () => void }) {
   const l = useT();
+  const phone = usePlatform().kind === "phone";
   const merges = useS((s) => s.merges.length);
   const app = useApp();
   const settings = useS((s) => s.view === "settings");
@@ -197,7 +201,7 @@ export function Rail({ onPick }: { onPick?: () => void }) {
       </div>
       <RoomSwitcher />
       <div className="flex flex-col">
-        {NAV.map((n) => (
+        {NAV.filter((n) => !(phone && PHONE_HIDDEN.includes(n.view))).map((n) => (
           <NavItem
             key={n.view}
             view={n.view}

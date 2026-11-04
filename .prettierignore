@@ -13,3 +13,4 @@ apps/web/out/
 apps/*/public/excalidraw/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
+packages/ui/src/member/pkg/

@@ -1,6 +1,6 @@
 // The app root shared by the desktop shell and the browser client.
 import { useEffect, useMemo, useState } from "react";
-import { DaemonClient } from "./api/client";
+import { type AppClient, DaemonClient } from "./api/client";
 import { ThemeCtx } from "./components/voice";
 import { PlatformCtx, StoreCtx } from "./ctx";
 import { I18nProvider, Localizer, pickLang } from "./i18n";
@@ -8,6 +8,7 @@ import type { Platform } from "./platform";
 import { usePrefs } from "./prefs";
 import { Store } from "./store";
 import type { Theme } from "./voice";
+import { describeApproval } from "./views/approvals";
 import { Pill } from "./views/pill";
 import { Shell } from "./views/shell";
 
@@ -27,14 +28,16 @@ function useSystemTheme(): Theme {
 }
 
 export interface PolyphAppProps {
-  /** `ws://127.0.0.1:<port>/ws?token=…` */
-  url: string;
+  /** `ws://127.0.0.1:<port>/ws?token=…` (the daemon), or pass `client`. */
+  url?: string;
+  /** Another client, such as the phone's own room member. */
+  client?: AppClient;
   platform: Platform;
   mode?: "app" | "pill";
   onOpenApp?: () => void;
 }
 
-export function PolyphApp({ url, platform, mode = "app", onOpenApp }: PolyphAppProps) {
+export function PolyphApp({ url, client, platform, mode = "app", onOpenApp }: PolyphAppProps) {
   const [prefs] = usePrefs();
   const system = useSystemTheme();
   const theme: Theme = prefs.theme === "system" ? system : prefs.theme;
@@ -47,15 +50,15 @@ export function PolyphApp({ url, platform, mode = "app", onOpenApp }: PolyphAppP
   );
   const l = useMemo(() => new Localizer(lang), [lang]);
   const store = useMemo(() => {
-    const client = new DaemonClient(url);
-    const s = new Store(client);
-    client.onState = (c) => s.setConn(c);
-    client.onEvent = (p) => s.handleEvent(p);
-    client.onStatus = (p) => s.setStatus(p);
+    const c = client ?? new DaemonClient(url ?? "");
+    const s = new Store(c);
+    c.onState = (st) => s.setConn(st);
+    c.onEvent = (p) => s.handleEvent(p);
+    c.onStatus = (p) => s.setStatus(p);
     return s;
-  }, [url]);
+  }, [url, client]);
   useEffect(() => {
-    const c = store.api as DaemonClient;
+    const c = store.api as AppClient;
     c.start();
     return () => c.stop();
   }, [store]);

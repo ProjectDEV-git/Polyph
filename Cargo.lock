@@ -3358,12 +3358,14 @@ dependencies = [
  "polyph-relay",
  "polyph-sandbox",
  "polyph-tui",
+ "polyph-web",
  "ratatui",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "tokio",
+ "tokio-tungstenite 0.30.0",
  "unicode-width",
  "zbus",
 ]
@@ -3384,6 +3386,19 @@ dependencies = [
  "tokio-tungstenite 0.30.0",
  "unicode-width",
  "vt100",
+]
+
+[[package]]
+name = "polyph-web"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "js-sys",
+ "polyph-core",
+ "polyph-proto",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
 ]
 
 [[package]]

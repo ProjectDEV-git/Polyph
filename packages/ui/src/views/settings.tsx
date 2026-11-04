@@ -1,10 +1,11 @@
 // Settings: this device, appearance, the room, integrations and usage.
 import { useEffect, useState, type ReactNode } from "react";
 import { Button, Input, Label, Select } from "../components/ui";
-import { useApp, useS } from "../ctx";
+import { useApp, usePlatform, useS } from "../ctx";
 import { LANGS, useT } from "../i18n";
 import { usePrefs } from "../prefs";
 import { Part } from "../store";
+import { LinkDevice } from "./link";
 import { useWorkdir } from "./workdir";
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
@@ -50,6 +51,8 @@ export function SettingsView() {
   } | null>(null);
   const [invite, setInvite] = useState<string | null>(null);
   const members = useS((s) => s.members);
+  const platform = usePlatform();
+  const phone = platform.kind === "phone";
   useEffect(() => setName(me?.name ?? ""), [me?.name]);
   useEffect(() => {
     app.api.call<Record<string, unknown>>("integrations.status").then(setIntegrations, () => {});
@@ -63,39 +66,61 @@ export function SettingsView() {
   });
   return (
     <div className="scroll-quiet min-h-0 flex-1 overflow-y-auto px-6">
-      <Section title={l.t("app-settings-device")} hint={l.t("app-settings-device-hint")}>
-        <form
-          className="flex items-end gap-2"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            if (!name.trim()) return;
-            await app.act("config.set", { key: "name", value: name.trim() }, l.t("app-saved"));
-            void app.refresh(Part.ME | Part.MEMBERS);
-          }}
-        >
-          <div className="flex-1">
-            <Label htmlFor="st-name">{l.t("app-settings-name")}</Label>
-            <Input id="st-name" value={name} onChange={(e) => setName(e.target.value)} />
+      {phone ? (
+        <Section title={l.t("app-settings-device")} hint={l.t("app-phone-device-hint")}>
+          <dl>
+            <Row k={l.t("app-settings-name")} v={me?.name ?? "—"} />
+            <Row k={l.t("app-settings-relay")} v={me?.relay ?? "—"} mono />
+            <Row k={l.t("app-settings-device-id")} v={me?.device.slice(0, 16) ?? "—"} mono />
+          </dl>
+          {platform.leave && (
+            <div>
+              <Button
+                variant="danger"
+                onClick={() => {
+                  if (window.confirm(l.t("app-phone-leave-confirm"))) platform.leave?.();
+                }}
+              >
+                {l.t("app-phone-leave")}
+              </Button>
+            </div>
+          )}
+        </Section>
+      ) : (
+        <Section title={l.t("app-settings-device")} hint={l.t("app-settings-device-hint")}>
+          <form
+            className="flex items-end gap-2"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!name.trim()) return;
+              await app.act("config.set", { key: "name", value: name.trim() }, l.t("app-saved"));
+              void app.refresh(Part.ME | Part.MEMBERS);
+            }}
+          >
+            <div className="flex-1">
+              <Label htmlFor="st-name">{l.t("app-settings-name")}</Label>
+              <Input id="st-name" value={name} onChange={(e) => setName(e.target.value)} />
+            </div>
+            <Button type="submit">{l.t("app-save")}</Button>
+          </form>
+          <div>
+            <Label htmlFor="st-workdir">{l.t("app-workdir")}</Label>
+            <Input
+              id="st-workdir"
+              className="font-mono"
+              value={workdir}
+              placeholder={l.t("app-workdir-placeholder")}
+              onChange={(e) => setWorkdir(e.target.value)}
+            />
+            <p className="mt-1 text-xs text-ink-2">{l.t("app-workdir-hint")}</p>
           </div>
-          <Button type="submit">{l.t("app-save")}</Button>
-        </form>
-        <div>
-          <Label htmlFor="st-workdir">{l.t("app-workdir")}</Label>
-          <Input
-            id="st-workdir"
-            className="font-mono"
-            value={workdir}
-            placeholder={l.t("app-workdir-placeholder")}
-            onChange={(e) => setWorkdir(e.target.value)}
-          />
-          <p className="mt-1 text-xs text-ink-2">{l.t("app-workdir-hint")}</p>
-        </div>
-        <dl>
-          <Row k={l.t("app-settings-relay")} v={me?.relay ?? "—"} mono />
-          <Row k={l.t("app-settings-keystore")} v={me?.keystore ?? "—"} />
-          <Row k={l.t("app-settings-device-id")} v={me?.device.slice(0, 16) ?? "—"} mono />
-        </dl>
-      </Section>
+          <dl>
+            <Row k={l.t("app-settings-relay")} v={me?.relay ?? "—"} mono />
+            <Row k={l.t("app-settings-keystore")} v={me?.keystore ?? "—"} />
+            <Row k={l.t("app-settings-device-id")} v={me?.device.slice(0, 16) ?? "—"} mono />
+          </dl>
+        </Section>
+      )}
       <Section title={l.t("app-settings-appearance")}>
         <div className="grid grid-cols-2 gap-4">
           <div>
@@ -127,7 +152,12 @@ export function SettingsView() {
           </div>
         </div>
       </Section>
-      {room && (
+      {room && !phone && (
+        <Section title={l.t("app-link-title")} hint={l.t("app-link-hint")}>
+          <LinkDevice />
+        </Section>
+      )}
+      {room && !phone && (
         <Section title={l.t("app-settings-room")} hint={l.t("app-settings-room-hint")}>
           <div className="flex items-center gap-3">
             <Button
@@ -154,34 +184,36 @@ export function SettingsView() {
           </dl>
         </Section>
       )}
-      <Section
-        title={l.t("app-settings-integrations")}
-        hint={l.t("app-settings-integrations-hint")}
-      >
-        <dl>
-          <Row
-            k={l.t("app-github")}
-            v={
-              integrations?.github
-                ? l.t("app-connected")
-                : integrations
-                  ? l.t("app-not-connected")
-                  : "—"
-            }
-          />
-          <Row
-            k={l.t("app-linear")}
-            v={
-              integrations?.linear
-                ? l.t("app-connected")
-                : integrations
-                  ? l.t("app-not-connected")
-                  : "—"
-            }
-          />
-        </dl>
-      </Section>
-      {usage && (
+      {!phone && (
+        <Section
+          title={l.t("app-settings-integrations")}
+          hint={l.t("app-settings-integrations-hint")}
+        >
+          <dl>
+            <Row
+              k={l.t("app-github")}
+              v={
+                integrations?.github
+                  ? l.t("app-connected")
+                  : integrations
+                    ? l.t("app-not-connected")
+                    : "—"
+              }
+            />
+            <Row
+              k={l.t("app-linear")}
+              v={
+                integrations?.linear
+                  ? l.t("app-connected")
+                  : integrations
+                    ? l.t("app-not-connected")
+                    : "—"
+              }
+            />
+          </dl>
+        </Section>
+      )}
+      {usage && !phone && (
         <Section title={l.t("app-settings-usage")} hint={l.t("app-settings-usage-hint")}>
           <table className="w-full border-collapse text-sm">
             <thead>

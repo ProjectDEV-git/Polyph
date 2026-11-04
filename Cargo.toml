@@ -17,6 +17,7 @@ members = [
   "crates/polyph-cli",
   "crates/polyph-relay",
   "crates/polyph-testkit",
+  "crates/polyph-web",
 ]
 # The proprietary cloud crate and the Tauri app are built separately so the
 # open-source workspace never depends on them.
@@ -57,6 +58,7 @@ polyph-daemon = { path = "crates/polyph-daemon", version = "0.1.0" }
 polyph-tui = { path = "crates/polyph-tui", version = "0.1.0" }
 polyph-relay = { path = "crates/polyph-relay", version = "0.1.0" }
 polyph-testkit = { path = "crates/polyph-testkit", version = "0.1.0" }
+polyph-web = { path = "crates/polyph-web", version = "0.1.0" }
 
 # async and networking
 tokio = { version = "1.54", default-features = false }
@@ -94,3 +96,11 @@ dashmap = "6"
 # testing
 proptest = "1.12"
 tempfile = "3"
+
+# The browser member (`polyph-web`) ships to phones: small over fast.
+[profile.wasm]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"

@@ -686,7 +686,7 @@ impl Daemon {
                     let mut c = rt.ctx.lock().await;
                     let member = c.core.my_member;
                     let (code, waiter) = host_code(&mut c, CodeKind::OneTime, now + ttl, Some(member)).await?;
-                    (code, waiter, member, c.relay.url.clone())
+                    (code, waiter, member, c.relay.to_string_with_pin())
                 };
                 if let Some(rx) = waiter
                     && tokio::time::timeout(Duration::from_secs(10), rx).await.ok().and_then(|r| r.ok()) != Some(true)
@@ -695,8 +695,14 @@ impl Daemon {
                         "the relay did not confirm the code; check the connection and try again".into(),
                     ));
                 }
+                // The phone opens this link (or its QR code). The fragment never
+                // reaches the server that hosts the phone app.
+                let base = self.shared.config.lock().phone_url.clone();
+                let url = format!("{base}#link={code}&member={}&relay={}", member.to_hex(), url_encode(&relay));
+                // Browsers cannot pin a LAN relay's certificate.
+                let phone = !relay.contains("#sha256=");
                 ok(
-                    json!({ "code": code.to_string(), "member": member.to_hex(), "relay": relay, "expires_at": now + ttl }),
+                    json!({ "code": code.to_string(), "member": member.to_hex(), "relay": relay, "expires_at": now + ttl, "url": url, "phone": phone }),
                 )
             }
             "room.revoke_code" => {
@@ -1860,6 +1866,19 @@ fn resolve_member(core: &RoomCore, q: &str) -> Result<MemberId, ApiError> {
         0 => Err(ApiError::NotFound(format!("no member matches \"{q}\"; see `polyph room members`"))),
         _ => Err(ApiError::BadRequest(format!("\"{q}\" matches several members; use their member id"))),
     }
+}
+
+/// Percent-encodes a value for a URL fragment parameter.
+fn url_encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
 }
 
 pub fn member_names(core: &RoomCore) -> HashMap<String, String> {

@@ -6,7 +6,7 @@ import { Dialog } from "radix-ui";
 import { useEffect, useState } from "react";
 import { Mark } from "../components/mark";
 import { Button, IconButton, Kbd } from "../components/ui";
-import { useApp, useS } from "../ctx";
+import { useApp, usePlatform, useS } from "../ctx";
 import { useT } from "../i18n";
 import { ActivityView } from "./activity";
 import { AgentsView } from "./agents";
@@ -37,7 +37,8 @@ function Finding() {
       mine.length > 1
         ? l.t("app-finding-more", { first: describeApproval(l, mine[0]), n: mine.length - 1 })
         : describeApproval(l, mine[0]);
-  else if (knocks[0]) text = l.t("app-knock", { name: knocks[0].display_name });
+  else if (knocks[0])
+    text = l.t(knocks[0].link ? "app-knock-link" : "app-knock", { name: knocks[0].display_name });
   else if (running) text = l.t("app-finding-running", { n: running });
   else text = l.t("app-finding-quiet");
   return (
@@ -100,6 +101,7 @@ function Disconnected() {
   const app = useApp();
   const conn = useS((s) => s.conn);
   const ever = useS((s) => s.me !== null);
+  const phone = usePlatform().kind === "phone";
   if (conn === "open") return null;
   return (
     <div
