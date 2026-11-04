@@ -582,8 +582,18 @@ impl RoomCore {
                 }
             }
             RoomMessage::Crdt { doc, update } if writer => {
+                // New chat messages from others become Chat events, like our own.
+                let chat_before: Option<BTreeSet<String>> =
+                    (doc == DocName::Threads).then(|| docs::chat(self.doc(&doc)).into_iter().map(|c| c.id).collect());
                 if apply_update(self.doc(&doc), &update).is_ok() {
                     let settings = doc == DocName::Settings;
+                    if let Some(seen) = chat_before {
+                        for c in docs::chat(self.doc(&DocName::Threads)) {
+                            if !seen.contains(&c.id) {
+                                out.push(Effect::Event(RoomEvent::Chat(c)));
+                            }
+                        }
+                    }
                     out.push(Effect::Event(RoomEvent::DocChanged { doc }));
                     if settings {
                         out.extend(self.fetch_new_whiteboards());

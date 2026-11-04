@@ -14,6 +14,7 @@ pub mod export;
 pub mod feed;
 pub mod lan;
 pub mod mirror;
+pub mod notify;
 pub mod paths;
 pub mod plan;
 pub mod runtime;

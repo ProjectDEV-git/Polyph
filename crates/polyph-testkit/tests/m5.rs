@@ -294,3 +294,95 @@ async fn shared_terminal_with_input_approval() {
     .await
     .unwrap();
 }
+
+/// Records every POST it receives: (path, headers, body).
+async fn receiver() -> (String, std::sync::Arc<parking_lot::Mutex<Vec<(String, axum::http::HeaderMap, Value)>>>) {
+    use axum::routing::post;
+    let got = std::sync::Arc::new(parking_lot::Mutex::new(vec![]));
+    let g = got.clone();
+    let app = axum::Router::new().route(
+        "/{name}",
+        post(
+            move |axum::extract::Path(name): axum::extract::Path<String>,
+                  headers: axum::http::HeaderMap,
+                  body: axum::body::Bytes| {
+                let g = g.clone();
+                async move {
+                    let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+                    g.lock().push((name, headers, v));
+                    "ok"
+                }
+            },
+        ),
+    );
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+    (format!("http://{addr}"), got)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn notifications_and_webhooks() {
+    let (mut h, rid) = room(async |_, _| {}).await;
+    let (a, b) = (0, 1);
+    let (base, got) = receiver().await;
+    let w = call(&h, a, "webhook.add", json!({ "url": format!("{base}/json"), "format": "json", "secret": "s3cret", "events": ["mention", "approval"] })).await;
+    call(&h, a, "webhook.add", json!({ "url": format!("{base}/slack"), "format": "slack", "events": ["mention"] }))
+        .await;
+    assert!(
+        h.nodes[a].call("webhook.add", json!({ "url": "http://example.com/x" })).await.is_err(),
+        "plain http only for localhost"
+    );
+    let list = call(&h, a, "webhook.list", json!({})).await;
+    assert_eq!(list.as_array().unwrap().len(), 2);
+    assert!(!list.to_string().contains("s3cret") && list[0]["signed"] == true);
+
+    // A mention of Ann notifies her; "@Annabel" does not.
+    call(&h, b, "chat.send", json!({ "room": rid, "text": "@Annabel is not Ann" })).await;
+    call(&h, b, "chat.send", json!({ "room": rid, "text": "@Ann can you look at the secret plan?" })).await;
+    let ev = h.nodes[a].wait_event("mention notification", |e| e.kind() == "notification").await.unwrap();
+    assert_eq!(ev.event["notification"]["kind"], "mention");
+    assert_eq!(ev.event["notification"]["text"], "Bo mentioned you in m5.");
+    h.until("both webhooks called", || async { got.lock().len() >= 2 }).await.unwrap();
+    {
+        let g = got.lock();
+        let (_, headers, body) = g.iter().find(|(n, _, _)| n == "json").unwrap();
+        assert_eq!(body["kind"], "mention");
+        assert!(!body.to_string().contains("secret plan"), "chat text never leaves in a webhook: {body}");
+        // The signature is HMAC-SHA256 of the exact body.
+        use hmac::Mac;
+        let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(b"s3cret").unwrap();
+        mac.update(body.to_string().as_bytes());
+        let want = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
+        assert_eq!(headers["x-polyph-signature"].to_str().unwrap(), want);
+        let (_, _, slack) = g.iter().find(|(n, _, _)| n == "slack").unwrap();
+        assert_eq!(slack, &json!({ "text": "Bo mentioned you in m5." }));
+    }
+
+    // Ann's agent needs her approval: notified, urgent.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("polyph.toml"), "").unwrap();
+    std::fs::write(
+        dir.path().join(".fake-script.json"),
+        json!({ "turns": [[ { "permission": { "kind": "execute", "title": "Run cargo publish", "command": "cargo publish" } } ]] }).to_string(),
+    )
+    .unwrap();
+    let ag = call(&h, a, "agent.start", json!({ "room": rid, "kind": "fake", "cwd": dir.path(), "preset": "default" }))
+        .await;
+    let id = ag["id"].as_str().unwrap().to_string();
+    let d = h.nodes[a].daemon.clone();
+    let turn = tokio::spawn(async move { d.call("agent.prompt", json!({ "agent": id, "text": "publish" })).await });
+    h.until("approval webhook", || async { got.lock().iter().any(|(_, _, b)| b["kind"] == "approval") }).await.unwrap();
+    let body = got.lock().iter().find(|(_, _, b)| b["kind"] == "approval").unwrap().2.clone();
+    assert_eq!(body["urgent"], true);
+    assert_eq!(body["text"], "Ann/fake needs your approval in m5: Run cargo publish");
+    let ap = call(&h, a, "approvals.list", json!({ "room": rid })).await[0]["id"].as_str().unwrap().to_string();
+    call(&h, a, "deny", json!({ "room": rid, "id": ap })).await;
+    turn.await.unwrap().unwrap();
+
+    // A test delivery on request.
+    call(&h, a, "webhook.test", json!({ "id": w["id"] })).await;
+    assert!(got.lock().iter().any(|(_, _, b)| b["kind"] == "test"));
+    call(&h, a, "webhook.remove", json!({ "id": w["id"] })).await;
+    assert_eq!(call(&h, a, "webhook.list", json!({})).await.as_array().unwrap().len(), 1);
+}

@@ -291,6 +291,7 @@ impl Daemon {
             shutdown: tokio::sync::Notify::new(),
         });
         let _ = shared.daemon.set(Arc::downgrade(&d));
+        tokio::spawn(crate::notify::run(Arc::downgrade(&d), d.subscribe()));
         {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<crate::coord::FinishJob>();
             let _ = shared.finisher.set(tx);
@@ -1061,6 +1062,42 @@ impl Daemon {
                     })
                     .collect();
                 ok(json!({ "thread": t, "posts": posts }))
+            }
+            "webhook.add" => {
+                let w: crate::notify::Webhook = serde_json::from_value({
+                    let mut v = params.clone();
+                    v["id"] = json!("");
+                    if v.get("format").is_none() {
+                        v["format"] = json!("json");
+                    }
+                    v
+                })
+                .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+                let w = crate::notify::add_webhook(&self.shared, w)?;
+                ok(crate::notify::public(&w))
+            }
+            "webhook.list" => {
+                ok(crate::notify::load_webhooks(&self.shared).iter().map(crate::notify::public).collect::<Vec<_>>())
+            }
+            "webhook.test" => {
+                #[derive(Deserialize)]
+                struct P {
+                    id: String,
+                }
+                let p: P = param(&params)?;
+                crate::notify::test_webhook(&self.shared, &p.id).await?;
+                ok(json!({}))
+            }
+            "webhook.remove" => {
+                #[derive(Deserialize)]
+                struct P {
+                    id: String,
+                }
+                let p: P = param(&params)?;
+                if !crate::notify::remove_webhook(&self.shared, &p.id)? {
+                    return Err(ApiError::NotFound("no such webhook".into()));
+                }
+                ok(json!({}))
             }
             "term.open" => {
                 let p: crate::terms::OpenParams = param(&params)?;
