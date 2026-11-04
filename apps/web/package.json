@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "node ../../scripts/bundle-locales.mjs && node ../../scripts/copy-excalidraw-assets.mjs public && next dev",
-    "build": "node ../../scripts/bundle-locales.mjs && node ../../scripts/copy-excalidraw-assets.mjs public && next build",
+    "build": "node ../../scripts/bundle-locales.mjs && node ../../scripts/copy-excalidraw-assets.mjs public && node ../../scripts/build-phone-wasm.mjs && next build",
     "typecheck": "node ../../scripts/bundle-locales.mjs && tsc --noEmit"
   },
   "dependencies": {

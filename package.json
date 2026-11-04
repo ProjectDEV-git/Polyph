@@ -11,7 +11,8 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "build": "pnpm -r --if-present build",
-    "test:e2e": "node scripts/e2e-web.mjs"
+    "test:e2e": "node scripts/e2e-web.mjs && node scripts/e2e-phone.mjs",
+    "build:phone": "node scripts/build-phone-wasm.mjs"
   },
   "devDependencies": {
     "prettier": "3.9.10"

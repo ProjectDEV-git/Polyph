@@ -694,6 +694,36 @@ impl Daemon {
                 }
                 Err(ApiError::Failed("could not find a free code; try again".into()))
             }
+            "phone.pair" => {
+                // A one-time code plus this person's member id, as a link for
+                // their phone (crates/polyph-daemon/src/phone.rs).
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    base: Option<String>,
+                }
+                let p: P = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let relay = rt.ctx.lock().await.relay.clone();
+                if relay.pin.is_some() {
+                    return Err(ApiError::BadRequest(
+                        "this room uses a LAN relay with its own certificate, which phone browsers cannot reach; host it on an internet relay to pair a phone".into(),
+                    ));
+                }
+                let inv = Box::pin(self.call("room.invite", json!({ "room": rt.id.to_hex() }))).await?;
+                let code = inv["code"].as_str().unwrap_or_default().to_string();
+                let member = self.shared.member_id()?.to_hex();
+                let base = p.base.unwrap_or_else(crate::phone::default_base);
+                let link = crate::phone::link(&base, &code, &member, &relay.url);
+                ok(json!({
+                    "code": code,
+                    "expires_at": inv["expires_at"],
+                    "member": member,
+                    "relay": relay.url,
+                    "link": link,
+                    "svg": crate::phone::qr_svg(&link),
+                }))
+            }
             "room.revoke_code" => {
                 #[derive(Deserialize)]
                 struct P {

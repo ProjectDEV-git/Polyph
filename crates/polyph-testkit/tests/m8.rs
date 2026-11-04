@@ -92,6 +92,19 @@ async fn phone_joins_chats_and_moves_cards() {
     .await
     .unwrap();
 
+    // A card added on the phone reaches the daemon.
+    p.call("board.add", json!({ "room": rid, "title": "From the phone" })).await.unwrap();
+    h.until("phone card reaches Ann", || async {
+        let b = h.nodes[a].call("board.get", json!({ "room": rid })).await.unwrap();
+        b["cards"].as_array().unwrap().iter().any(|c| c["title"] == "From the phone")
+    })
+    .await
+    .unwrap();
+
+    // The activity feed reads like the daemon's.
+    let act = p.call("activity.list", json!({ "room": rid, "limit": 300 })).await.unwrap();
+    assert!(act.is_array(), "{act}");
+
     // Members and rooms look the same as on a daemon.
     let members = p.call("room.members", json!({ "room": rid })).await.unwrap();
     let names: Vec<&str> = members.as_array().unwrap().iter().map(|m| m["name"].as_str().unwrap()).collect();

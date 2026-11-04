@@ -80,6 +80,12 @@ enum Cmd {
         lan: bool,
     },
     Discover,
+    Phone {
+        room: Option<String>,
+        /// Phone app address (default: the website's /phone/).
+        #[arg(long)]
+        base: Option<String>,
+    },
     Leave {
         room: Option<String>,
     },
@@ -675,6 +681,21 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                     ));
                 }
                 ctx.out(l.t("discover-hint"));
+            }
+        }
+        Cmd::Phone { room, base } => {
+            let room = ctx.room(&mut api, room).await?;
+            let v = call(&mut api, "phone.pair", json!({ "room": room, "base": base })).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else {
+                let link = v["link"].as_str().unwrap_or_default();
+                ctx.out(l.t("phone-scan"));
+                if let Some(qr) = polyph_daemon::phone::qr_text(link) {
+                    ctx.out(qr);
+                }
+                ctx.out(tr!(l, "phone-link", url = link, code = v["code"].as_str().unwrap_or_default()));
+                ctx.out(l.t("phone-approve"));
             }
         }
         Cmd::Leave { room } => {

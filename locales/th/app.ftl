@@ -172,3 +172,17 @@ app-pill-agents = เอเจนต์กำลังทำงาน { $n } ต
 app-tray-show = แสดง Polyph
 app-tray-pill = แสดงแถบสถานะ
 app-tray-quit = ออก
+
+# Phone (the PWA) and pairing a phone from the app.
+app-phone-no-room-body = เข้าห้องด้วยรหัสที่เพื่อนร่วมทีมส่งมา หรือด้วยลิงก์จับคู่จากคอมพิวเตอร์ของคุณ ห้องจะถูกโฮสต์จากคอมพิวเตอร์ที่รัน Polyph
+app-phone-loading = กำลังเริ่ม Polyph บนโทรศัพท์นี้
+app-phone-unsupported = เบราว์เซอร์นี้รัน Polyph ไม่ได้ ต้องรองรับ WebAssembly, WebSocket และ IndexedDB
+app-phone-failed = เริ่ม Polyph บนโทรศัพท์นี้ไม่ได้: { $error }
+app-phone-install = เพิ่ม Polyph ลงในหน้าจอหลักเพื่อเปิดเหมือนแอปและรับการแจ้งเตือนคำขออนุมัติ
+app-phone-alerts = เปิดการแจ้งเตือน
+app-phone-leave = ออกจากห้องนี้บนโทรศัพท์นี้
+app-phone-pair = จับคู่โทรศัพท์
+app-phone-pair-hint = เปิดลิงก์บนโทรศัพท์ หรือสแกนโค้ด โทรศัพท์จะเข้าในนามคุณ จึงตอบคำขออนุมัติของเอเจนต์ของคุณได้ อนุมัติคำขอเมื่อมาถึง
+app-phone-pair-make = สร้างลิงก์จับคู่
+app-phone-pair-qr = คิวอาร์โค้ดสำหรับลิงก์จับคู่
+app-phone-pair-expires = ใช้ได้ครั้งเดียว ภายใน 15 นาที

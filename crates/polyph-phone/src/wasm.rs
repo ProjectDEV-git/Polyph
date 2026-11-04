@@ -10,11 +10,24 @@ use wasm_bindgen::prelude::*;
 
 use crate::{Output, Phone, PhoneError};
 
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console, js_name = error)]
+    fn console_error(s: &str);
+}
+
+/// Sends Rust panics to the console (the release build aborts after it).
+fn hook() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| std::panic::set_hook(Box::new(|info| console_error(&format!("polyph engine: {info}")))));
+}
+
 fn err(e: impl std::fmt::Display) -> JsError {
     JsError::new(&e.to_string())
 }
 
 fn identity(secret: &[u8]) -> Result<Arc<DeviceIdentity>, JsError> {
+    hook();
     let arr: [u8; 64] = secret.try_into().map_err(|_| JsError::new("secret must be 64 bytes"))?;
     Ok(Arc::new(DeviceIdentity::from_secret_bytes(&arr)))
 }

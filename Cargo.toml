@@ -96,3 +96,14 @@ dashmap = "6"
 # testing
 proptest = "1.12"
 tempfile = "3"
+
+# The phone engine's wasm build (scripts/build-phone-wasm.mjs): small over fast.
+# Stripped: wasm-bindgen warns it cannot read target features, which the
+# engine does not rely on (no reference types or threads).
+[profile.wasm]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

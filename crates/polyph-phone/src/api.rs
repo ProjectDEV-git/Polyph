@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use polyph_core::room::{NO_HUE, approval_title};
 use polyph_core::voice::{Step, Theme, voice_css};
 use polyph_proto::cert::Role;
-use polyph_proto::crdt::{Activity, ActivityEntry, Board};
+use polyph_proto::crdt::{Activity, ActivityEntry, Board, NewCard};
 use polyph_proto::ids::{MemberId, ObjectId};
 use polyph_proto::messages::{AgentEventKind, AgentState, ApprovalScope, Decision, DocName};
 use polyph_proto::status::{StatusAgent, StatusApproval, StatusSnapshot};
@@ -367,6 +367,42 @@ pub fn call(p: &mut Phone, method: &str, params: &Value, now: i64, out: &mut Out
                 "columns": cols.into_iter().map(|(id, title)| json!({"id": id, "title": title})).collect::<Vec<_>>(),
                 "cards": cards,
             }))
+        }
+        "board.add" => {
+            #[derive(Deserialize)]
+            struct P {
+                room: String,
+                title: String,
+                #[serde(default)]
+                description: String,
+                column: Option<String>,
+                #[serde(default)]
+                acceptance: Vec<String>,
+                #[serde(default)]
+                files: Vec<String>,
+            }
+            let q: P = param(params)?;
+            if q.title.trim().is_empty() {
+                return Err(PhoneError::Bad("a card needs a title".into()));
+            }
+            let r = room(p, &q.room)?;
+            let id = ObjectId::random()?.to_hex();
+            let card = NewCard {
+                id: id.clone(),
+                title: q.title,
+                description: q.description,
+                column: q.column.unwrap_or_else(|| "backlog".into()),
+                created_by: r.core.my_member.to_hex(),
+                created_at: now,
+                acceptance: q.acceptance,
+                files: q.files,
+                ..Default::default()
+            };
+            let fx = r.core.change_doc(DocName::Board, |d| {
+                let _ = Board::new(d).add_card(&card);
+            })?;
+            apply(r, fx, out);
+            Ok(json!({ "id": id }))
         }
         "board.move" => {
             #[derive(Deserialize)]

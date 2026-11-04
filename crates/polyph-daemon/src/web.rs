@@ -142,6 +142,14 @@ const CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-
 img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; \
 worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'none'";
 
+/// The phone app's policy: it runs the room engine in WebAssembly and talks
+/// to whichever relay its room uses, so it may compile wasm and open
+/// WebSockets anywhere. (The phone app is normally served by the website;
+/// the daemon serves it for local testing.)
+const PHONE_CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; \
+style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; \
+worker-src 'self' blob:; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'none'";
+
 /// Serves a file from the client's static export. Paths that leave the
 /// directory are refused; a directory serves its `index.html`.
 pub async fn serve_file(dir: &Path, path: &str) -> Response {
@@ -161,7 +169,8 @@ pub async fn serve_file(dir: &Path, path: &str) -> Response {
             let mut r = body.into_response();
             let h = r.headers_mut();
             h.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type(&p)));
-            h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(CSP));
+            let csp = if path.trim_start_matches('/').starts_with("phone") { PHONE_CSP } else { CSP };
+            h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(csp));
             h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
             h.insert("referrer-policy", HeaderValue::from_static("no-referrer"));
             let cache =

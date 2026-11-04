@@ -3172,6 +3172,7 @@ dependencies = [
  "polyph-relay",
  "polyph-sandbox",
  "polyph-term",
+ "qrcode",
  "reqwest",
  "rustls",
  "serde",
@@ -3525,6 +3526,12 @@ dependencies = [
  "ar_archive_writer",
  "cc",
 ]
+
+[[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
 
 [[package]]
 name = "quick-error"

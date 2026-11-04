@@ -204,3 +204,8 @@ host-bad-mode = Unknown mode { $mode }: use distributed or hosted.
 web-link = Open this link in your browser (it works once, for two minutes):
     { $url }
 web-opened = Opened the browser client. The link works once.
+help-phone = Pair your phone: show a link and QR code that open Polyph on the phone and join this room as you.
+phone-scan = Scan this with your phone's camera, or open the link on the phone:
+phone-link = { $url }
+    Join code: { $code } (works once, for 15 minutes)
+phone-approve = When the phone asks to join, approve it here or in the app. It joins as you, so it can answer your agents' approvals.

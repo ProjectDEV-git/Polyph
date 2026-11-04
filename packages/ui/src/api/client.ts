@@ -20,7 +20,18 @@ export interface Transport {
   call<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>;
 }
 
-export class DaemonClient implements Transport {
+/** A connection the app can run on: a daemon's WebSocket or the phone engine. */
+export interface AppClient extends Transport {
+  state: ConnState;
+  onEvent: (params: unknown) => void;
+  onStatus: (params: unknown) => void;
+  onState: (s: ConnState) => void;
+  start(): void;
+  stop(): void;
+  retryNow(): void;
+}
+
+export class DaemonClient implements AppClient {
   private ws: WebSocket | null = null;
   private next = 1;
   private pending = new Map<number, Pending>();

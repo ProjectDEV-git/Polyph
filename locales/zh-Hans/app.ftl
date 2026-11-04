@@ -172,3 +172,17 @@ app-pill-agents = { $n } 个智能体正在运行
 app-tray-show = 显示 Polyph
 app-tray-pill = 显示状态胶囊
 app-tray-quit = 退出
+
+# Phone (the PWA) and pairing a phone from the app.
+app-phone-no-room-body = 使用队友发来的加入码,或电脑上的配对链接加入房间。房间由运行 Polyph 的电脑托管。
+app-phone-loading = 正在此手机上启动 Polyph。
+app-phone-unsupported = 此浏览器无法运行 Polyph。需要 WebAssembly、WebSocket 和 IndexedDB。
+app-phone-failed = Polyph 无法在此手机上启动:{ $error }
+app-phone-install = 将 Polyph 添加到主屏幕,即可像应用一样打开并接收审批提醒。
+app-phone-alerts = 开启提醒
+app-phone-leave = 在此手机上离开此房间
+app-phone-pair = 配对手机
+app-phone-pair-hint = 在手机上打开链接或扫描二维码。手机以你的身份加入,因此可以回复你的智能体的审批请求。请求到达时请批准。
+app-phone-pair-make = 生成配对链接
+app-phone-pair-qr = 配对链接的二维码
+app-phone-pair-expires = 仅限一次,15 分钟内有效。

@@ -6,7 +6,7 @@ import { useState } from "react";
 import type { Card } from "../api/types";
 import { Button, Input, Label, Rows, Select } from "../components/ui";
 import { VoiceName, agentSteps, hueOf } from "../components/voice";
-import { useApp, useS } from "../ctx";
+import { useApp, usePlatform, useS } from "../ctx";
 import { useT } from "../i18n";
 import { Part } from "../store";
 import { LoadError } from "./common";
@@ -205,6 +205,8 @@ function PlanBar() {
   const [goal, setGoal] = useState("");
   const [busy, setBusy] = useState(false);
   const plans = [...new Set(cards.filter((c) => c.draft && c.plan).map((c) => String(c.plan)))];
+  // Planning runs an agent, which needs a computer running Polyph.
+  if (usePlatform().kind === "phone") return null;
   return (
     <div className="flex flex-wrap items-end gap-2">
       {plans.map((p) => (

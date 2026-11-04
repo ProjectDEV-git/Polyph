@@ -180,3 +180,8 @@ host-bad-mode = 未知模式 { $mode }：请使用 distributed 或 hosted。
 web-link = 在浏览器中打开此链接（仅可使用一次，两分钟内有效）：
     { $url }
 web-opened = 已打开浏览器客户端。链接只能使用一次。
+help-phone = 配对手机:显示一个链接和二维码,在手机上打开 Polyph 并以你的身份加入此房间。
+phone-scan = 用手机相机扫描,或在手机上打开此链接:
+phone-link = { $url }
+    加入码:{ $code }(仅限一次,15 分钟内有效)
+phone-approve = 手机请求加入时,请在这里或应用中批准。它以你的身份加入,因此可以回复你的智能体的审批请求。

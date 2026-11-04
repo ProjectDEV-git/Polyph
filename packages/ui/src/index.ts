@@ -1,8 +1,10 @@
 export { PolyphApp, type PolyphAppProps } from "./App";
-export { DaemonClient, RpcError, type ConnState } from "./api/client";
+export { DaemonClient, RpcError, type AppClient, type ConnState } from "./api/client";
+export { PhoneClient, type Engine, type EngineOutput, type PhoneOptions } from "./phone/client";
 export type * from "./api/types";
 export { Localizer, pickLang, LANGS, I18nProvider, useT } from "./i18n";
 export { Mark } from "./components/mark";
 export type { Platform } from "./platform";
 export { Store, partsFor, Part } from "./store";
+export { describeApproval } from "./views/approvals";
 export { assignHue, voiceCss } from "./voice";
