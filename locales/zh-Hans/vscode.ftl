@@ -1,0 +1,10 @@
+vscode-claimed-by = { $label } 已认领：{ $reason }
+vscode-not-running = 这台电脑上没有运行 Polyph。请用 `polyph`、桌面应用或“启动”命令启动它。
+vscode-start-failed = 无法启动 Polyph。请安装 polyph 命令并确认它在 PATH 中。
+vscode-nls-description = 查看哪个声音持有哪些文件，回应你的智能体，并跟进你的 Polyph 房间。
+vscode-nls-command-open = 打开
+vscode-nls-command-approvals = 处理审批
+vscode-nls-command-startDaemon = 启动守护进程
+vscode-nls-config-home = Polyph 数据目录（不是默认位置时，POLYPH_HOME）。
+vscode-nls-config-claims = 用对应颜色标出其他声音认领的文件。
+vscode-nls-config-prompts = 智能体的审批一到就询问你。

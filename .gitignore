@@ -25,3 +25,6 @@ apps/web/public/excalidraw/
 apps/desktop/public/excalidraw/
 apps/web/next-env.d.ts
 packages/ui/src/member/pkg/
+apps/vscode/dist/
+apps/vscode/package.nls*.json
+*.vsix

@@ -1,0 +1,10 @@
+vscode-claimed-by = { $label } จองไว้: { $reason }
+vscode-not-running = Polyph ไม่ได้ทำงานบนคอมพิวเตอร์เครื่องนี้ เริ่มด้วย `polyph` แอปเดสก์ท็อป หรือคำสั่งเริ่ม
+vscode-start-failed = เริ่ม Polyph ไม่สำเร็จ ติดตั้งคำสั่ง polyph และตรวจสอบว่าอยู่ใน PATH
+vscode-nls-description = ดูว่าเสียงใดจองไฟล์ใดไว้ ตอบเอเจนต์ของคุณ และติดตามห้อง Polyph
+vscode-nls-command-open = เปิด
+vscode-nls-command-approvals = ตอบคำขออนุมัติ
+vscode-nls-command-startDaemon = เริ่มเดมอน
+vscode-nls-config-home = ไดเรกทอรีข้อมูลของ Polyph เมื่อไม่ใช่ค่าเริ่มต้น (POLYPH_HOME)
+vscode-nls-config-claims = ทำเครื่องหมายไฟล์ที่เสียงอื่นจองไว้ด้วยสีของเสียงนั้น
+vscode-nls-config-prompts = ถามเรื่องคำขออนุมัติของเอเจนต์ทันทีที่มาถึง

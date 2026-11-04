@@ -114,3 +114,18 @@ opacity.
   opens `http://127.0.0.1:<port>/app/#code=…`. The daemon serves the client's
   static files and trades the code for a session token, so the API token never
   appears in a URL or browser history. The WebSocket checks the page's origin.
+
+## The phone
+
+`/m/` in `apps/web` is an installable PWA. It does not talk to a daemon: it
+is a room member of its own (the room engine as WebAssembly, `polyph-web`)
+connected to the relay, linked to its person with a QR code from Settings ›
+Your phone (or `polyph link`). It shows the same app with the views a phone
+can serve (chat, board, agents, activity, merges, settings), answers its
+person's approvals and notifies about them.
+
+## VS Code
+
+`apps/vscode` puts claims in the editor (a gutter in the holder's voice and
+an explorer badge), asks about the person's approvals as they arrive, shows
+the room in the status bar and opens the whole app in a panel.

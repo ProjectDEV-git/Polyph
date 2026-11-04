@@ -97,6 +97,14 @@ commit and an updated `HANDOFF.md`. Stubs go in `STUBS.md`.
 - [x] four locales (`locales/*/app.ftl`), phone width, light and dark themes, reduced motion
 - [x] tests: Vitest (voices, i18n, store, client, approvals), `pnpm test:e2e` (browser client against a real daemon), daemon unit tests for links, hosts, origins and static files
 ## M8 — PWA, VS Code extension, Nublet provider
+
+- [x] linking a person's other devices (`room.link`, `polyph link`, `polyph join --member`, QR in Settings); joins can no longer take an existing member's identity
+- [x] `polyph_core::views`: read models shared by the daemon and the browser member
+- [x] `polyph-web`: a room member in the browser (WebAssembly): relay sign-in, join and link handshakes, room sync, the app's API answered locally
+- [x] phone PWA (`apps/web` `/m/`): link or join, the shared app on the in-page member, storage sealed with a non-extractable key, manifest, service worker, notifications for the person's approvals
+- [x] status provider: `/status`, `/status/events` (SSE), `/status/widget` with a read-only status token; `docs/status-feed.md`; `integrations/nublet`
+- [x] VS Code extension (`apps/vscode`): claim gutters and explorer badges in voice colors, approval prompts, status bar, the shared app in a panel; four locales
+- [x] tests: `m8.rs` (impersonation refused, linked device approves, browser member links/chats/approves through a real relay, status provider), `scripts/e2e-phone.mjs`, extension tests
 ## M9 — cloud agents and extensibility
 ## M10 — website, accounts, billing
 ## M11 — release

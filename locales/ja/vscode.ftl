@@ -1,0 +1,10 @@
+vscode-claimed-by = { $label } が確保中: { $reason }
+vscode-not-running = このコンピューターで Polyph が動いていません。`polyph`、デスクトップアプリ、または開始コマンドで起動してください。
+vscode-start-failed = Polyph を起動できませんでした。polyph コマンドをインストールし、PATH にあることを確認してください。
+vscode-nls-description = どのボイスがどのファイルを確保しているかを見て、エージェントに答え、Polyph のルームを追います。
+vscode-nls-command-open = 開く
+vscode-nls-command-approvals = 承認に答える
+vscode-nls-command-startDaemon = デーモンを起動
+vscode-nls-config-home = 既定と異なる場合の Polyph のデータディレクトリ（POLYPH_HOME）。
+vscode-nls-config-claims = 他のボイスが確保したファイルをその色で示します。
+vscode-nls-config-prompts = エージェントの承認が届いたらその場で尋ねます。

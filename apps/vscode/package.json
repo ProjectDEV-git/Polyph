@@ -1,0 +1,59 @@
+{
+  "name": "polyph",
+  "displayName": "Polyph",
+  "description": "%description%",
+  "version": "0.1.0",
+  "publisher": "polyph",
+  "license": "Apache-2.0",
+  "private": true,
+  "repository": { "type": "git", "url": "https://github.com/ProjectDEV-git/Polyph" },
+  "engines": { "vscode": "^1.95.0" },
+  "categories": ["Other"],
+  "icon": "media/icon.png",
+  "main": "./dist/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "l10n": "./l10n",
+  "contributes": {
+    "commands": [
+      { "command": "polyph.open", "title": "%command.open%", "category": "Polyph" },
+      { "command": "polyph.approvals", "title": "%command.approvals%", "category": "Polyph" },
+      { "command": "polyph.startDaemon", "title": "%command.startDaemon%", "category": "Polyph" }
+    ],
+    "configuration": {
+      "title": "Polyph",
+      "properties": {
+        "polyph.home": { "type": "string", "default": "", "description": "%config.home%" },
+        "polyph.claimDecorations": { "type": "boolean", "default": true, "description": "%config.claims%" },
+        "polyph.approvalPrompts": { "type": "boolean", "default": true, "description": "%config.prompts%" }
+      }
+    }
+  },
+  "scripts": {
+    "gen": "node ../../scripts/bundle-locales.mjs && node scripts/gen-nls.mjs",
+    "build": "pnpm gen && node scripts/build.mjs",
+    "typecheck": "pnpm gen && tsc --noEmit",
+    "test": "node ../../scripts/bundle-locales.mjs && vitest run",
+    "package": "pnpm build && vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "@polyph/ui": "workspace:*",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "ws": "8.18.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.4",
+    "@types/node": "22.20.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/vscode": "1.95.0",
+    "@types/ws": "8.18.1",
+    "@vitejs/plugin-react": "6.2.1",
+    "@vscode/vsce": "3.4.1",
+    "esbuild": "0.25.12",
+    "tailwindcss": "4.3.4",
+    "typescript": "6.0.3",
+    "vite": "8.3.5",
+    "vitest": "5.1.0"
+  }
+}

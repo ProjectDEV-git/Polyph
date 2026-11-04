@@ -96,10 +96,29 @@ without TLS, content stays end-to-end encrypted; TLS protects metadata.
   held in the daemon's memory. Browser-facing routes answer only to loopback
   host names (against DNS rebinding), the API refuses pages from other
   origins, and the client's pages carry a strict Content Security Policy.
+- Widgets read the status feed with a separate read-only status token that
+  opens only the status routes (states, names, counts and colors).
 - Device secret keys are stored in the OS keychain, or in a file encrypted
   with a key held in the keychain or, where none exists, derived from a local
   secret with owner-only permissions.
 - Logs never contain message content, code, keys or tokens.
+
+### Joining as someone else
+
+A joining device names its member id. Hosts refuse an id that already
+belongs to a room member unless the request comes through a link code made on
+one of that member's own devices (and approvers re-check this), so a code
+cannot be used to take over a teammate's identity or answer their agents'
+approvals.
+
+### The phone app
+
+The phone is a room member with its own device keys, linked to its person.
+Its identity and room state are stored in the browser (IndexedDB), encrypted
+with an AES-GCM key that the browser will not export; code running in the
+app's origin can still use them, which is the limit of what a web page can
+do. Link codes work once, for ten minutes, and travel in the URL fragment,
+which never reaches the server hosting the app.
 
 ### Agents
 

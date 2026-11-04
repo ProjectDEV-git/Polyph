@@ -14,3 +14,5 @@ apps/*/public/excalidraw/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
 packages/ui/src/member/pkg/
+apps/vscode/dist/
+apps/vscode/package.nls*.json

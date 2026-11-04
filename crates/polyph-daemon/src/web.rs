@@ -101,6 +101,10 @@ pub fn origin_allowed(headers: &HeaderMap) -> bool {
     if matches!(o, "tauri://localhost" | "http://tauri.localhost" | "https://tauri.localhost") {
         return true;
     }
+    // The VS Code extension's webview (it gets the API token from the extension).
+    if o.starts_with("vscode-webview://") {
+        return true;
+    }
     let rest = o.strip_prefix("http://").unwrap_or("");
     let host = rest.rsplit_once(':').map(|(h, _)| h).unwrap_or(rest);
     matches!(host, "127.0.0.1" | "localhost" | "[::1]")
@@ -201,6 +205,8 @@ mod tests {
         o.insert(header::ORIGIN, HeaderValue::from_static("http://127.0.0.1:4100"));
         assert!(origin_allowed(&o));
         o.insert(header::ORIGIN, HeaderValue::from_static("tauri://localhost"));
+        assert!(origin_allowed(&o));
+        o.insert(header::ORIGIN, HeaderValue::from_static("vscode-webview://1a2b3c"));
         assert!(origin_allowed(&o));
         o.insert(header::ORIGIN, HeaderValue::from_static("https://evil.example"));
         assert!(!origin_allowed(&o));

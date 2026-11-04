@@ -297,6 +297,32 @@ could not be followed exactly. Newest at the bottom of each section.
 - **The keychain is read from a plain thread**: secret-service backends block
   on their own runtime, which panicked inside the daemon's async runtime.
 
+## Phone, VS Code and the status provider
+
+- **A joiner may not take an existing member's id.** The id is chosen by the
+  joining device, so hosts refuse it unless the knock is a link knock posted
+  by one of that member's own devices through a link code (`room.link`), and
+  approvers check the same rule. Found while designing phone linking; it
+  closes an impersonation path (answering someone else's approvals).
+- **The phone is a member device, not a remote control.** It joins the room
+  with its own keys (linked to its person) and talks to the relay directly,
+  so it works with the laptop closed and the relay still sees only
+  ciphertext. The alternative, reaching the person's daemon from the phone,
+  needs the daemon online and reachable from outside.
+- **One engine, two hosts**: `polyph-web` wraps `RoomCore` sans-I/O; the page
+  owns the socket, the clock and storage. Read models moved into
+  `polyph_core::views` so the daemon and the phone answer with the same
+  shapes, and `packages/ui` runs unchanged on either (`AppClient`).
+- **Browser storage is sealed with a non-extractable WebCrypto key**: the
+  stored identity and room keys are useless if copied off the device.
+- **Widgets get their own read-only token** (`status.token`) that opens only
+  the status routes, which carry the content-free feed. Read-only routes allow
+  any origin to read them; the token still gates them.
+- **The VS Code panel is the shared app in a webview**, on the token the
+  extension read from the Polyph home; the daemon accepts `vscode-webview://`
+  origins. Claims use editor decorations (a 3px gutter in the holder's voice)
+  and explorer badges (initials; VS Code limits their colors to theme colors).
+
 ## Process
 
 - **Design skills.** Impeccable, Emil Kowalski's design-engineering skill,

@@ -151,9 +151,6 @@ accepted but hosted mode is M4.
 
 ## Milestone 7 gaps
 
-- **Browser-only members** (joining a room from a browser with no daemon,
-  using the wasm engine over the relay) come with the phone PWA in M8. The
-  browser client today is a window onto the person's own daemon.
 - **Desktop packaging** is configured (`tauri.conf.json`, icons) but no
   installers are built or signed yet; the app expects `polyph` next to it or
   on PATH. Release work is M11.
@@ -171,6 +168,32 @@ accepted but hosted mode is M4.
 - **The Impeccable passes** were done by hand with the design-taste
   inspector (`inspect.mjs --app`); its remaining warnings are the third
   typeface (DESIGN.md's serif for room names) and honest empty space.
+
+## Milestone 8 gaps
+
+- **Push notifications with the phone app closed** need a push service; they
+  belong to the hosted service (`cloud/`, M10). Today the phone notifies
+  while the app is open or in the background with its page alive.
+- **Phones cannot use LAN relays**: browsers cannot pin a self-signed relay
+  certificate, so a LAN-only room links computers with `polyph join
+  --member`, not phones (the app says so).
+- **The phone runs no agents, terminals or whiteboard canvas**; those views
+  are hidden there. It answers approvals, chats, moves cards and follows
+  transcripts from the moment it joined (earlier transcript lines live on the
+  devices that ran the agents).
+- **The phone does not upload relay snapshots**; members with daemons do.
+- **The phone's engine is 4.7 MB (1.1 MB compressed)**, cached by the service
+  worker after the first load.
+- **The hosted phone app** (`phone_url`, default `https://polyph.dev/m/`)
+  ships with the website in M10; until then self-hosters set `phone_url` to
+  where they serve `apps/web/out`.
+- **The VS Code extension was not run inside VS Code here** (its tests mock
+  the API; the `.vsix` packages); whiteboard fonts in its panel fall back to
+  system fonts. Claims are matched to workspace folders by relative path,
+  which assumes the folder is the repository root.
+- **Nublet's own format is unknown here**: Polyph provides a documented,
+  generic status provider and a provider description; if Nublet needs a
+  different document, it maps from `/status/widget`.
 
 ## Process gaps
 

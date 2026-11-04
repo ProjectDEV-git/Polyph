@@ -7,7 +7,11 @@
   "exports": {
     ".": "./src/index.ts",
     "./styles.css": "./src/styles.css",
-    "./member": "./src/member/index.ts"
+    "./member": "./src/member/index.ts",
+    "./i18n": "./src/i18n/localizer.ts",
+    "./client": "./src/api/client.ts",
+    "./voice": "./src/voice.ts",
+    "./approval-text": "./src/approval-text.ts"
   },
   "scripts": {
     "gen": "node ../../scripts/bundle-locales.mjs && node ../../scripts/build-web-member.mjs",
