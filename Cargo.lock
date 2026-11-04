@@ -3245,6 +3245,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "polyph-phone"
+version = "0.1.0"
+dependencies = [
+ "polyph-core",
+ "polyph-proto",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "polyph-plugins"
 version = "0.1.0"
 
@@ -3354,6 +3366,7 @@ dependencies = [
  "polyph-i18n",
  "polyph-localagent",
  "polyph-mcp",
+ "polyph-phone",
  "polyph-proto",
  "polyph-relay",
  "polyph-sandbox",
@@ -3364,6 +3377,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "tokio-tungstenite 0.30.0",
  "unicode-width",
  "zbus",
 ]

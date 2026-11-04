@@ -133,6 +133,25 @@ pub struct PendingApproval {
     pub escalate_at: i64,
 }
 
+/// A short, content-free title for an approval, for status feeds (pill,
+/// Nublet, phone notifications).
+pub fn approval_title(k: &ApprovalKind) -> String {
+    match k {
+        ApprovalKind::Command { command, .. } => {
+            format!("Run {}", command.split_whitespace().take(3).collect::<Vec<_>>().join(" "))
+        }
+        ApprovalKind::Edit { files, .. } => format!("Edit {} file(s)", files.len()),
+        ApprovalKind::Network { host, port } => format!("Connect to {host}:{port}"),
+        ApprovalKind::OutsideWorktree { path, .. } => format!("Access {path}"),
+        ApprovalKind::Push { branch, .. } => format!("Push {branch}"),
+        ApprovalKind::Merge { branch, into } => format!("Merge {branch} into {into}"),
+        ApprovalKind::TerminalInput { .. } => "Type in a terminal".into(),
+        ApprovalKind::HostCommand { .. } => "Run on the host".into(),
+        ApprovalKind::Steer { .. } => "Steer an agent".into(),
+        ApprovalKind::Other { title, .. } => title.clone(),
+    }
+}
+
 /// Events for local clients (CLI, TUI, app). Serialized as JSON on the local API.
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

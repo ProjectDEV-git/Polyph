@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "crates/polyph-proto",
   "crates/polyph-core",
+  "crates/polyph-phone",
   "crates/polyph-agents",
   "crates/polyph-localagent",
   "crates/polyph-sandbox",
@@ -44,6 +45,7 @@ todo = "warn"
 # internal
 polyph-proto = { path = "crates/polyph-proto", version = "0.1.0" }
 polyph-core = { path = "crates/polyph-core", version = "0.1.0" }
+polyph-phone = { path = "crates/polyph-phone", version = "0.1.0" }
 polyph-agents = { path = "crates/polyph-agents", version = "0.1.0" }
 polyph-localagent = { path = "crates/polyph-localagent", version = "0.1.0" }
 polyph-sandbox = { path = "crates/polyph-sandbox", version = "0.1.0" }

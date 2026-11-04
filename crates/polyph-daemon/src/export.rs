@@ -69,18 +69,5 @@ pub fn render(core: &mut RoomCore) -> String {
 
 /// A short, content-free title for status feeds (pill, Nublet).
 pub fn approval_title(k: &ApprovalKind) -> String {
-    match k {
-        ApprovalKind::Command { command, .. } => {
-            format!("Run {}", command.split_whitespace().take(3).collect::<Vec<_>>().join(" "))
-        }
-        ApprovalKind::Edit { files, .. } => format!("Edit {} file(s)", files.len()),
-        ApprovalKind::Network { host, port } => format!("Connect to {host}:{port}"),
-        ApprovalKind::OutsideWorktree { path, .. } => format!("Access {path}"),
-        ApprovalKind::Push { branch, .. } => format!("Push {branch}"),
-        ApprovalKind::Merge { branch, into } => format!("Merge {branch} into {into}"),
-        ApprovalKind::TerminalInput { .. } => "Type in a terminal".into(),
-        ApprovalKind::HostCommand { .. } => "Run on the host".into(),
-        ApprovalKind::Steer { .. } => "Steer an agent".into(),
-        ApprovalKind::Other { title, .. } => title.clone(),
-    }
+    polyph_core::room::approval_title(k)
 }
