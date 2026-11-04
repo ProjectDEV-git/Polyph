@@ -45,6 +45,16 @@ export function SettingsView() {
   const [workdir, setWorkdir] = useWorkdir();
   const [name, setName] = useState(me?.name ?? "");
   const [integrations, setIntegrations] = useState<Record<string, unknown> | null>(null);
+  const [plugins, setPlugins] = useState<
+    {
+      name: string;
+      version: string;
+      description: string;
+      tools: boolean;
+      hooks: string[];
+      hosts: string[];
+    }[]
+  >([]);
   const [usage, setUsage] = useState<{
     ledger: { room: Ledger; by_member: Record<string, Ledger> };
   } | null>(null);
@@ -57,6 +67,10 @@ export function SettingsView() {
   useEffect(() => {
     if (phone) return;
     app.api.call<Record<string, unknown>>("integrations.status").then(setIntegrations, () => {});
+    app.api.call<typeof plugins>("plugin.list").then(
+      (v) => setPlugins(Array.isArray(v) ? v : []),
+      () => {},
+    );
     if (room) app.api.call<typeof usage>("usage.get", { room: room.id }).then(setUsage, () => {});
   }, [app, room, phone]);
   const fmt = new Intl.NumberFormat(l.lang);
@@ -225,6 +239,36 @@ export function SettingsView() {
               }
             />
           </dl>
+        </Section>
+      )}
+      {!phone && (
+        <Section title={l.t("app-settings-plugins")} hint={l.t("app-settings-plugins-hint")}>
+          {plugins.length === 0 ? (
+            <p className="text-sm text-ink-2">{l.t("app-plugins-empty")}</p>
+          ) : (
+            <ul className="flex flex-col gap-3">
+              {plugins.map((p) => (
+                <li key={p.name} className="text-sm">
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-medium text-ink">{p.name}</span>
+                    <span className="num text-xs text-ink-2">{p.version}</span>
+                  </div>
+                  {p.description && <p className="text-ink-2">{p.description}</p>}
+                  <dl>
+                    {p.tools && <Row k={l.t("app-plugin-tools")} v={l.t("app-yes")} />}
+                    {p.hooks.length > 0 && (
+                      <Row k={l.t("app-plugin-hooks")} v={p.hooks.join(", ")} mono />
+                    )}
+                    <Row
+                      k={l.t("app-plugin-hosts")}
+                      v={p.hosts.length ? p.hosts.join(", ") : l.t("app-plugin-no-network")}
+                      mono={p.hosts.length > 0}
+                    />
+                  </dl>
+                </li>
+              ))}
+            </ul>
+          )}
         </Section>
       )}
       {usage && (

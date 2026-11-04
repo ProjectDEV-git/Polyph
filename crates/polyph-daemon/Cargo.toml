@@ -20,6 +20,7 @@ polyph-mcp = { workspace = true }
 polyph-git = { workspace = true }
 polyph-merge = { workspace = true }
 polyph-term = { workspace = true }
+polyph-plugins = { workspace = true }
 base64 = { workspace = true }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json"] }
 hmac = "0.12"

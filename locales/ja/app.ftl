@@ -195,3 +195,13 @@ app-agent-on-host = エージェントホスト { $host }(実行中 { $n })
 app-agent-on-host-offline = エージェントホスト { $host }(オフライン)
 app-agent-no-hosts = このルームにはあなたのエージェントホストがありません。コンピューターで `polyph agent-host invite` を実行して自分のサーバーを追加してください。
 app-agent-requested = エージェントホストに開始を依頼しました。開始するとここに表示されます。
+
+# Plugins in Settings.
+app-settings-plugins = プラグイン
+app-settings-plugins-hint = `polyph plugin add` でこのデバイスにインストールされたもの。エージェントのサンドボックスで動き、記載されたホストにだけ接続できます。
+app-plugins-empty = プラグインはありません。
+app-plugin-tools = エージェント用ツール
+app-plugin-hooks = 実行イベント
+app-plugin-hosts = ネットワーク
+app-plugin-no-network = なし
+app-yes = はい

@@ -304,6 +304,7 @@ impl Daemon {
         let _ = shared.daemon.set(Arc::downgrade(&d));
         tokio::spawn(crate::notify::run(Arc::downgrade(&d), d.subscribe()));
         tokio::spawn(crate::hosts::run(Arc::downgrade(&d), d.subscribe()));
+        tokio::spawn(crate::plugins::run(Arc::downgrade(&d), d.subscribe()));
         tokio::spawn(crate::github::run(Arc::downgrade(&d)));
         #[cfg(target_os = "linux")]
         {
@@ -1543,6 +1544,75 @@ impl Daemon {
                 crate::hosts::invite(self, &rt).await
             }
             "host.join" => crate::hosts::join(self, params).await,
+            "plugin.list" => ok(crate::plugins::list(&self.shared)),
+            "plugin.add" => {
+                #[derive(Deserialize)]
+                struct P {
+                    path: std::path::PathBuf,
+                    #[serde(default)]
+                    replace: bool,
+                }
+                let p: P = param(&params)?;
+                let i = crate::plugins::store(&self.shared).add(&p.path, p.replace).map_err(ext_err)?;
+                ok(
+                    json!({ "name": i.manifest.name, "version": i.manifest.version, "hosts": i.manifest.permissions.hosts }),
+                )
+            }
+            "plugin.inspect" => {
+                #[derive(Deserialize)]
+                struct P {
+                    path: std::path::PathBuf,
+                }
+                let p: P = param(&params)?;
+                let m = crate::plugins::inspect(&p.path).map_err(ext_err)?;
+                ok(serde_json::to_value(m).unwrap_or_default())
+            }
+            "plugin.remove" => {
+                #[derive(Deserialize)]
+                struct P {
+                    name: String,
+                }
+                let p: P = param(&params)?;
+                crate::plugins::store(&self.shared).remove(&p.name).map_err(ext_err)?;
+                ok(json!({}))
+            }
+            "skills.list" | "skills.show" | "skills.add" => {
+                #[derive(Deserialize)]
+                struct P {
+                    cwd: Option<std::path::PathBuf>,
+                    name: Option<String>,
+                    from: Option<std::path::PathBuf>,
+                }
+                let p: P = param(&params)?;
+                let repo = p.cwd.as_deref().map(polyph_git_root);
+                let personal = self.shared.paths.home.join("skills");
+                match method {
+                    "skills.list" => ok(polyph_plugins::skills::discover(repo.as_deref(), &personal)),
+                    "skills.show" => {
+                        let name = p.name.ok_or_else(|| ApiError::BadRequest("name is required".into()))?;
+                        let (s, body) =
+                            polyph_plugins::skills::read(repo.as_deref(), &personal, &name).map_err(ext_err)?;
+                        ok(json!({ "skill": s, "text": body }))
+                    }
+                    _ => {
+                        let from = p.from.ok_or_else(|| ApiError::BadRequest("from is required".into()))?;
+                        let repo = repo.ok_or_else(|| ApiError::BadRequest("cwd is required".into()))?;
+                        ok(polyph_plugins::skills::add_to_project(&from, &repo).map_err(ext_err)?)
+                    }
+                }
+            }
+            "template.list" => ok(polyph_plugins::templates::list(&self.shared.paths.home.join("templates"))),
+            "template.apply" => {
+                #[derive(Deserialize)]
+                struct P {
+                    name: String,
+                    dir: std::path::PathBuf,
+                }
+                let p: P = param(&params)?;
+                let repo = polyph_git_root(&p.dir);
+                ok(polyph_plugins::templates::apply(&self.shared.paths.home.join("templates"), &p.name, &repo)
+                    .map_err(ext_err)?)
+            }
             "agent.start" => {
                 let p: crate::agents::StartParams = param(&params)?;
                 let rt = self.find(&p.room).await?;
@@ -1971,6 +2041,27 @@ async fn recv_pake(client: &mut RelayClient, session: u64, secs: u64) -> Option<
             RelayFrame::PakeEnded { session: s, .. } if s == session => return None,
             _ => continue,
         }
+    }
+}
+
+/// The repository root holding `dir`, or `dir` itself outside a repository.
+fn polyph_git_root(dir: &std::path::Path) -> std::path::PathBuf {
+    let mut d = dir.to_path_buf();
+    loop {
+        if d.join(".git").exists() {
+            return d;
+        }
+        if !d.pop() {
+            return dir.to_path_buf();
+        }
+    }
+}
+
+fn ext_err(e: polyph_plugins::Error) -> ApiError {
+    match e {
+        polyph_plugins::Error::NotFound(s) => ApiError::NotFound(s),
+        polyph_plugins::Error::Invalid(s) | polyph_plugins::Error::Exists(s) => ApiError::BadRequest(s),
+        polyph_plugins::Error::Io(e) => ApiError::Failed(e.to_string()),
     }
 }
 

@@ -219,3 +219,13 @@ app-agent-on-host = Agent host { $host } ({ $n } running)
 app-agent-on-host-offline = Agent host { $host } (offline)
 app-agent-no-hosts = You have no agent host in this room. Add your own server with `polyph agent-host invite` on your computer.
 app-agent-requested = Asked your agent host to start it. It appears here when it starts.
+
+# Plugins in Settings.
+app-settings-plugins = Plugins
+app-settings-plugins-hint = Installed on this device with `polyph plugin add`. They run in the agent sandbox and reach only the hosts listed.
+app-plugins-empty = No plugins installed.
+app-plugin-tools = Tools for agents
+app-plugin-hooks = Runs on
+app-plugin-hosts = Network
+app-plugin-no-network = None
+app-yes = Yes

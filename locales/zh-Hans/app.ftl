@@ -195,3 +195,13 @@ app-agent-on-host = 智能体主机 { $host }(运行中 { $n })
 app-agent-on-host-offline = 智能体主机 { $host }(离线)
 app-agent-no-hosts = 你在此房间中还没有智能体主机。在电脑上用 `polyph agent-host invite` 添加你自己的服务器。
 app-agent-requested = 已请求你的智能体主机启动它。启动后会显示在这里。
+
+# Plugins in Settings.
+app-settings-plugins = 插件
+app-settings-plugins-hint = 通过 `polyph plugin add` 安装在此设备上。它们在智能体沙箱中运行,只能访问列出的主机。
+app-plugins-empty = 尚未安装插件。
+app-plugin-tools = 智能体工具
+app-plugin-hooks = 运行于
+app-plugin-hosts = 网络
+app-plugin-no-network = 无
+app-yes = 是

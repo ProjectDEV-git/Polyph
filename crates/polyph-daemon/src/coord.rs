@@ -328,6 +328,8 @@ pub async fn call_tool(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, tool:
         }
         tools::READ_WB => read_whiteboard(rt, args).await,
         tools::DRAW => draw_diagram(h, rt, shared, args).await,
+        tools::SKILLS => Ok(list_skills(h, shared)),
+        tools::READ_SKILL => read_skill(h, shared, args),
         _ => Err(ToolOutput::err(format!("unknown tool {tool}"))),
     };
     r.unwrap_or_else(|e| e)
@@ -665,6 +667,29 @@ pub fn placed_notes(all: &[MemoryNote], path: &str, worktree: &Path) -> Vec<(Mem
             (n, p)
         })
         .collect()
+}
+
+fn list_skills(h: &AgentHandle, shared: &Shared) -> ToolOutput {
+    let all = polyph_plugins::skills::discover(Some(&h.worktree), &shared.paths.home.join("skills"));
+    if all.is_empty() {
+        return ToolOutput::ok("No skills in this project.", json!({ "skills": [] }));
+    }
+    let mut text = String::from("Skills (read with read_skill):");
+    for s in &all {
+        text.push_str(&format!("\n- {}: {}", s.name, s.description));
+    }
+    ToolOutput::ok(text, json!({ "skills": all }))
+}
+
+fn read_skill(h: &AgentHandle, shared: &Shared, args: &Value) -> ToolResult {
+    #[derive(Deserialize)]
+    struct A {
+        name: String,
+    }
+    let a: A = arg(args)?;
+    let (s, body) = polyph_plugins::skills::read(Some(&h.worktree), &shared.paths.home.join("skills"), &a.name)
+        .map_err(|e| ToolOutput::err(e.to_string()))?;
+    Ok(ToolOutput::ok(body, json!({ "name": s.name, "source": s.source })))
 }
 
 async fn recall(h: &AgentHandle, rt: &RoomRuntime, args: &Value) -> ToolResult {

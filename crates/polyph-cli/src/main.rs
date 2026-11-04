@@ -150,6 +150,18 @@ enum Cmd {
         #[command(subcommand)]
         cmd: HostCmd,
     },
+    Plugin {
+        #[command(subcommand)]
+        cmd: PluginCmd,
+    },
+    Skills {
+        #[command(subcommand)]
+        cmd: SkillsCmd,
+    },
+    Template {
+        #[command(subcommand)]
+        cmd: TemplateCmd,
+    },
     Agents {
         #[command(subcommand)]
         cmd: AgentsCmd,
@@ -220,6 +232,43 @@ enum Cmd {
     Budget {
         #[command(subcommand)]
         cmd: BudgetCmd,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum PluginCmd {
+    List,
+    /// Install a plugin from a folder with a polyph-plugin.toml.
+    Add {
+        path: PathBuf,
+        /// Replace an installed plugin with the same name.
+        #[arg(long)]
+        replace: bool,
+    },
+    Remove {
+        name: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SkillsCmd {
+    /// Skills for this repository and your own.
+    List,
+    Show {
+        name: String,
+    },
+    /// Copy a skill folder into this repository's .polyph/skills.
+    Add {
+        path: PathBuf,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum TemplateCmd {
+    List,
+    /// Write a template's files into this repository (existing files are kept).
+    Apply {
+        name: String,
     },
 }
 
@@ -871,6 +920,122 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
             }
         },
         Cmd::Agent { cmd } => agent_cmd(ctx, &mut api, cmd).await?,
+        Cmd::Plugin { cmd: PluginCmd::List } => {
+            let v = call(&mut api, "plugin.list", json!({})).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else if v.as_array().is_none_or(|a| a.is_empty()) {
+                ctx.out(l.t("plugins-empty"));
+            } else {
+                for p in v.as_array().into_iter().flatten() {
+                    let hooks: Vec<&str> =
+                        p["hooks"].as_array().into_iter().flatten().filter_map(|x| x.as_str()).collect();
+                    let hosts: Vec<&str> =
+                        p["hosts"].as_array().into_iter().flatten().filter_map(|x| x.as_str()).collect();
+                    ctx.out(tr!(
+                        l,
+                        "plugin-line",
+                        name = p["name"].as_str().unwrap_or_default(),
+                        version = p["version"].as_str().unwrap_or_default(),
+                        description = p["description"].as_str().unwrap_or_default()
+                    ));
+                    if p["tools"] == true {
+                        ctx.out(format!("    {}", l.t("plugin-gives-tools")));
+                    }
+                    if !hooks.is_empty() {
+                        ctx.out(format!("    {}", tr!(l, "plugin-hooks", events = hooks.join(", "))));
+                    }
+                    if !hosts.is_empty() {
+                        ctx.out(format!("    {}", tr!(l, "plugin-hosts", hosts = hosts.join(", "))));
+                    }
+                }
+            }
+        }
+        Cmd::Plugin { cmd: PluginCmd::Add { path, replace } } => {
+            let path = path.canonicalize()?;
+            let v = call(&mut api, "plugin.add", json!({ "path": path, "replace": replace })).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else {
+                ctx.out(tr!(l, "plugin-added", name = v["name"].as_str().unwrap_or_default()));
+                let hosts: Vec<&str> = v["hosts"].as_array().into_iter().flatten().filter_map(|x| x.as_str()).collect();
+                if !hosts.is_empty() {
+                    ctx.out(tr!(l, "plugin-hosts", hosts = hosts.join(", ")));
+                }
+            }
+        }
+        Cmd::Plugin { cmd: PluginCmd::Remove { name } } => {
+            call(&mut api, "plugin.remove", json!({ "name": name })).await?;
+            ctx.out(l.t("plugin-removed"));
+        }
+        Cmd::Skills { cmd } => {
+            let cwd = std::env::current_dir()?;
+            match cmd {
+                SkillsCmd::List => {
+                    let v = call(&mut api, "skills.list", json!({ "cwd": cwd })).await?;
+                    if ctx.json {
+                        ctx.print_json(&v);
+                    } else if v.as_array().is_none_or(|a| a.is_empty()) {
+                        ctx.out(l.t("skills-empty"));
+                    } else {
+                        for s in v.as_array().into_iter().flatten() {
+                            let source = l.t(&format!("skill-source-{}", s["source"].as_str().unwrap_or("project")));
+                            ctx.out(tr!(
+                                l,
+                                "skill-line",
+                                name = s["name"].as_str().unwrap_or_default(),
+                                source = source,
+                                description = s["description"].as_str().unwrap_or_default()
+                            ));
+                        }
+                    }
+                }
+                SkillsCmd::Show { name } => {
+                    let v = call(&mut api, "skills.show", json!({ "cwd": cwd, "name": name })).await?;
+                    if ctx.json {
+                        ctx.print_json(&v);
+                    } else {
+                        ctx.out(v["text"].as_str().unwrap_or_default());
+                    }
+                }
+                SkillsCmd::Add { path } => {
+                    let from = path.canonicalize()?;
+                    let v = call(&mut api, "skills.add", json!({ "cwd": cwd, "from": from })).await?;
+                    ctx.out(tr!(l, "skill-added", name = v["name"].as_str().unwrap_or_default()));
+                }
+            }
+        }
+        Cmd::Template { cmd: TemplateCmd::List } => {
+            let v = call(&mut api, "template.list", json!({})).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else {
+                for t in v.as_array().into_iter().flatten() {
+                    let name = t["name"].as_str().unwrap_or_default();
+                    // Built-in descriptions come from the locale files.
+                    let description = if t["builtin"] == true {
+                        l.t(&format!("template-desc-{name}"))
+                    } else {
+                        t["description"].as_str().unwrap_or_default().to_string()
+                    };
+                    ctx.out(tr!(l, "template-line", name = name, description = description));
+                }
+            }
+        }
+        Cmd::Template { cmd: TemplateCmd::Apply { name } } => {
+            let dir = std::env::current_dir()?;
+            let v = call(&mut api, "template.apply", json!({ "name": name, "dir": dir })).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else {
+                for f in v["written"].as_array().into_iter().flatten() {
+                    ctx.out(tr!(l, "template-wrote", file = f.as_str().unwrap_or_default()));
+                }
+                for f in v["kept"].as_array().into_iter().flatten() {
+                    ctx.out(tr!(l, "template-kept", file = f.as_str().unwrap_or_default()));
+                }
+            }
+        }
         Cmd::AgentHost { cmd: HostCmd::Invite { room } } => {
             let room = ctx.room(&mut api, room).await?;
             let v = call(&mut api, "host.invite", json!({ "room": room })).await?;

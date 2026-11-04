@@ -28,6 +28,10 @@ name = "polyph-test-mcp"
 path = "src/bin/mcp.rs"
 
 [[bin]]
+name = "polyph-test-plugin-mcp"
+path = "src/bin/plugin_mcp.rs"
+
+[[bin]]
 name = "polyph-test-localagent"
 path = "src/bin/localagent.rs"
 

@@ -24,6 +24,7 @@ pub mod notify;
 pub mod paths;
 pub mod phone;
 pub mod plan;
+pub mod plugins;
 pub mod runtime;
 pub mod secrets;
 pub mod status;

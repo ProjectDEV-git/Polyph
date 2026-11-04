@@ -195,3 +195,13 @@ app-agent-on-host = เครื่องรันเอเจนต์ { $host 
 app-agent-on-host-offline = เครื่องรันเอเจนต์ { $host } (ออฟไลน์)
 app-agent-no-hosts = คุณยังไม่มีเครื่องรันเอเจนต์ในห้องนี้ เพิ่มเซิร์ฟเวอร์ของคุณด้วย `polyph agent-host invite` บนคอมพิวเตอร์
 app-agent-requested = ขอให้เครื่องรันเอเจนต์เริ่มแล้ว เอเจนต์จะแสดงที่นี่เมื่อเริ่มทำงาน
+
+# Plugins in Settings.
+app-settings-plugins = ปลั๊กอิน
+app-settings-plugins-hint = ติดตั้งบนอุปกรณ์นี้ด้วย `polyph plugin add` ทำงานในแซนด์บ็อกซ์ของเอเจนต์ และเข้าถึงได้เฉพาะโฮสต์ที่ระบุ
+app-plugins-empty = ยังไม่มีปลั๊กอิน
+app-plugin-tools = เครื่องมือสำหรับเอเจนต์
+app-plugin-hooks = ทำงานเมื่อ
+app-plugin-hosts = เครือข่าย
+app-plugin-no-network = ไม่มี
+app-yes = ใช่

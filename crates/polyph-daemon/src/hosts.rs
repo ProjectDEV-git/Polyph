@@ -97,7 +97,9 @@ async fn resolve(rt: &RoomRuntime, q: &str, now: i64) -> Result<DeviceId, ApiErr
             ));
         }
         [] => {
-            return Err(ApiError::NotFound(format!("no agent host of yours matches \"{q}\"; see `polyph agent hosts`")));
+            return Err(ApiError::NotFound(format!(
+                "no agent host of yours matches \"{q}\"; see `polyph agent hosts`"
+            )));
         }
         // "cloud" with several online hosts: the least busy one.
         many if ql == "cloud" => many.iter().min_by_key(|h| h.agents).copied().unwrap_or(many[0]),

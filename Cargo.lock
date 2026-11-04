@@ -3168,6 +3168,7 @@ dependencies = [
  "polyph-i18n",
  "polyph-mcp",
  "polyph-merge",
+ "polyph-plugins",
  "polyph-proto",
  "polyph-relay",
  "polyph-sandbox",
@@ -3260,6 +3261,13 @@ dependencies = [
 [[package]]
 name = "polyph-plugins"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml",
+]
 
 [[package]]
 name = "polyph-proto"
