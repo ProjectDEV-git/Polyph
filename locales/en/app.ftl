@@ -210,3 +210,12 @@ app-phone-pair-hint = Open the link on your phone, or scan the code. The phone j
 app-phone-pair-make = Make a pairing link
 app-phone-pair-qr = QR code for the pairing link
 app-phone-pair-expires = Works once, for 15 minutes.
+
+# Agent hosts in the app.
+app-agent-on = Run on
+app-agent-on-here = This computer
+app-agent-on-any = Any of my agent hosts
+app-agent-on-host = Agent host { $host } ({ $n } running)
+app-agent-on-host-offline = Agent host { $host } (offline)
+app-agent-no-hosts = You have no agent host in this room. Add your own server with `polyph agent-host invite` on your computer.
+app-agent-requested = Asked your agent host to start it. It appears here when it starts.

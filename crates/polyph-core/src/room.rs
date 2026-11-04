@@ -15,8 +15,8 @@ use polyph_proto::identity::{DeviceIdentity, DevicePublic};
 use polyph_proto::ids::{DeviceId, MemberId, ObjectId, RoomId};
 use polyph_proto::join::JoinApproved;
 use polyph_proto::messages::{
-    AgentRef, ApprovalKind, ApprovalMsg, Claim, ClaimMsg, ClaimTarget, Decision, DocName, Knock, Presence, Profile,
-    RoomMessage, Surface,
+    AGENT_HOST, AgentRef, ApprovalKind, ApprovalMsg, Claim, ClaimMsg, ClaimTarget, Decision, DocName, Knock, Presence,
+    Profile, RoomMessage, Surface,
 };
 use polyph_proto::signed::Signed;
 use serde::{Deserialize, Serialize};
@@ -230,6 +230,15 @@ pub enum RoomEvent {
         from: DeviceId,
         member: MemberId,
         msg: Box<polyph_proto::messages::TerminalMsg>,
+    },
+    /// Agent-host work, for the daemon's hosts module. `member` is the
+    /// sender's verified member; `host` whether the sender has the agent-host
+    /// capability.
+    Host {
+        from: DeviceId,
+        member: MemberId,
+        host: bool,
+        msg: Box<polyph_proto::messages::HostMsg>,
     },
     /// Hosted-mode mirroring, for the daemon's mirror module.
     Mirror {
@@ -553,6 +562,17 @@ impl RoomCore {
         self.peers.get(d).and_then(|p| p.verified.as_ref()).map(|v| v.role)
     }
 
+    /// Whether a device's certificate makes it an agent host (this device too).
+    pub fn is_agent_host(&self, d: &DeviceId) -> bool {
+        if *d == self.me {
+            return self.my_verified.capabilities.iter().any(|c| c == AGENT_HOST);
+        }
+        self.peers
+            .get(d)
+            .and_then(|p| p.verified.as_ref())
+            .is_some_and(|v| v.capabilities.iter().any(|c| c == AGENT_HOST))
+    }
+
     fn sender_member(&self, d: &DeviceId) -> Option<MemberId> {
         self.peers.get(d).and_then(|p| p.member())
     }
@@ -712,6 +732,11 @@ impl RoomCore {
                     out.push(Effect::Event(RoomEvent::Terminal { from, member, msg: Box::new(t) }));
                 }
             }
+            RoomMessage::Host(h) if writer => {
+                let Some(member) = self.sender_member(&from) else { return out };
+                let host = self.is_agent_host(&from);
+                out.push(Effect::Event(RoomEvent::Host { from, member, host, msg: Box::new(h) }));
+            }
             RoomMessage::Mirror(m) if writer => {
                 // A device proposes changes only for its own agents.
                 let honest = match &m {
@@ -851,7 +876,8 @@ impl RoomCore {
             role,
             issued_at: now,
             expires_at: None,
-            capabilities: vec![],
+            // Only capabilities this version knows are granted.
+            capabilities: k.capabilities.iter().filter(|c| *c == AGENT_HOST).cloned().collect(),
         };
         let chain = self.my_chain.issue(&self.identity, &cert)?;
         let key = self.keyring.current_key().ok_or(RoomError::Invalid("no room key"))?;

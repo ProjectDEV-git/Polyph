@@ -10,8 +10,8 @@ use polyph_core::room::{NO_HUE, approval_title};
 use polyph_core::voice::{Step, Theme, voice_css};
 use polyph_proto::cert::Role;
 use polyph_proto::crdt::{Activity, ActivityEntry, Board, NewCard};
-use polyph_proto::ids::{MemberId, ObjectId};
-use polyph_proto::messages::{AgentEventKind, AgentState, ApprovalScope, Decision, DocName};
+use polyph_proto::ids::{DeviceId, MemberId, ObjectId};
+use polyph_proto::messages::{AgentEventKind, AgentState, ApprovalScope, Decision, DocName, HostMsg, RoomMessage};
 use polyph_proto::status::{StatusAgent, StatusApproval, StatusSnapshot};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -130,7 +130,7 @@ pub fn status(p: &mut Phone, theme: Theme, now: i64) -> StatusSnapshot {
             state,
             task: task.and_then(|t| cards.iter().find(|c| c.id == t).map(|c| c.title.clone())),
             mine: false,
-            cloud: false,
+            cloud: r.core.is_agent_host(&a.device),
         });
     }
     let approvals = r
@@ -539,6 +539,76 @@ pub fn call(p: &mut Phone, method: &str, params: &Value, now: i64, out: &mut Out
                 r.transcripts[&id].iter().filter(|e| q.after.is_none_or(|a| e.seq > a)).cloned().collect();
             Ok(json!({ "events": events, "summary": Value::Null }))
         }
+        "agent.hosts" => {
+            let r = room_of(p, params)?;
+            Ok(Value::Array(hosts(r, now)))
+        }
+        "agent.start" => {
+            // A phone runs no agents itself, but can start them on its
+            // person's agent hosts (their own servers).
+            #[derive(Deserialize)]
+            struct P {
+                room: String,
+                kind: String,
+                on: Option<String>,
+                preset: Option<String>,
+                task: Option<String>,
+                prompt: Option<String>,
+            }
+            let q: P = param(params)?;
+            let Some(on) = q.on.filter(|s| !s.is_empty()) else { return Err(needs_daemon("agent.start")) };
+            let r = room(p, &q.room)?;
+            let list = hosts(r, now);
+            let ql = on.to_lowercase();
+            let pick = list
+                .iter()
+                .filter(|h| h["online"] == true)
+                .filter(|h| ql == "cloud" || h["device"].as_str().is_some_and(|d| d.starts_with(&ql)))
+                .min_by_key(|h| h["agents"].as_u64().unwrap_or(0))
+                .and_then(|h| h["device"].as_str())
+                .and_then(|d| DeviceId::from_hex(d).ok())
+                .ok_or_else(|| {
+                    PhoneError::NotFound(if list.is_empty() {
+                        "you have no agent host in this room; add one with `polyph agent-host invite`".into()
+                    } else {
+                        "none of your agent hosts is online".into()
+                    })
+                })?;
+            let task = match q.task.as_deref() {
+                Some(t) => Some(ObjectId::from_hex(t).map_err(|_| PhoneError::Bad("task must be a card id".into()))?),
+                None => None,
+            };
+            let req = ObjectId::random()?;
+            let msg = HostMsg::Start { req, host: pick, kind: q.kind, preset: q.preset, task, prompt: q.prompt };
+            apply(r, vec![polyph_core::Effect::Send(RoomMessage::Host(msg))], out);
+            Ok(json!({ "pending": true, "host": pick.to_hex() }))
+        }
+        "agent.prompt" | "agent.stop" => {
+            #[derive(Deserialize)]
+            struct P {
+                agent: String,
+                text: Option<String>,
+            }
+            let q: P = param(params)?;
+            let r = p.room.as_mut().ok_or_else(|| PhoneError::NotFound("no such agent".into()))?;
+            let ql = q.agent.to_lowercase();
+            let a = r
+                .transcripts
+                .values()
+                .filter_map(|l| l.front().map(|e| e.agent.clone()))
+                .find(|a| a.id.to_hex().starts_with(&ql) || a.label.to_lowercase() == ql)
+                .ok_or_else(|| PhoneError::NotFound("no such agent".into()))?;
+            if a.member != r.core.my_member || !r.core.is_agent_host(&a.device) {
+                return Err(needs_daemon(method));
+            }
+            let msg = match (method, q.text) {
+                ("agent.prompt", Some(text)) => HostMsg::Prompt { host: a.device, agent: a.id, text },
+                ("agent.prompt", None) => return Err(PhoneError::Bad("a prompt needs text".into())),
+                _ => HostMsg::Stop { host: a.device, agent: a.id },
+            };
+            apply(r, vec![polyph_core::Effect::Send(RoomMessage::Host(msg))], out);
+            Ok(json!({ "forwarded": true }))
+        }
         "inbox.send" => {
             #[derive(Deserialize)]
             struct P {
@@ -574,6 +644,25 @@ pub fn call(p: &mut Phone, method: &str, params: &Value, now: i64, out: &mut Out
         "merge.queue" | "term.list" | "claims.list" | "memory.list" => Ok(json!([])),
         other => Err(needs_daemon(other)),
     }
+}
+
+/// This member's agent hosts, like the daemon's `agent.hosts`.
+fn hosts(r: &Room, now: i64) -> Vec<Value> {
+    let me = r.core.my_member;
+    r.core
+        .peers
+        .iter()
+        .filter(|(d, x)| x.member() == Some(me) && r.core.is_agent_host(d))
+        .map(|(d, x)| {
+            let agents = r
+                .transcripts
+                .values()
+                .filter(|l| l.front().is_some_and(|e| e.agent.device == *d))
+                .filter(|l| !matches!(agent_state(l), Some(AgentState::Stopped)))
+                .count();
+            json!({ "device": d.to_hex(), "name": x.name(), "online": x.online(now), "agents": agents })
+        })
+        .collect()
 }
 
 /// Appends an activity entry, like the daemon's `feed::log_locked`.

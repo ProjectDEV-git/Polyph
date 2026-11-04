@@ -15,6 +15,7 @@ pub mod events;
 pub mod export;
 pub mod feed;
 pub mod github;
+pub mod hosts;
 pub mod integrations;
 pub mod lan;
 pub mod linear;

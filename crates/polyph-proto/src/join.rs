@@ -19,6 +19,9 @@ pub struct JoinRequest {
     /// Set when linking another device of the same account rather than joining a room.
     #[serde(default)]
     pub link_device: bool,
+    /// Device capabilities asked for (see `messages::AGENT_HOST`).
+    #[serde(default)]
+    pub capabilities: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

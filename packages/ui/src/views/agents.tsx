@@ -6,7 +6,7 @@ import type { AgentEvent } from "../api/types";
 import { StatusIcon, StatusMark, statusOf } from "../components/status";
 import { Button, Empty, Input, Label, Rows, Select, Textarea } from "../components/ui";
 import { VoiceName, agentSteps, hueOf, useVoice } from "../components/voice";
-import { useApp, useS } from "../ctx";
+import { useApp, usePlatform, useS } from "../ctx";
 import { useT } from "../i18n";
 import { Part } from "../store";
 import { clock } from "../time";
@@ -225,26 +225,42 @@ function StartAgent({ onDone }: { onDone: () => void }) {
   const [task, setTask] = useState("");
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
+  // Where to run: this computer, or one of my agent hosts (my own servers).
+  const phone = usePlatform().kind === "phone";
+  const [hosts, setHosts] = useState<{ device: string; online: boolean; agents: number }[]>([]);
+  const [on, setOn] = useState(phone ? "cloud" : "");
   useEffect(() => {
-    if (!workdir) return;
+    if (!room) return;
+    app.api
+      .call<{ device: string; online: boolean; agents: number }[]>("agent.hosts", { room })
+      .then((h) => setHosts(Array.isArray(h) ? h : []))
+      .catch(() => {});
+  }, [room, app]);
+  useEffect(() => {
+    if (!workdir || on) return;
     app.api
       .call<{ agents: { name: string }[] }>("agents.doctor", { cwd: workdir })
       .then((d) => setKinds(d.agents.map((a) => a.name)))
       .catch(() => {});
-  }, [workdir, app]);
+  }, [workdir, app, on]);
   return (
     <form
       className="flex max-w-xl flex-col gap-4 p-4"
       onSubmit={async (e) => {
         e.preventDefault();
         setBusy(true);
-        const r = await app.act<{ id: string }>(
+        const where = on ? { on } : { cwd: workdir };
+        const r = await app.act<{ id?: string; pending?: boolean }>(
           "agent.start",
-          { room, kind, cwd: workdir, task: task || null, prompt: prompt.trim() || null },
+          { room, kind, ...where, task: task || null, prompt: prompt.trim() || null },
           l.t("tui-agent-started"),
         );
         setBusy(false);
-        if (r?.id) {
+        if (r?.pending) {
+          // The host answers through the room; the agent appears when it starts.
+          app.say(l.t("app-agent-requested"));
+          onDone();
+        } else if (r?.id) {
           await app.refresh(Part.AGENTS);
           app.selectAgent(r.id);
           onDone();
@@ -262,16 +278,38 @@ function StartAgent({ onDone }: { onDone: () => void }) {
           ))}
         </Select>
       </div>
-      <div>
-        <Label htmlFor="ag-dir">{l.t("app-workdir")}</Label>
-        <Input
-          id="ag-dir"
-          className="font-mono"
-          value={workdir}
-          onChange={(e) => setWorkdir(e.target.value)}
-          placeholder={l.t("app-workdir-placeholder")}
-        />
-      </div>
+      {(hosts.length > 0 || phone) && (
+        <div>
+          <Label htmlFor="ag-on">{l.t("app-agent-on")}</Label>
+          <Select id="ag-on" value={on} onChange={(e) => setOn(e.target.value)}>
+            {!phone && <option value="">{l.t("app-agent-on-here")}</option>}
+            {hosts.length > 1 && <option value="cloud">{l.t("app-agent-on-any")}</option>}
+            {hosts.map((h) => (
+              <option key={h.device} value={h.device} disabled={!h.online}>
+                {l.t(h.online ? "app-agent-on-host" : "app-agent-on-host-offline", {
+                  host: h.device.slice(0, 8),
+                  n: h.agents,
+                })}
+              </option>
+            ))}
+          </Select>
+          {hosts.length === 0 && (
+            <p className="mt-1 text-xs text-ink-2">{l.t("app-agent-no-hosts")}</p>
+          )}
+        </div>
+      )}
+      {!on && (
+        <div>
+          <Label htmlFor="ag-dir">{l.t("app-workdir")}</Label>
+          <Input
+            id="ag-dir"
+            className="font-mono"
+            value={workdir}
+            onChange={(e) => setWorkdir(e.target.value)}
+            placeholder={l.t("app-workdir-placeholder")}
+          />
+        </div>
+      )}
       <div>
         <Label htmlFor="ag-task">{l.t("app-agent-task")}</Label>
         <Select id="ag-task" value={task} onChange={(e) => setTask(e.target.value)}>
@@ -293,7 +331,11 @@ function StartAgent({ onDone }: { onDone: () => void }) {
         />
       </div>
       <div className="flex gap-2">
-        <Button type="submit" variant="primary" disabled={busy || !workdir}>
+        <Button
+          type="submit"
+          variant="primary"
+          disabled={busy || (on ? phone && hosts.length === 0 : !workdir)}
+        >
           <Play size={14} strokeWidth={1.5} />
           {l.t("app-start")}
         </Button>

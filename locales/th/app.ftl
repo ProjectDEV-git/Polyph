@@ -186,3 +186,12 @@ app-phone-pair-hint = เปิดลิงก์บนโทรศัพท์ 
 app-phone-pair-make = สร้างลิงก์จับคู่
 app-phone-pair-qr = คิวอาร์โค้ดสำหรับลิงก์จับคู่
 app-phone-pair-expires = ใช้ได้ครั้งเดียว ภายใน 15 นาที
+
+# Agent hosts in the app.
+app-agent-on = รันบน
+app-agent-on-here = คอมพิวเตอร์เครื่องนี้
+app-agent-on-any = เครื่องรันเอเจนต์ของฉันเครื่องใดก็ได้
+app-agent-on-host = เครื่องรันเอเจนต์ { $host } (กำลังรัน { $n })
+app-agent-on-host-offline = เครื่องรันเอเจนต์ { $host } (ออฟไลน์)
+app-agent-no-hosts = คุณยังไม่มีเครื่องรันเอเจนต์ในห้องนี้ เพิ่มเซิร์ฟเวอร์ของคุณด้วย `polyph agent-host invite` บนคอมพิวเตอร์
+app-agent-requested = ขอให้เครื่องรันเอเจนต์เริ่มแล้ว เอเจนต์จะแสดงที่นี่เมื่อเริ่มทำงาน

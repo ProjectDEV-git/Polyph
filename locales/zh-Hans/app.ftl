@@ -186,3 +186,12 @@ app-phone-pair-hint = 在手机上打开链接或扫描二维码。手机以你�
 app-phone-pair-make = 生成配对链接
 app-phone-pair-qr = 配对链接的二维码
 app-phone-pair-expires = 仅限一次,15 分钟内有效。
+
+# Agent hosts in the app.
+app-agent-on = 运行位置
+app-agent-on-here = 这台电脑
+app-agent-on-any = 我的任一智能体主机
+app-agent-on-host = 智能体主机 { $host }(运行中 { $n })
+app-agent-on-host-offline = 智能体主机 { $host }(离线)
+app-agent-no-hosts = 你在此房间中还没有智能体主机。在电脑上用 `polyph agent-host invite` 添加你自己的服务器。
+app-agent-requested = 已请求你的智能体主机启动它。启动后会显示在这里。

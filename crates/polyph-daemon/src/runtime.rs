@@ -605,6 +605,7 @@ async fn host_join_step(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, se
                 kx: req.device.kx.to_vec(),
                 name_salt: req.name_salt.clone(),
                 surface: Some(req.surface.clone()),
+                capabilities: req.capabilities.clone(),
             };
             let kid = knock.id;
             let auto = !ctx.core.require_approval() && ctx.core.role().can_approve_joins();

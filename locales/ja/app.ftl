@@ -186,3 +186,12 @@ app-phone-pair-hint = スマートフォンでリンクを開くか、コード�
 app-phone-pair-make = ペアリングリンクを作成
 app-phone-pair-qr = ペアリングリンクの QR コード
 app-phone-pair-expires = 1 回のみ、15 分間有効です。
+
+# Agent hosts in the app.
+app-agent-on = 実行場所
+app-agent-on-here = このコンピューター
+app-agent-on-any = 自分のエージェントホストのいずれか
+app-agent-on-host = エージェントホスト { $host }(実行中 { $n })
+app-agent-on-host-offline = エージェントホスト { $host }(オフライン)
+app-agent-no-hosts = このルームにはあなたのエージェントホストがありません。コンピューターで `polyph agent-host invite` を実行して自分のサーバーを追加してください。
+app-agent-requested = エージェントホストに開始を依頼しました。開始するとここに表示されます。

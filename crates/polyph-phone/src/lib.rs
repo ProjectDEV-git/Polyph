@@ -468,6 +468,7 @@ impl Phone {
                     name_salt: j.salt.to_vec(),
                     surface: "phone".into(),
                     link_device: false,
+                    capabilities: vec![],
                 };
                 match to_cbor(&req).map_err(PhoneError::from).and_then(|b| Ok(channel.seal(&b)?)) {
                     Ok(body) => {
