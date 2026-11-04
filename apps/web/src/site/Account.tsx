@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import { Localizer } from "@polyph/ui/core";
 import {
   ApiFail,
+  teamMembers,
   cloud,
   readToken,
   writeToken,
@@ -447,15 +448,11 @@ function Teams(props: {
 
   useEffect(() => {
     let live = true;
-    void Promise.all(
-      me.teams.map((t) =>
-        cloud
-          .team(token, t.id)
-          .then((v) => [t.id, v.members] as const)
-          .catch(() => [t.id, []] as const),
-      ),
+    void teamMembers(
+      token,
+      me.teams.map((t) => t.id),
     ).then((rows) => {
-      if (live) setMembers(Object.fromEntries(rows));
+      if (live) setMembers(rows);
     });
     return () => {
       live = false;

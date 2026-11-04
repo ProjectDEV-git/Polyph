@@ -181,22 +181,24 @@ site-footer-legal = © 2026 Polyph
 site-footer-cta = Get Polyph
 
 ## Download
-site-dl-title = Build Polyph from source
-site-dl-sub = Installers arrive with the first release. Until then, build the command line, daemon and relay from source; it takes a few minutes.
+site-dl-title = Install Polyph
+site-dl-sub = One command installs the command line, daemon and relay into your home directory, with no root needed. It checks the download against the release’s checksums.
+site-dl-step-install = Linux and macOS
+site-dl-step-install-win = Windows (PowerShell)
+site-dl-source-title = Or build from source
+site-dl-releases = All downloads on GitHub
 site-dl-need = You need
 site-dl-need-rust = Rust 1.94 or newer
 site-dl-need-git = git
 site-dl-need-agent = A coding agent you already use, or a local model
-site-dl-step-clone = Get the source
-site-dl-step-build = Build and install polyph
 site-dl-step-host = Host a room in your repository
 site-dl-step-join = A teammate joins with the code
 site-dl-immutable-title = Immutable Linux
 site-dl-immutable = On Bazzite, Fedora Atomic and similar systems, cargo installs into your home directory, so nothing touches the read-only system. The agent sandbox uses bubblewrap or Landlock, both available without root.
 site-dl-relay-title = Your own relay
-site-dl-relay = Build the relay the same way and run it behind any TLS proxy. It keeps encrypted snapshots in one SQLite file.
+site-dl-relay = Run the relay with Docker and Caddy, or as a systemd service from the release archive. It keeps encrypted snapshots in one SQLite file.
 site-dl-apps-title = Desktop app and VS Code
-site-dl-apps = Packaged desktop apps and the VS Code extension come with the first release. The browser app works today: run polyph web.
+site-dl-apps = The desktop app (.dmg, .msi, .deb, .rpm, .AppImage) carries its own polyph. It and the VS Code extension (.vsix) are on the releases page.
 
 ## Security
 site-sec-title = What the relay can see

@@ -1,0 +1,19 @@
+# Serving the website yourself instead of Vercel: the static export
+# (pnpm --filter @polyph/web build -> apps/web/out) with the same headers as
+# apps/web/vercel.json. Change api.polyph.dev to your account service.
+{$SITE_DOMAIN} {
+	root * /srv/polyph-web
+	encode zstd gzip
+	file_server
+
+	header {
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://api.polyph.dev; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
+	@phone path /phone/*
+	header @phone Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; worker-src 'self' blob:; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'none'"
+	@static path /_next/static/*
+	header @static Cache-Control "public, max-age=31536000, immutable"
+}

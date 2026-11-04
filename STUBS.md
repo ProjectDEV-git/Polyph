@@ -5,7 +5,7 @@ here should be described as done anywhere else.
 
 ## Not started (later milestones)
 
-Directories `integrations/` and `deploy/` are not built. `polyph` with no
+The directory `integrations/` is not built. `polyph` with no
 arguments opens the TUI in a terminal and prints help otherwise.
 
 CLI commands not implemented yet (they arrive with their milestones):
@@ -68,7 +68,6 @@ accepted but hosted mode is M4.
 - **Smoke tests against real agents** (`POLYPH_SMOKE=1`) exist for Claude
   Code, Codex and Ollama but have not been run: none is installed here.
 - **Security contact address** in `docs/security.md` is not set.
-- **Relay self-hosting docs** for EC2, LAN and cloud agents come with M11.
 
 ## Milestone 4 gaps
 
@@ -147,9 +146,8 @@ accepted but hosted mode is M4.
 
 - **Browser-only members** arrived in M8 as the phone app (`/phone/`). The
   desktop browser client is still a window onto the person's own daemon.
-- **Desktop packaging** is configured (`tauri.conf.json`, icons) but no
-  installers are built or signed yet; the app expects `polyph` next to it or
-  on PATH. Release work is M11.
+- **Desktop packaging** arrived in M11 (release overlay with `polyph`
+  bundled); see "Milestone 11 gaps" for signing.
 - **macOS and Windows** builds of the desktop app have not been run; it was
   built and run on Linux (WebKitGTK under Xvfb).
 - **Shared terminals keep the owner's size**: the app shows them at their
@@ -274,3 +272,33 @@ accepted but hosted mode is M4.
   the inspector warnings that were kept and why.
 - **Daemon session tokens for the cloud** are sealed like integration tokens
   and are per device; a person's other devices sign in separately.
+
+## Milestone 11 gaps
+
+- **No M11 brief in the repository.** Scope was derived (see `PLAN.md`).
+- **No release is tagged or published yet.** Tagging `v0.1.0` runs
+  `.github/workflows/release.yml` for the first time; it has been checked
+  with actionlint but has not run on GitHub's runners. Until a release
+  exists, the install scripts and the website's download commands have
+  nothing to download.
+- **Built and tested here (Linux x86_64 only):** the release archive (smoke
+  test, `install.sh` from a local server, a tampered checksum refused), the
+  `.vsix` in a real VS Code, the relay image from prebuilt binaries, and the
+  relay Compose stack with Caddy (TLS and WebSocket upgrade). Not run here:
+  macOS and Windows builds, `install.ps1`, the AppImage and `.rpm`, the
+  from-source Dockerfiles (this sandbox's network proxy is not reachable from
+  `docker build`), `deploy/cloud`.
+- **The local archive had no phone engine**: wasm-bindgen is not installed
+  here; the release workflow builds it.
+- **Windows code signing** is not set up; SmartScreen will warn. macOS signing
+  and notarization run only when the Apple secrets are added.
+- **No auto-update** in the desktop app (Tauri's updater needs a signing key
+  and an update feed).
+- **Not published** to the VS Code Marketplace or Open VSX; the publisher id
+  `polyph` is a placeholder until an account exists.
+- **Linux arm64 desktop** has `.deb` and `.rpm` only (no AppImage); musl
+  (Alpine) and Windows on ARM have no prebuilt binaries.
+- **LAN relay port** is chosen fresh each time; a fixed-port option would
+  make firewall rules simpler.
+- **The `.vsix` is 22.6 MB**, mostly Excalidraw's fonts, which the webview
+  bundles twice (assets and excalidraw folders).

@@ -396,6 +396,32 @@ could not be followed exactly. Newest at the bottom of each section.
   board"), with `DESIGN.md` winning where they disagree (no voice fills,
   three faces). Details and the checks that ran are in `docs/website.md`.
 
+## Release (M11)
+
+- **Draft releases.** A tag builds everything and opens a draft; a person
+  publishes. Nothing reaches users without someone looking at it.
+- **Archives with a fixed layout** (`bin/`, `share/polyph/web`) on every
+  platform, so the daemon finds its web files the same way everywhere and the
+  install scripts only copy two folders.
+- **Install scripts install into the user's home** (`~/.local`,
+  `%LOCALAPPDATA%\Programs\Polyph`), never system paths, so they work
+  without root and on immutable distributions, and verify `SHA256SUMS`
+  before touching anything.
+- **Provenance over per-file signatures** for the command-line archives:
+  GitHub build attestations (`gh attestation verify`) prove which workflow
+  and commit built a file, with no key to manage. Platform code signing is
+  for the desktop apps, where operating systems check it.
+- **The relay image is built from the release binaries**, not compiled
+  again in Docker: the same bytes that passed the smoke test, and arm64
+  images without emulated compiles. `deploy/relay/Dockerfile` still builds
+  from source for people who prefer that.
+- **The desktop app carries `polyph`** (a Tauri sidecar) and the web files,
+  so it works on a machine with nothing else installed; the overlay config
+  keeps day-to-day `cargo build` of the app independent of a release binary.
+- **Linux builds on Ubuntu 22.04** for a glibc 2.35 floor.
+- **One version for everything**, checked against the tag before anything
+  builds.
+
 ## Skipped work
 
 - **The Nublet provider (M8) was skipped** on 2026-11-04 at the project

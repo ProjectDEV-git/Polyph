@@ -1,0 +1,5 @@
+# TLS in front of the relay. WebSockets pass through reverse_proxy as is.
+{$POLYPH_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy {$POLYPH_RELAY_UPSTREAM:relay:8787}
+}

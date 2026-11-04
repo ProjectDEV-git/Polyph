@@ -1,0 +1,20 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "externalBin": ["binaries/polyph"],
+    "resources": {
+      "../../web/out/": "web/"
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "linux": {
+      "deb": {
+        "depends": ["bubblewrap"]
+      },
+      "rpm": {
+        "depends": ["bubblewrap"]
+      }
+    }
+  }
+}

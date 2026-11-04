@@ -181,22 +181,24 @@ site-footer-legal = © 2026 Polyph
 site-footer-cta = รับ Polyph
 
 ## Download
-site-dl-title = บิลด์ Polyph จากซอร์ส
-site-dl-sub = ตัวติดตั้งจะมาพร้อมรุ่นแรก ระหว่างนี้ให้บิลด์บรรทัดคำสั่ง เดมอน และรีเลย์จากซอร์ส ใช้เวลาไม่กี่นาที
+site-dl-title = ติดตั้ง Polyph
+site-dl-sub = คำสั่งเดียวติดตั้งบรรทัดคำสั่ง เดมอน และรีเลย์ลงในโฮมไดเรกทอรี โดยไม่ต้องเป็น root และตรวจไฟล์ที่ดาวน์โหลดกับ checksum ของรุ่นนั้น
+site-dl-step-install = Linux และ macOS
+site-dl-step-install-win = Windows (PowerShell)
+site-dl-source-title = หรือบิลด์จากซอร์ส
+site-dl-releases = ไฟล์ดาวน์โหลดทั้งหมดบน GitHub
 site-dl-need = สิ่งที่ต้องมี
 site-dl-need-rust = Rust 1.94 ขึ้นไป
 site-dl-need-git = git
 site-dl-need-agent = เอเจนต์เขียนโค้ดที่คุณใช้อยู่ หรือโมเดลในเครื่อง
-site-dl-step-clone = ดาวน์โหลดซอร์ส
-site-dl-step-build = บิลด์และติดตั้ง polyph
 site-dl-step-host = โฮสต์ห้องในรีโพของคุณ
 site-dl-step-join = เพื่อนร่วมทีมเข้าร่วมด้วยรหัส
 site-dl-immutable-title = Linux แบบ immutable
 site-dl-immutable = บน Bazzite, Fedora Atomic และระบบแบบเดียวกัน cargo ติดตั้งลงในโฮมไดเรกทอรี จึงไม่แตะระบบที่อ่านอย่างเดียว แซนด์บ็อกซ์ของเอเจนต์ใช้ bubblewrap หรือ Landlock ซึ่งใช้ได้โดยไม่ต้องเป็น root
 site-dl-relay-title = รีเลย์ของคุณเอง
-site-dl-relay = บิลด์รีเลย์ด้วยวิธีเดียวกันแล้วรันหลังพร็อกซี TLS ใดก็ได้ รีเลย์เก็บสแนปช็อตที่เข้ารหัสไว้ในไฟล์ SQLite ไฟล์เดียว
+site-dl-relay = รันรีเลย์ด้วย Docker และ Caddy หรือเป็นบริการ systemd จากไฟล์รุ่นที่เผยแพร่ รีเลย์เก็บสแนปช็อตที่เข้ารหัสไว้ในไฟล์ SQLite ไฟล์เดียว
 site-dl-apps-title = แอปเดสก์ท็อปและ VS Code
-site-dl-apps = แอปเดสก์ท็อปแบบแพ็กเกจและส่วนขยาย VS Code จะมาพร้อมรุ่นแรก แอปในเบราว์เซอร์ใช้ได้แล้ววันนี้: รัน polyph web
+site-dl-apps = แอปเดสก์ท็อป (.dmg, .msi, .deb, .rpm, .AppImage) มี polyph อยู่ในตัว แอปนี้และส่วนขยาย VS Code (.vsix) อยู่ในหน้ารุ่นที่เผยแพร่
 
 ## Security
 site-sec-title = รีเลย์เห็นอะไรบ้าง

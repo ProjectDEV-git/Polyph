@@ -107,3 +107,10 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# Release archives (scripts/release/package.mjs): smaller, stripped binaries.
+[profile.dist]
+inherits = "release"
+lto = "thin"
+codegen-units = 4
+strip = true

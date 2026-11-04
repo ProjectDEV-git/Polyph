@@ -181,22 +181,24 @@ site-footer-legal = © 2026 Polyph
 site-footer-cta = 获取 Polyph
 
 ## Download
-site-dl-title = 从源代码构建 Polyph
-site-dl-sub = 安装程序将随首个版本发布。在此之前，请从源代码构建命令行、守护进程和中继，只需几分钟。
+site-dl-title = 安装 Polyph
+site-dl-sub = 一条命令即可把命令行、守护进程和中继安装到你的主目录，无需 root，并根据发行版的校验和验证下载内容。
+site-dl-step-install = Linux 和 macOS
+site-dl-step-install-win = Windows（PowerShell）
+site-dl-source-title = 或从源代码构建
+site-dl-releases = GitHub 上的全部下载
 site-dl-need = 你需要
 site-dl-need-rust = Rust 1.94 或更高版本
 site-dl-need-git = git
 site-dl-need-agent = 你已经在用的编程智能体，或本地模型
-site-dl-step-clone = 获取源代码
-site-dl-step-build = 构建并安装 polyph
 site-dl-step-host = 在你的仓库中主持房间
 site-dl-step-join = 队友用代码加入
 site-dl-immutable-title = 不可变 Linux
 site-dl-immutable = 在 Bazzite、Fedora Atomic 等系统上，cargo 安装到你的主目录，不会触及只读系统。智能体沙箱使用 bubblewrap 或 Landlock，两者都不需要 root。
 site-dl-relay-title = 你自己的中继
-site-dl-relay = 用同样的方法构建中继，放在任意 TLS 代理之后运行。它把加密快照保存在一个 SQLite 文件中。
+site-dl-relay = 用 Docker 和 Caddy 运行中继，或从发行版压缩包以 systemd 服务运行。它把加密快照保存在一个 SQLite 文件中。
 site-dl-apps-title = 桌面应用和 VS Code
-site-dl-apps = 打包的桌面应用和 VS Code 扩展将随首个版本发布。浏览器应用现在就能用：运行 polyph web。
+site-dl-apps = 桌面应用（.dmg、.msi、.deb、.rpm、.AppImage）自带 polyph。桌面应用和 VS Code 扩展（.vsix）都在发行版页面上。
 
 ## Security
 site-sec-title = 中继能看到什么

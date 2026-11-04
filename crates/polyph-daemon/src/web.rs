@@ -106,15 +106,23 @@ pub fn origin_allowed(headers: &HeaderMap) -> bool {
     matches!(host, "127.0.0.1" | "localhost" | "[::1]")
 }
 
-/// Where the browser client's files are: `POLYPH_WEB_DIR`, else next to the
-/// executable (`../share/polyph/web` or `web/`).
+/// Where the browser client's files are: `POLYPH_WEB_DIR`, else beside the
+/// binary: `../share/polyph/web` (release archives), `web` (Windows app),
+/// `../Resources/web` (macOS app) or `../lib/Polyph/web` (Linux packages).
 pub fn web_dir() -> Option<PathBuf> {
     if let Some(d) = std::env::var_os("POLYPH_WEB_DIR") {
         return Some(PathBuf::from(d));
     }
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    [dir.join("../share/polyph/web"), dir.join("web")].into_iter().find(|p| p.join("app/index.html").is_file())
+    web_dir_near(dir)
+}
+
+fn web_dir_near(dir: &Path) -> Option<PathBuf> {
+    ["../share/polyph/web", "web", "../Resources/web", "../lib/Polyph/web", "../lib/polyph/web"]
+        .into_iter()
+        .map(|rel| dir.join(rel))
+        .find(|p| p.join("app/index.html").is_file())
 }
 
 fn content_type(p: &Path) -> &'static str {
@@ -234,5 +242,24 @@ mod tests {
         assert_eq!(serve_file(&dir, "/../etc/passwd").await.status(), StatusCode::NOT_FOUND);
         assert_eq!(serve_file(&dir, "/missing.js").await.status(), StatusCode::NOT_FOUND);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn web_files_are_found_where_each_package_puts_them() {
+        for (bin, web) in [
+            ("prefix/bin", "prefix/share/polyph/web"),
+            ("Polyph", "Polyph/web"),
+            ("Polyph.app/Contents/MacOS", "Polyph.app/Contents/Resources/web"),
+            ("usr/bin", "usr/lib/Polyph/web"),
+        ] {
+            let t = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(t.path().join(bin)).unwrap();
+            std::fs::create_dir_all(t.path().join(web).join("app")).unwrap();
+            std::fs::write(t.path().join(web).join("app/index.html"), "x").unwrap();
+            let found = web_dir_near(&t.path().join(bin)).unwrap();
+            assert!(found.join("app/index.html").is_file(), "{bin} -> {web}");
+        }
+        let t = tempfile::tempdir().unwrap();
+        assert!(web_dir_near(t.path()).is_none());
     }
 }

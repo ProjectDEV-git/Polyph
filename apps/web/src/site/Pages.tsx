@@ -1,7 +1,15 @@
 // The site's inner pages: pricing, download, security and the legal drafts.
-import { Approval, Board, Claim, HostTerminal, Knock, Transcript } from "./fragments";
+import { Approval, Board, Claim, Knock, Transcript } from "./fragments";
 import { SAMPLE_NAMES, team } from "./voices";
-import { PAID_RETENTION_DAYS, RELAY_PEAK_MB, SOURCE_URL, href, strings, type Lang } from "./i18n";
+import {
+  PAID_RETENTION_DAYS,
+  RELAY_PEAK_MB,
+  SAMPLE_CODE,
+  SOURCE_URL,
+  href,
+  strings,
+  type Lang,
+} from "./i18n";
 import { Plans } from "./Home";
 import { AccountPage } from "./Account";
 import { Shell } from "./Shell";
@@ -120,11 +128,12 @@ function Cmd({ lines }: { lines: string[] }) {
 
 export function DownloadPage({ lang }: { lang: Lang }) {
   const l = strings(lang);
-  const steps: [string, string[]][] = [
-    ["site-dl-step-clone", [`git clone ${SOURCE_URL}.git`, "cd Polyph"]],
-    ["site-dl-step-build", ["cargo install --locked --path crates/polyph-cli"]],
+  const raw = "https://raw.githubusercontent.com/ProjectDEV-git/Polyph/Main/scripts"; // i18n-allow (URL)
+  const install: [string, string[]][] = [
+    ["site-dl-step-install", [`curl -fsSL ${raw}/install.sh | sh`]],
+    ["site-dl-step-install-win", [`irm ${raw}/install.ps1 | iex`]],
     ["site-dl-step-host", ["cd ~/code/payments", "polyph host --name payments"]],
-    ["site-dl-step-join", ["polyph join A1B2-CDEF"]],
+    ["site-dl-step-join", [`polyph join ${SAMPLE_CODE}`]],
   ];
   return (
     <Shell lang={lang} page="download">
@@ -133,16 +142,9 @@ export function DownloadPage({ lang }: { lang: Lang }) {
         title={l.t("site-dl-title")}
         sub={l.t("site-dl-sub")}
         side={
-          <div>
-            <h2 style={{ fontFamily: "var(--font-sans)", fontSize: 17, fontWeight: 600 }}>
-              {l.t("site-dl-need")}
-            </h2>
-            <ul className="list" style={{ marginTop: 8 }}>
-              <li>{l.t("site-dl-need-rust")}</li>
-              <li>{l.t("site-dl-need-git")}</li>
-              <li>{l.t("site-dl-need-agent")}</li>
-            </ul>
-          </div>
+          <a href={`${SOURCE_URL}/releases`} style={{ fontWeight: 600 }}>
+            {l.t("site-dl-releases")}
+          </a>
         }
       />
       <section
@@ -150,7 +152,7 @@ export function DownloadPage({ lang }: { lang: Lang }) {
         aria-label={l.t("site-dl-title")}
         style={{ marginTop: "var(--gap)" }}
       >
-        {steps.map(([key, lines], i) => (
+        {install.map(([key, lines], i) => (
           <div
             key={key}
             className={`tile span-6 ${i % 2 ? "t3" : "t2"} reveal`}
@@ -161,6 +163,10 @@ export function DownloadPage({ lang }: { lang: Lang }) {
             <Cmd lines={lines} />
           </div>
         ))}
+        <div className="tile span-4 t3 reveal">
+          <h2>{l.t("site-dl-apps-title")}</h2>
+          <p>{l.t("site-dl-apps")}</p>
+        </div>
         <div className="tile span-4 reveal">
           <h2>{l.t("site-dl-immutable-title")}</h2>
           <p>{l.t("site-dl-immutable")}</p>
@@ -171,17 +177,31 @@ export function DownloadPage({ lang }: { lang: Lang }) {
         >
           <h2>{l.t("site-dl-relay-title")}</h2>
           <p>{l.t("site-dl-relay")}</p>
-          <Cmd lines={["cargo install --locked --path crates/polyph-relay", "polyph-relay"]} />
-        </div>
-        <div className="tile span-4 t3 reveal">
-          <h2>{l.t("site-dl-apps-title")}</h2>
-          <p>{l.t("site-dl-apps")}</p>
+          <Cmd
+            lines={["cd deploy/relay", "POLYPH_DOMAIN=relay.example.com docker compose up -d"]}
+          />
         </div>
         <div
-          className="tile span-12 t2 reveal"
-          style={{ display: "flex", justifyContent: "flex-start" }}
+          className="tile span-6 t3 reveal"
+          data-ui
+          style={{ display: "grid", gap: 14, alignContent: "start", minHeight: 220 }}
         >
-          <HostTerminal />
+          <h2>{l.t("site-dl-source-title")}</h2>
+          <Cmd
+            lines={[
+              `git clone ${SOURCE_URL}.git`,
+              "cd Polyph",
+              "cargo install --locked --path crates/polyph-cli",
+            ]}
+          />
+        </div>
+        <div className="tile span-6 t2 reveal prose">
+          <h2>{l.t("site-dl-need")}</h2>
+          <ul>
+            <li>{l.t("site-dl-need-rust")}</li>
+            <li>{l.t("site-dl-need-git")}</li>
+            <li>{l.t("site-dl-need-agent")}</li>
+          </ul>
         </div>
       </section>
     </Shell>

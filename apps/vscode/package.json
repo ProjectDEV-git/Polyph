@@ -98,7 +98,8 @@
   "scripts": {
     "build": "node ../../scripts/bundle-locales.mjs && node scripts/nls.mjs && node scripts/build.mjs && vite build && node ../../scripts/copy-excalidraw-assets.mjs media/webview",
     "typecheck": "node ../../scripts/bundle-locales.mjs && tsc --noEmit",
-    "test": "node ../../scripts/bundle-locales.mjs && vitest run"
+    "test": "node ../../scripts/bundle-locales.mjs && vitest run",
+    "package": "pnpm build && node -e \"require('fs').mkdirSync('../../dist',{recursive:true})\" && vsce package --no-dependencies --out ../../dist/"
   },
   "dependencies": {
     "@polyph/ui": "workspace:*",
@@ -115,10 +116,27 @@
     "@types/ws": "8.18.1",
     "@vitejs/plugin-react": "6.2.1",
     "@vscode/test-electron": "2.5.2",
+    "@vscode/vsce": "4.0.0",
     "esbuild": "0.25.12",
     "tailwindcss": "4.3.4",
     "typescript": "6.0.3",
     "vite": "8.3.5",
     "vitest": "5.1.0"
-  }
+  },
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#15161b",
+    "theme": "dark"
+  },
+  "homepage": "https://polyph.dev",
+  "bugs": {
+    "url": "https://github.com/ProjectDEV-git/Polyph/issues"
+  },
+  "keywords": [
+    "agents",
+    "collaboration",
+    "claude code",
+    "codex",
+    "pair programming"
+  ]
 }

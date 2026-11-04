@@ -181,22 +181,24 @@ site-footer-legal = © 2026 Polyph
 site-footer-cta = Polyph を入手
 
 ## Download
-site-dl-title = ソースから Polyph をビルド
-site-dl-sub = インストーラーは最初のリリースで提供します。それまでは、コマンドライン、デーモン、リレーをソースからビルドしてください。数分で終わります。
+site-dl-title = Polyph をインストール
+site-dl-sub = 1 つのコマンドで、コマンドライン、デーモン、リレーをホームディレクトリにインストールします。root は不要です。ダウンロードはリリースのチェックサムで検証します。
+site-dl-step-install = Linux と macOS
+site-dl-step-install-win = Windows（PowerShell）
+site-dl-source-title = またはソースからビルド
+site-dl-releases = GitHub のすべてのダウンロード
 site-dl-need = 必要なもの
 site-dl-need-rust = Rust 1.94 以降
 site-dl-need-git = git
 site-dl-need-agent = いつも使っているコーディングエージェント、またはローカルモデル
-site-dl-step-clone = ソースを取得
-site-dl-step-build = polyph をビルドしてインストール
 site-dl-step-host = リポジトリでルームをホスト
 site-dl-step-join = チームメイトがコードで参加
 site-dl-immutable-title = イミュータブルな Linux
 site-dl-immutable = Bazzite、Fedora Atomic などでは、cargo はホームディレクトリにインストールするため、読み取り専用のシステムには触れません。エージェントのサンドボックスは bubblewrap または Landlock を使い、どちらも root なしで使えます。
 site-dl-relay-title = 自分のリレー
-site-dl-relay = リレーも同じ方法でビルドし、任意の TLS プロキシの背後で動かします。暗号化されたスナップショットを 1 つの SQLite ファイルに保存します。
+site-dl-relay = リレーは Docker と Caddy で、またはリリースアーカイブから systemd サービスとして動かします。暗号化されたスナップショットを 1 つの SQLite ファイルに保存します。
 site-dl-apps-title = デスクトップアプリと VS Code
-site-dl-apps = パッケージ化したデスクトップアプリと VS Code 拡張は最初のリリースで提供します。ブラウザー版は今すぐ使えます：polyph web を実行してください。
+site-dl-apps = デスクトップアプリ（.dmg、.msi、.deb、.rpm、.AppImage）は polyph を内蔵しています。アプリと VS Code 拡張（.vsix）はリリースページにあります。
 
 ## Security
 site-sec-title = リレーに見えるもの

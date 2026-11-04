@@ -3,6 +3,8 @@
 // built extension (pnpm build first) and the suite checks it connects.
 // Needs `cargo build -p polyph-cli`, network access to download VS Code the
 // first time, and a display (run under xvfb-run on Linux CI).
+// POLYPH_VSCODE_EXT=<dir> loads an unpacked .vsix (its extension/ folder)
+// instead of this source folder, to check the release package.
 import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,7 +22,7 @@ try {
   cli("config", "set", "name", "Ann");
   cli("host", "--lan", "--name", "e2e-vscode");
   await runTests({
-    extensionDevelopmentPath: here,
+    extensionDevelopmentPath: process.env.POLYPH_VSCODE_EXT ?? here,
     extensionTestsPath: join(here, "test/e2e/suite.cjs"),
     launchArgs: ["--disable-extensions", "--disable-gpu", "--no-sandbox", here],
     extensionTestsEnv: { POLYPH_HOME: home, E2E_ROOM: "e2e-vscode" },

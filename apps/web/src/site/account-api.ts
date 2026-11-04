@@ -109,3 +109,16 @@ export const cloud = {
   portal: (t: string) => call<{ url: string }>("POST", "/v1/billing/portal", t, {}),
   deleteAccount: (t: string) => call<unknown>("DELETE", "/v1/account", t),
 };
+
+/** Members of each team, by team id (a team that cannot be read has none). */
+export async function teamMembers(token: string, ids: string[]): Promise<Record<string, Member[]>> {
+  const rows = await Promise.all(
+    ids.map((id) =>
+      cloud.team(token, id).then(
+        (v) => [id, v.members] as const,
+        () => [id, [] as Member[]] as const,
+      ),
+    ),
+  );
+  return Object.fromEntries(rows);
+}
