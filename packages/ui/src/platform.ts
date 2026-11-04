@@ -1,6 +1,6 @@
 // What differs between the desktop shell and the browser client.
 export interface Platform {
-  kind: "desktop" | "web" | "phone";
+  kind: "desktop" | "web" | "phone" | "vscode";
   /** Views this surface offers; all when unset. The phone has no terminals or merges. */
   views?: readonly string[];
   /** A join code to fill in (from a phone pairing link). */

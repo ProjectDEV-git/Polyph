@@ -2,7 +2,14 @@
 // itself lives in IndexedDB) and shows approval alerts. It never caches the
 // relay's traffic, which is a WebSocket the page owns.
 const CACHE = "polyph-phone-v1";
-const SHELL = ["./", "engine.js", "engine.wasm", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
+const SHELL = [
+  "./",
+  "engine.js",
+  "engine.wasm",
+  "manifest.webmanifest",
+  "icon-192.png",
+  "icon-512.png",
+];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(

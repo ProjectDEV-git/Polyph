@@ -1,0 +1,7 @@
+# The packaged extension holds only the bundles, media and manifest files.
+**
+!dist/**
+!media/**
+!package.json
+!package.nls*.json
+!LICENSE

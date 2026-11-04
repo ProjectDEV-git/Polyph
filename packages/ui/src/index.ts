@@ -6,5 +6,5 @@ export { Localizer, pickLang, LANGS, I18nProvider, useT } from "./i18n";
 export { Mark } from "./components/mark";
 export type { Platform } from "./platform";
 export { Store, partsFor, Part } from "./store";
-export { describeApproval } from "./views/approvals";
+export { describeApproval } from "./describe";
 export { assignHue, voiceCss } from "./voice";

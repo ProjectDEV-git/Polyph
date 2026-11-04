@@ -1,0 +1,124 @@
+{
+  "name": "polyph-vscode",
+  "displayName": "%vscode-display-name%",
+  "description": "%vscode-description%",
+  "version": "0.1.0",
+  "publisher": "polyph",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": "https://github.com/ProjectDEV-git/Polyph",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.cjs",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "polyph",
+          "title": "%vscode-display-name%",
+          "icon": "media/mark.svg"
+        }
+      ]
+    },
+    "views": {
+      "polyph": [
+        {
+          "type": "webview",
+          "id": "polyph.room",
+          "name": "%vscode-view-room%"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "polyph.openApp",
+        "title": "%vscode-cmd-open%",
+        "category": "Polyph"
+      },
+      {
+        "command": "polyph.approvals",
+        "title": "%vscode-cmd-approvals%",
+        "category": "Polyph"
+      },
+      {
+        "command": "polyph.reconnect",
+        "title": "%vscode-cmd-reconnect%",
+        "category": "Polyph"
+      },
+      {
+        "command": "polyph.pairPhone",
+        "title": "%vscode-cmd-pair-phone%",
+        "category": "Polyph"
+      }
+    ],
+    "colors": [
+      {
+        "id": "polyph.claimedByOther",
+        "description": "%vscode-color-other%",
+        "defaults": {
+          "dark": "#e0b26a",
+          "light": "#9a6a12",
+          "highContrast": "#ffd27f"
+        }
+      },
+      {
+        "id": "polyph.claimedByMe",
+        "description": "%vscode-color-mine%",
+        "defaults": {
+          "dark": "#7fd4e0",
+          "light": "#1d7f8c",
+          "highContrast": "#9be9f4"
+        }
+      }
+    ],
+    "configuration": {
+      "title": "%vscode-display-name%",
+      "properties": {
+        "polyph.home": {
+          "type": "string",
+          "default": "",
+          "description": "%vscode-setting-home%"
+        },
+        "polyph.command": {
+          "type": "string",
+          "default": "polyph",
+          "description": "%vscode-setting-command%"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node ../../scripts/bundle-locales.mjs && node scripts/nls.mjs && node scripts/build.mjs && vite build && node ../../scripts/copy-excalidraw-assets.mjs media/webview",
+    "typecheck": "node ../../scripts/bundle-locales.mjs && tsc --noEmit",
+    "test": "node ../../scripts/bundle-locales.mjs && vitest run"
+  },
+  "dependencies": {
+    "@polyph/ui": "workspace:*",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "ws": "8.18.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.4",
+    "@types/node": "22.15.30",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/vscode": "1.95.0",
+    "@types/ws": "8.18.1",
+    "@vitejs/plugin-react": "6.2.1",
+    "@vscode/test-electron": "2.5.2",
+    "esbuild": "0.25.12",
+    "tailwindcss": "4.3.4",
+    "typescript": "6.0.3",
+    "vite": "8.3.5",
+    "vitest": "5.1.0"
+  }
+}
