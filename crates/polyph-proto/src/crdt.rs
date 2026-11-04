@@ -66,6 +66,10 @@ pub mod card {
     pub const PLAN: &str = "plan";
     /// Agent label or person the planner suggested.
     pub const SUGGESTED_ASSIGNEE: &str = "suggested_assignee";
+    /// Where the card came from: `github:<owner>/<repo>#<n>` or `linear:<KEY-n>`.
+    pub const EXTERNAL: &str = "external";
+    /// Link to the issue it came from.
+    pub const URL: &str = "url";
 }
 
 pub mod activity {
@@ -109,6 +113,10 @@ pub struct CardView {
     pub plan: Option<String>,
     #[serde(default)]
     pub suggested_assignee: Option<String>,
+    #[serde(default)]
+    pub external: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -352,6 +360,8 @@ fn read_card<T: ReadTxn>(m: &MapRef, txn: &T) -> CardView {
         handoff: any_str(m.get(txn, card::HANDOFF)),
         plan: any_str(m.get(txn, card::PLAN)),
         suggested_assignee: any_str(m.get(txn, card::SUGGESTED_ASSIGNEE)),
+        external: any_str(m.get(txn, card::EXTERNAL)),
+        url: any_str(m.get(txn, card::URL)),
     }
 }
 

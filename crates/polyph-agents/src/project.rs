@@ -52,6 +52,27 @@ pub struct MergeConfig {
     pub run_checks: Option<bool>,
     /// Remote to push the target branch to after each merge (asks a person first).
     pub push: Option<String>,
+    /// "queue" (default): Polyph merges. "github": push the branch and open a
+    /// pull request; the card follows the pull request.
+    pub via: Option<String>,
+    /// Remote task branches are pushed to for pull requests (default "origin").
+    pub remote: Option<String>,
+}
+
+/// `[github]`: the repository's place on GitHub.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct GithubConfig {
+    /// `owner/name`; default: read from the remote's URL.
+    pub repo: Option<String>,
+}
+
+/// `[linear]`: the Linear team this project's cards sync with.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct LinearConfig {
+    /// Team key, e.g. "ENG".
+    pub team: Option<String>,
 }
 
 /// `[planner]`: the agent that splits a goal into tasks.
@@ -84,6 +105,8 @@ pub struct ProjectConfig {
     pub merge: MergeConfig,
     pub planner: PlannerConfig,
     pub claims: ClaimsConfig,
+    pub github: GithubConfig,
+    pub linear: LinearConfig,
 }
 
 impl ProjectConfig {

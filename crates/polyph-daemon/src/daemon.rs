@@ -292,6 +292,7 @@ impl Daemon {
         });
         let _ = shared.daemon.set(Arc::downgrade(&d));
         tokio::spawn(crate::notify::run(Arc::downgrade(&d), d.subscribe()));
+        tokio::spawn(crate::github::run(Arc::downgrade(&d)));
         {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<crate::coord::FinishJob>();
             let _ = shared.finisher.set(tx);
@@ -351,6 +352,11 @@ impl Daemon {
     }
 
     /// Finds a room by id, unique id prefix, or name (case-insensitive).
+    /// Every open room.
+    pub async fn room_list(&self) -> Vec<Arc<RoomRuntime>> {
+        self.rooms.lock().await.values().cloned().collect()
+    }
+
     pub async fn find(&self, q: &str) -> Result<Arc<RoomRuntime>, ApiError> {
         let rooms = self.rooms.lock().await;
         let ql = q.to_lowercase();
@@ -909,6 +915,7 @@ impl Daemon {
                 })?;
                 res.map_err(|e| ApiError::BadRequest(e.to_string()))?;
                 apply(&rt, &mut c, &self.shared, fx).await;
+                crate::linear::spawn_card_moved(&self.shared, rt.id, card, p.column);
                 ok(json!({}))
             }
             "board.update" => {
@@ -1062,6 +1069,47 @@ impl Daemon {
                     })
                     .collect();
                 ok(json!({ "thread": t, "posts": posts }))
+            }
+            "integrations.status" => ok(crate::integrations::status(&self.shared)),
+            "github.connect" => {
+                #[derive(Deserialize)]
+                struct P {
+                    token: String,
+                    api_url: Option<String>,
+                }
+                let p: P = param(&params)?;
+                crate::github::connect(&self.shared, p.token, p.api_url).await
+            }
+            "github.disconnect" => {
+                crate::github::disconnect(&self.shared)?;
+                ok(json!({}))
+            }
+            "github.import" => {
+                let p: crate::github::ImportParams = param(&params)?;
+                crate::github::import(self, p).await
+            }
+            "github.sync" => {
+                let p: RoomParam = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let n = crate::github::sync_room(self, &rt).await?;
+                ok(json!({ "changed": n }))
+            }
+            "linear.connect" => {
+                #[derive(Deserialize)]
+                struct P {
+                    token: String,
+                    api_url: Option<String>,
+                }
+                let p: P = param(&params)?;
+                crate::linear::connect(&self.shared, p.token, p.api_url).await
+            }
+            "linear.disconnect" => {
+                crate::linear::disconnect(&self.shared)?;
+                ok(json!({}))
+            }
+            "linear.import" => {
+                let p: crate::linear::ImportParams = param(&params)?;
+                crate::linear::import(self, p).await
             }
             "webhook.add" => {
                 let w: crate::notify::Webhook = serde_json::from_value({

@@ -146,6 +146,8 @@ pub enum MergeState {
     Merging,
     Resolving,
     Checking,
+    /// Pushed and waiting on a pull request (`[merge] via = "github"`).
+    PullRequest,
     Merged,
     Failed,
 }
@@ -177,6 +179,14 @@ pub struct MergeEntry {
     #[serde(default)]
     pub resolved: Vec<(String, String)>,
     pub merge_commit: Option<String>,
+    /// The pull request, when the task merges through GitHub.
+    #[serde(default)]
+    pub pr: Option<String>,
+    #[serde(default)]
+    pub pr_number: Option<u64>,
+    /// `owner/name` the pull request is in.
+    #[serde(default)]
+    pub pr_repo: Option<String>,
     pub queued_at: i64,
     pub updated_at: i64,
 }

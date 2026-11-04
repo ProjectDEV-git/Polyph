@@ -111,16 +111,25 @@ pub async fn update_card(
     if let Ok(fx) = fx {
         apply(rt, &mut ctx, shared, fx).await;
     }
+    if let Some(c) = column {
+        crate::linear::spawn_card_moved(shared, rt.id, id.to_string(), c.to_string());
+    }
 }
 
-async fn put_entry(rt: &RoomRuntime, shared: &Shared, e: &MergeEntry) {
+pub(crate) async fn put_entry(rt: &RoomRuntime, shared: &Shared, e: &MergeEntry) {
     let mut ctx = rt.ctx.lock().await;
     if let Ok(fx) = ctx.core.change_doc(DocName::Board, |d| docs::put_merge_entry(d, e)) {
         apply(rt, &mut ctx, shared, fx).await;
     }
 }
 
-async fn set_state(rt: &RoomRuntime, shared: &Shared, e: &mut MergeEntry, state: MergeState, detail: Option<String>) {
+pub(crate) async fn set_state(
+    rt: &RoomRuntime,
+    shared: &Shared,
+    e: &mut MergeEntry,
+    state: MergeState,
+    detail: Option<String>,
+) {
     e.state = state;
     if detail.is_some() {
         e.detail = detail.map(|d| polyph_core::redact::redact(&d).into_owned());
@@ -192,6 +201,9 @@ pub async fn finish(daemon: Arc<Daemon>, h: Arc<AgentHandle>, message: Option<St
         detail: None,
         resolved: vec![],
         merge_commit: None,
+        pr: None,
+        pr_number: None,
+        pr_repo: None,
         queued_at: now,
         updated_at: now,
     };
@@ -211,10 +223,16 @@ pub async fn finish(daemon: Arc<Daemon>, h: Arc<AgentHandle>, message: Option<St
     let out = json!({ "entry": entry.id, "branch": branch, "into": entry.into, "commits": ahead });
     let agent = h.agent.clone();
     let repo = wt.repo.clone();
+    let via_github = project.merge.via.as_deref() == Some("github");
     tokio::spawn(async move {
         let lock = repo_lock(&repo);
         let _g = lock.lock().await;
-        if let Err(e) = process(&daemon, &rt, &mut entry, &repo, &agent).await {
+        let r = if via_github {
+            crate::github::open_pr(&daemon, &rt, &mut entry, &repo, &agent).await
+        } else {
+            process(&daemon, &rt, &mut entry, &repo, &agent).await
+        };
+        if let Err(e) = r {
             set_state(&rt, &daemon.shared, &mut entry, MergeState::Failed, Some(e.to_string())).await;
         }
     });
@@ -228,7 +246,7 @@ fn repo_lock(repo: &Path) -> Arc<tokio::sync::Mutex<()>> {
     LOCKS.lock().entry(repo.to_path_buf()).or_default().clone()
 }
 
-fn intent_of(c: Option<&CardView>, label: &str) -> Intent {
+pub(crate) fn intent_of(c: Option<&CardView>, label: &str) -> Intent {
     match c {
         Some(c) => Intent {
             label: label.to_string(),

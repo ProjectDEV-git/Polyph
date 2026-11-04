@@ -405,6 +405,16 @@ impl Repo {
         }
     }
 
+    /// A remote's URL.
+    pub fn remote_url(&self, remote: &str) -> Option<String> {
+        self.git(&["remote", "get-url", "--", remote]).ok().map(|s| s.trim().to_string())
+    }
+
+    /// Pushes a branch to `remote` (no force), for a pull request.
+    pub fn push_branch(&self, remote: &str, branch: &str) -> Result<()> {
+        self.push(remote, branch)
+    }
+
     /// Which of `paths` (relative to this working copy) git ignores.
     pub fn ignored(&self, paths: &[String]) -> Result<Vec<String>> {
         if paths.is_empty() {
@@ -438,6 +448,18 @@ fn sig_env(who: &Signature) -> Vec<(&'static str, String)> {
         ("GIT_COMMITTER_NAME", who.name.clone()),
         ("GIT_COMMITTER_EMAIL", who.email.clone()),
     ]
+}
+
+/// `owner/name` from a GitHub remote URL (https, ssh or scp-like).
+pub fn github_slug(url: &str) -> Option<String> {
+    let u = url.trim().trim_end_matches('/').trim_end_matches(".git");
+    let rest = u
+        .strip_prefix("git@github.com:")
+        .or_else(|| u.strip_prefix("ssh://git@github.com/"))
+        .or_else(|| u.split_once("github.com/").map(|(_, r)| r))?;
+    let mut parts = rest.split('/');
+    let (owner, name) = (parts.next()?, parts.next()?);
+    (!owner.is_empty() && !name.is_empty() && parts.next().is_none()).then(|| format!("{owner}/{name}"))
 }
 
 /// Rejects names git would read as options or that `check-ref-format` refuses.
@@ -483,6 +505,19 @@ mod tests {
         r.commit_all("initial", &Signature::agent("Ann/test", "0")).unwrap();
         let r = Repo::open(d.path()).unwrap();
         (d, r)
+    }
+
+    #[test]
+    fn github_slugs() {
+        for u in [
+            "https://github.com/ProjectDEV-git/Polyph.git",
+            "git@github.com:ProjectDEV-git/Polyph.git",
+            "ssh://git@github.com/ProjectDEV-git/Polyph",
+            "https://x:y@github.com/ProjectDEV-git/Polyph/",
+        ] {
+            assert_eq!(github_slug(u).as_deref(), Some("ProjectDEV-git/Polyph"), "{u}");
+        }
+        assert_eq!(github_slug("https://gitlab.com/a/b"), None);
     }
 
     #[test]
