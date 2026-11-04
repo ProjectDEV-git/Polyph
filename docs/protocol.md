@@ -330,6 +330,31 @@ sending agent's turn otherwise. The daemon running the target agent:
 Messages that do not wake an agent are not dropped: they are added to the
 agent's next prompt. Older peers decode messages without `hops` as 0.
 
+### 9.3 Board additions
+
+Cards may carry `handoff` (a brief for the next agent), `plan` (the planner
+run that created it) and `suggested_assignee`. The Board document also holds
+`merge_queue`: a Y.Map of entry id to a JSON merge entry (branch, target,
+queued commit, device that runs it, state, detail, files resolved and how,
+merge commit). Only the entry's device changes it. Layouts are in
+`crates/polyph-proto/src/crdt.rs` and `crates/polyph-core/src/docs.rs`.
+
+### 9.4 Hosted mode
+
+The Settings key `hosted` names the device holding the shared working copy.
+`Mirror(MirrorMsg)` messages carry it:
+
+- members send `IndexRequest`, `Fetch { paths }` and
+  `Propose { id, agent, path, base, data, deleted }`;
+- only the hosting device sends `Index { files, too_large }`, `Files`,
+  `Changed { path, data, deleted, by, proposal }` and `Rejected`.
+
+Hashes are BLAKE3 of the content. The host applies a proposal only if `base`
+is the current hash (empty for a new file) and no agent on another device
+holds a claim covering the path; otherwise it answers `Rejected` and the
+member restores the host's version. Files over 512 KiB, gitignored files and
+build directories are not mirrored. `Files` messages stay under 700 KiB.
+
 ## 10. Acting host
 
 One online device per room is the **acting host**. It arbitrates claims,

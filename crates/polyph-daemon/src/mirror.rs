@@ -77,7 +77,11 @@ pub fn safe_path(p: &str) -> Option<String> {
     if p.is_empty() || p.contains('\0') || path.is_absolute() {
         return None;
     }
-    if path.components().any(|c| !matches!(c, Component::Normal(_))) {
+    // One name per file: no empty, `.` or `..` segments (the path parser
+    // drops a `.` in the middle, so check the text too).
+    if path.components().any(|c| !matches!(c, Component::Normal(_)))
+        || p.split(['/', '\\']).any(|seg| seg.is_empty() || seg == "." || seg == "..")
+    {
         return None;
     }
     let s = p.replace('\\', "/");

@@ -6,7 +6,7 @@ here should be described as done anywhere else.
 ## Not started (later milestones)
 
 Crates that currently contain only a placeholder `lib.rs`:
-`polyph-git`, `polyph-merge`, `polyph-term`, `polyph-plugins`. Directories
+`polyph-term`, `polyph-plugins`. Directories
 `apps/`, `packages/`, `integrations/`, `deploy/` and `cloud/` (except its
 LICENSE) are not built. The TUI does not exist yet: `polyph` with no
 arguments prints help.
@@ -76,10 +76,9 @@ accepted but hosted mode is M4.
 - **Security contact address** in `docs/security.md` is not set.
 - **Relay self-hosting docs** for EC2, LAN and cloud agents come with M11.
 
-## Milestone 4 so far
+## Milestone 4 gaps
 
-- **MCP tools not built yet:** whiteboard tools (M5), board and task tools,
-  handoff. The tools that exist are in `crates/polyph-mcp/src/tools.rs`.
+- **Whiteboard tools for agents** come with whiteboards (M5).
 - **Local agent ignores MCP servers.** `polyph-localagent` does not read
   `mcpServers` from `session/new`, so it has no Polyph tools; it still gets
   claims through its ACP writes.
@@ -91,9 +90,29 @@ accepted but hosted mode is M4.
   messages themselves still pass through the relay buffer.
 - **Reply to a person.** `reply` only answers agents; a person's message is
   answered in the agent's normal output.
-- **Claims layers 2 and 3** (symbol claims from code structure, file watcher),
-  worktrees, merge queue, hosted mode, planner, handoff, intent-aware merge,
-  reviewer and secrets redaction are not started.
+- **Merges are per device.** The merge queue merges into the target branch of
+  the repository on the device that ran the task. Members on different
+  machines share work through a remote (`[merge] push`), which asks a person
+  before pushing; nothing fetches or rebases a teammate's pushes yet, and a
+  successor on another device after a handoff needs the branch fetched by hand.
+- **Symbols are found by heuristics** (`polyph-merge::symbols`), not a parser:
+  unusual formatting can put a change "outside any symbol", which falls back to
+  a whole-file claim or an agent-resolved conflict, never to a wrong merge.
+- **Symbol claims and shared directories.** Symbol claims let two agents write
+  one file; in hosted mode or any shared directory their whole-file writes can
+  still overwrite each other. Use them with task worktrees.
+- **Hosted mode** is not persisted: the host and members run `polyph host
+  --mode hosted` / `polyph mirror` again after a daemon restart. Files over
+  512 KiB, build output and gitignored files are not mirrored; a member's
+  mirror has no `.git`, so members' agents do not get task worktrees there.
+- **Agents cannot pick up tasks themselves.** The board's `auto_pickup` field
+  is not acted on; people start agents on cards.
+- **No CLI yet** for `plan`, `task`, `merge` and `memory` (the daemon API has
+  `plan.create`, `plan.accept`, `task.finish`, `merge.queue`,
+  `agent.handoff`, `memory.list`, `inbox.send`); they arrive with their
+  milestones' CLI work.
+- **Real-agent smoke tests** of the review, resolve and planner prompts have
+  not run (no real agents installed here).
 
 ## Process gaps
 

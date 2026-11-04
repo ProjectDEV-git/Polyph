@@ -14,9 +14,10 @@ brief is the source of all requirements.
   `STUBS.md` (LAN bridge joins, mDNS untested in CI).
 - **Milestone 3 (agents and sandbox): done**, with gaps in `STUBS.md`
   (Windows isolation, seccomp, late-joiner transcripts).
-- **Milestone 4 (coordination): in progress.** Done: the MCP server and its
-  bridge, claim/team-state/inbox/memory tools, loop guard. Not done: see
-  `PLAN.md` and `STUBS.md` ("Milestone 4 so far").
+- **Milestone 4 (coordination): done**, with gaps in `STUBS.md`
+  ("Milestone 4 gaps": local agent without MCP tools, per-device merges,
+  hosted mode not persisted, no CLI for plan/task/merge yet).
+- **Milestone 5 (board, terminals, integrations): next.**
 
 ## How to build and test
 
@@ -78,6 +79,21 @@ pnpm install && pnpm check:i18n
 - `polyph-core::memory`: note layout in the Memory document and re-anchoring.
 - Tests: `polyph-testkit/tests/m4.rs`; the fake agent has `mcp` and
   `echo_prompt` steps and starts the MCP server like a real agent.
+- `polyph-git`: worktrees, commits for agents, `merge-tree` merges, branch
+  advance, push. `polyph-merge`: symbols, diff3, symbol-level merge,
+  conflict markers and the resolver prompt.
+- Daemon `tasks`: task worktrees (`agent.start` with `task`), `task.finish`,
+  the merge queue (`merge.queue`), reviewer and resolver helper agents,
+  sandboxed checks, `agent.handoff`. `plan`: `plan.create`, `plan.accept`.
+  `watch`: claims layer 3. `mirror`: hosted mode (`mirror.host`,
+  `mirror.open`, `mirror.status`; CLI `polyph host --mode hosted`,
+  `polyph mirror <dir>`). `polyph-core::redact`: secret redaction.
+- `polyph.toml` gained `[merge]` (into, reviewer, resolver, approval,
+  run_checks, push), `[planner] agent` and `[claims]` (granularity, watch).
+- Tests: `m4_merge.rs` (the brief's success path: two tasks, claims, review,
+  approval, a conflict merged keeping both intents; resolver agent; reviewer
+  sending a task back; planner; handoff; symbol claims; watcher) and
+  `m4_hosted.rs`.
 
 Smoke tests against real agents (`POLYPH_SMOKE=1`): **not run** — Claude
 Code, Codex and Ollama are not installed in the build environment. Run them
@@ -106,13 +122,12 @@ target/debug/polyph --home /tmp/a room knocks     # then: polyph --home /tmp/a a
 
 ## Next steps
 
-1. Rest of M4: `polyph-git` worktrees (one per task) and the merge queue,
-   claims layer 3 (file watcher) and symbol claims, hosted-mode mirror,
-   planner (schema already in `polyph-proto::plan`), handoff (claims already
-   transfer in `ClaimTable::transfer`), `polyph-merge` intent-aware merge,
-   reviewer, secrets redaction (gitleaks rules) before anything leaves the
-   daemon. Add board/task and handoff tools to `polyph-mcp`.
+1. M5: kanban UI data paths, threads, activity with replay, whiteboards and
+   their agent tools, shared terminals with input approval, GitHub,
+   notifications and webhooks, Linear, status feed and D-Bus.
 2. Give `polyph-localagent` the Polyph MCP tools.
+3. CLI for `plan`, `task finish`, `merge queue`, `memory` and handoff.
+4. Run the real-agent smoke tests, including review, resolve and planning.
 
 ## Known issues
 

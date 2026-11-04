@@ -392,25 +392,17 @@ pub fn changed_symbols(old: &str, new: &str, lang: Lang) -> Option<Vec<String>> 
         let (o, n) = (op.old_range(), op.new_range());
         let mut hit = false;
         for l in n.clone() {
-            match innermost(&new_syms, l) {
-                Some(s) => {
-                    hit = true;
-                    if !names.contains(&s) {
-                        names.push(s);
-                    }
-                }
-                None => return None,
+            let s = innermost(&new_syms, l)?;
+            hit = true;
+            if !names.contains(&s) {
+                names.push(s);
             }
         }
         for l in o.clone() {
-            match innermost(&old_syms, l) {
-                Some(s) => {
-                    hit = true;
-                    if !names.contains(&s) {
-                        names.push(s);
-                    }
-                }
-                None => return None,
+            let s = innermost(&old_syms, l)?;
+            hit = true;
+            if !names.contains(&s) {
+                names.push(s);
             }
         }
         if !hit {

@@ -424,9 +424,7 @@ mod tests {
 
     #[test]
     fn both_tasks_append_a_function() {
-        let ours = format!(
-            "use std::fmt;\nuse std::time::Duration;\n\npub fn charge(n: i64) -> i64 {{\n    n\n}}\n\npub fn refund(n: i64) -> i64 {{\n    -n\n}}\n"
-        );
+        let ours = "use std::fmt;\nuse std::time::Duration;\n\npub fn charge(n: i64) -> i64 {\n    n\n}\n\npub fn refund(n: i64) -> i64 {\n    -n\n}\n".to_string();
         let theirs = format!("{BASE}\npub fn invoice(n: i64) -> String {{\n    format!(\"{{n}}\")\n}}\n");
         let conflict = c("src/pay.rs", BASE, &ours, &theirs);
         assert!(matches!(diff3(BASE, &ours, &theirs, ("o", "t"), Insertions::Conflict), Merge3::Conflicted(..)));

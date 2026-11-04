@@ -152,6 +152,51 @@ could not be followed exactly. Newest at the bottom of each section.
   around it, not by git blame: it works on uncommitted files and in every
   member's own copy, and needs no repository access.
 
+- **Git through the `git` command**, not libgit2: it behaves exactly like the
+  person's own git (config, hooks off with `--no-verify`, worktrees), and
+  `merge-tree --write-tree` (git 2.38+) computes merges without a working
+  copy, so the queue never touches anyone's checkout.
+- **Agents never commit.** They write files; the daemon commits on the task
+  branch with an agent identity (`<label>.<id>@agents.polyph.invalid`). The
+  sandbox therefore never needs write access to the shared `.git`.
+- **Task worktrees live in `<repo>/.polyph/worktrees/`**, added to
+  `.git/info/exclude`. Not under the Polyph home: the sandbox hides that
+  directory, and a writable worktree inside it would un-hide it.
+- **Finishing a task releases its claims.** The work is committed; overlap
+  from then on is the merge queue's to settle, and holding claims through
+  review would block everyone else for no benefit.
+- **Merge order of conflict handling:** line-level diff3, then a symbol-level
+  merge for source files (each function merged on its own; additions on both
+  sides kept, the already-merged task first), then keep-both for prose, and
+  only then a resolver agent given both tasks' intent. Resolutions are
+  recorded per file on the queue entry.
+- **The target branch's `polyph.toml` configures merging** (reviewer,
+  resolver, approval, checks): a task branch cannot change how it is merged.
+- **Checks run on the merged result** in a detached worktree inside the
+  sandbox, with allowlisted hosts only and no approvals asked.
+- **The queue runs where the work is**: on the device that holds the task's
+  worktree, one merge at a time per repository; the queue itself is shared in
+  the Board document so everyone sees it.
+- **The reviewer answers with a `VERDICT:` line**, parsed from its last
+  message; no verdict counts as "changes requested".
+- **The planner works on a scratch worktree** and its cards start as drafts
+  until a person accepts the plan.
+- **Layer-3 watcher attribution:** a change counts as an agent's only if the
+  agent was mid-turn when it happened and it did not come through the file
+  tools; otherwise it is a person's and is left alone.
+- **Hosted mode judges changes per device**: a member's change applies if the
+  file is free or held by an agent on that member's device, and only if it
+  was made on the host's current version. Agents finish turns in
+  milliseconds, so attributing by "agent mid-turn" alone rejected their own
+  writes.
+- **Secrets are redacted with gitleaks-style rules** (high-signal token shapes
+  plus an entropy-gated generic rule) in the daemon before encryption.
+  Test fixtures are assembled from pieces so secret scanners do not flag the
+  source.
+- **`finish_task` goes through a daemon worker** over a channel: finishing can
+  start reviewer agents, whose MCP handlers lead back to `finish_task`, and
+  that cycle cannot be expressed as one `Send` future.
+
 ## Process
 
 - **Design skills.** Impeccable, Emil Kowalski's design-engineering skill,
