@@ -301,5 +301,16 @@ accepted but hosted mode is M4.
   (Alpine) and Windows on ARM have no prebuilt binaries.
 - **LAN relay port** is chosen fresh each time; a fixed-port option would
   make firewall rules simpler.
+- **CI is red on macOS and Windows tests** (it already was when M8/M9
+  merged; earlier test failures had hidden later ones). Fixed during M11:
+  a Clippy 1.99 lint, the shared-temp gap in the macOS sandbox profile, a
+  dead-code warning and a Unix-only path test on Windows. Still failing on
+  macOS: `m4_merge.rs` `the_planner_splits_a_goal_and_agents_work_the_tasks`
+  (the planner helper agent's Polyph tools get "Operation not permitted"
+  connecting to its proxy under Seatbelt, while ordinary agents' tools work
+  in `m4.rs`) and `the_watcher_catches_edits_outside_the_protocol` (a
+  sandboxed command does not exit 0). Windows may show further failures in
+  test files that have not run there yet. These need a Mac and a Windows
+  machine to debug.
 - **The `.vsix` is 22.6 MB**, mostly Excalidraw's fonts, which the webview
   bundles twice (assets and excalidraw folders).

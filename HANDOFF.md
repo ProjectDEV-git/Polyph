@@ -336,4 +336,6 @@ target/debug/polyph --home /tmp/a room knocks     # then: polyph --home /tmp/a a
 
 ## Known issues
 
-- None in finished work.
+- CI fails on macOS (two helper-agent tests in `m4_merge.rs` under the
+  Seatbelt sandbox) and possibly further on Windows; Linux, TypeScript and
+  the cloud job pass. Details in `STUBS.md` ("Milestone 11 gaps").
