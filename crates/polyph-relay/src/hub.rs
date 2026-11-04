@@ -653,15 +653,34 @@ impl Hub {
         g.ip_joins.prune();
     }
 
-    /// Deletes snapshots older than the configured retention.
+    /// Deletes snapshots older than each room's retention, which the policy
+    /// gives per room owner (the hosted plans keep rooms for different times).
     pub async fn expire_snapshots(&self) {
-        if let Some(days) = self.policy.limits_for_room(None).retention_days {
-            let before = unix_now() - days as i64 * 86_400;
-            match self.store.expire_snapshots(before).await {
-                Ok(n) if n > 0 => info!(count = n, "expired snapshots"),
-                Ok(_) => {}
+        self.expire_snapshots_at(unix_now()).await;
+    }
+
+    /// [`Self::expire_snapshots`] with an explicit clock (tests).
+    pub async fn expire_snapshots_at(&self, now: i64) {
+        let rooms = match self.store.snapshot_rooms().await {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(error = %e, "snapshot expiry failed");
+                return;
+            }
+        };
+        let mut total = 0;
+        for (room, owner) in rooms {
+            let Some(days) = self.policy.limits_for_room(owner.as_ref()).retention_days else {
+                continue;
+            };
+            let before = now - days as i64 * 86_400;
+            match self.store.expire_room_snapshots(&room, before).await {
+                Ok(n) => total += n,
                 Err(e) => warn!(error = %e, "snapshot expiry failed"),
             }
+        }
+        if total > 0 {
+            info!(count = total, "expired snapshots");
         }
     }
 

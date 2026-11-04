@@ -723,3 +723,39 @@ async fn http_get(addr: std::net::SocketAddr, path: &str) -> String {
     s.read_to_string(&mut out).await.unwrap();
     out
 }
+
+/// Keeps rooms owned by `short` for 7 days and every other room for a year.
+#[derive(Debug)]
+struct TwoPlans {
+    short: polyph_proto::ids::DeviceId,
+}
+
+impl polyph_relay::Policy for TwoPlans {
+    fn limits_for_room(&self, owner: Option<&polyph_proto::ids::DeviceId>) -> Limits {
+        let days = if owner == Some(&self.short) { 7 } else { 365 };
+        Limits { max_members: None, retention_days: Some(days) }
+    }
+}
+
+#[tokio::test]
+async fn snapshots_expire_per_room_owner_plan() {
+    use polyph_relay::store::{RoomRecord, Store};
+    let store = Store::open(":memory:").await.unwrap();
+    let free = DeviceIdentity::generate().unwrap().device_id();
+    let pro = DeviceIdentity::generate().unwrap().device_id();
+    let (room_free, room_pro) = (RoomId::random().unwrap(), RoomId::random().unwrap());
+    let t0 = 1_000_000_000;
+    store.register_room(&room_free, &RoomRecord { owner: free, quick: false }, t0).await.unwrap();
+    store.register_room(&room_pro, &RoomRecord { owner: pro, quick: false }, t0).await.unwrap();
+    store.put_snapshot(&room_free, &free, 1, b"a", t0, 10).await.unwrap();
+    store.put_snapshot(&room_pro, &pro, 1, b"b", t0, 10).await.unwrap();
+    let hub = polyph_relay::Hub::new(RelayConfig::ephemeral(), Arc::new(TwoPlans { short: free }), store.clone(), None);
+
+    hub.expire_snapshots_at(t0 + 6 * 86_400).await;
+    assert_eq!(store.snapshots(&room_free).await.unwrap().len(), 1);
+    hub.expire_snapshots_at(t0 + 8 * 86_400).await;
+    assert!(store.snapshots(&room_free).await.unwrap().is_empty());
+    assert_eq!(store.snapshots(&room_pro).await.unwrap().len(), 1);
+    hub.expire_snapshots_at(t0 + 366 * 86_400).await;
+    assert!(store.snapshots(&room_pro).await.unwrap().is_empty());
+}
