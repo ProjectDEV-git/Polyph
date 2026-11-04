@@ -951,7 +951,7 @@ impl RoomCore {
             author: self.my_member.to_hex(),
             agent,
             thread,
-            text: text.to_string(),
+            text: crate::redact::redact(text).into_owned(),
             at: now,
         };
         let mut out = self.change_doc(DocName::Threads, |d| docs::append_chat(d, &e))?;
@@ -1285,7 +1285,7 @@ impl RoomCore {
             from_agent,
             thread,
             reply_to,
-            text: text.to_string(),
+            text: crate::redact::redact(text).into_owned(),
             at: now,
             hops,
         };

@@ -620,7 +620,7 @@ async fn remember(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, args: &Val
         path: path.clone(),
         line: a.line,
         anchor,
-        text: a.note.trim().to_string(),
+        text: polyph_core::redact::redact(a.note.trim()).into_owned(),
         author: h.agent.member.to_hex(),
         agent: Some(h.agent.label.clone()),
         at: shared.clock.now(),

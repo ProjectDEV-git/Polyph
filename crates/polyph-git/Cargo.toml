@@ -1,5 +1,6 @@
 [package]
 name = "polyph-git"
+description = "Git for Polyph: task worktrees, commits on behalf of agents, and merges that never touch a working copy"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,3 +11,8 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

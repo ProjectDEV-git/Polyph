@@ -869,6 +869,21 @@ impl Daemon {
                 let c = rt.ctx.lock().await;
                 ok(c.core.claims.all())
             }
+            "task.finish" => {
+                #[derive(Deserialize)]
+                struct P {
+                    agent: String,
+                    message: Option<String>,
+                }
+                let p: P = param(&params)?;
+                let h = self.agent(&p.agent).await?;
+                crate::tasks::finish(self.clone(), h, p.message).await
+            }
+            "merge.queue" => {
+                let p: RoomParam = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                ok(crate::tasks::queue(&rt).await)
+            }
             "memory.list" => {
                 #[derive(Deserialize)]
                 struct P {

@@ -46,6 +46,9 @@ pub struct AgentHandle {
     pub busy: Mutex<()>,
     /// Secret the agent's Polyph MCP server presents on every call.
     pub mcp_token: String,
+    /// The task's worktree and branch, when the agent works on a task.
+    pub task_wt: Option<crate::tasks::TaskWorktree>,
+    pub helper: bool,
     /// Hops of the agent message that started the current turn (0 when a person did).
     pub trigger_hops: std::sync::atomic::AtomicU8,
     _proxy: ProxyHandle,
@@ -88,9 +91,19 @@ pub struct StartParams {
     pub preset: Option<String>,
     pub task: Option<String>,
     pub prompt: Option<String>,
+    /// Give a task its own worktree and branch (default: yes, when `task` is
+    /// set and `cwd` is in a git repository).
+    #[serde(default)]
+    pub worktree: Option<bool>,
+    /// Polyph's own reviewer and resolver agents: they work in scratch
+    /// worktrees and are not subject to room claims.
+    #[serde(skip)]
+    pub helper: bool,
 }
 
-async fn publish(rt: &RoomRuntime, shared: &Shared, agent: &AgentRef, kind: AgentEventKind) {
+pub(crate) async fn publish(rt: &RoomRuntime, shared: &Shared, agent: &AgentRef, mut kind: AgentEventKind) {
+    // Nothing an agent prints, runs or diffs leaves the device unredacted.
+    polyph_core::redact::redact_event(&mut kind);
     let mut ctx = rt.ctx.lock().await;
     ctx.agent_seq += 1;
     let ev = Box::new(AgentEvent { agent: agent.clone(), seq: ctx.agent_seq, at: shared.clock.now(), kind });
@@ -104,7 +117,7 @@ async fn set_state(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, state: Ag
 }
 
 /// Asks the room for approval and waits for the answer.
-async fn request_approval(
+pub(crate) async fn request_approval(
     rt: &RoomRuntime,
     shared: &Shared,
     agent: &AgentRef,
@@ -153,6 +166,9 @@ async fn decide(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, action: Acti
         let claims = &ctx.core.claims;
         let claim = |p: &str| -> ClaimState {
             let t = ClaimTarget { path: p.to_string(), symbol: None };
+            if h.helper {
+                return ClaimState::Mine;
+            }
             match claims.holder(&t, None, now) {
                 None => ClaimState::Free,
                 Some(c) if c.owner.id == me => ClaimState::Mine,
@@ -284,7 +300,20 @@ pub fn mechanism(shared: &Shared, project: &ProjectConfig) -> Result<Mechanism, 
 }
 
 pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p: StartParams) -> ApiResult {
-    let worktree = p.cwd.canonicalize().map_err(|e| ApiError::BadRequest(format!("{}: {e}", p.cwd.display())))?;
+    let cwd = p.cwd.canonicalize().map_err(|e| ApiError::BadRequest(format!("{}: {e}", p.cwd.display())))?;
+    let task = p.task.as_deref().and_then(|t| ObjectId::from_hex(t).ok());
+    // A task gets its own worktree and branch, so agents never share files.
+    let task_wt = match task {
+        Some(t) if p.worktree != Some(false) && polyph_git::Repo::open(&cwd).is_ok() => {
+            let card = crate::tasks::card(&mut *rt.ctx.lock().await, &t.to_hex());
+            let branch = card.as_ref().and_then(|c| c.branch.clone()).unwrap_or_else(|| {
+                polyph_git::task_branch(card.as_ref().map(|c| c.title.as_str()).unwrap_or(""), &t.short())
+            });
+            Some(crate::tasks::prepare_worktree(cwd.clone(), branch, None).await?)
+        }
+        _ => None,
+    };
+    let worktree = task_wt.as_ref().map(|w| w.path.clone()).unwrap_or(cwd);
     let project = ProjectConfig::load(&worktree)?;
     let defs = registry::all(&custom_agents(&shared, &project));
     let def = find_def(&defs, &p.kind)?;
@@ -304,7 +333,6 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
     let label =
         if same_kind == 0 { format!("{my_name}/{}", p.kind) } else { format!("{my_name}/{}{}", p.kind, same_kind + 1) };
     let agent = AgentRef { id, member, device, kind: p.kind.clone(), label };
-    let task = p.task.as_deref().and_then(|t| ObjectId::from_hex(t).ok());
 
     let mech = mechanism(&shared, &project)?;
     let tmp = std::env::temp_dir().join(format!("polyph-agent-{}", id.short()));
@@ -403,6 +431,8 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
         approved: Mutex::new(HashSet::new()),
         busy: Mutex::new(()),
         mcp_token,
+        task_wt: task_wt.clone(),
+        helper: p.helper,
         trigger_hops: std::sync::atomic::AtomicU8::new(0),
         _proxy: proxy,
         tmp,
@@ -411,6 +441,16 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
     });
     let _ = once.set(handle.clone());
     rt.ctx.lock().await.coord.wakers.insert(id, wake_tx);
+    if let (Some(t), Some(wt)) = (task, &task_wt) {
+        crate::tasks::update_card(
+            &rt,
+            &shared,
+            &t.to_hex(),
+            Some("in_progress"),
+            &[("branch", Some(wt.branch.clone())), ("assignee", Some(agent.label.clone()))],
+        )
+        .await;
+    }
     agents.map.lock().await.insert(id, handle.clone());
     publish(&rt, &shared, &agent, AgentEventKind::Started { task, model: None, cloud: false }).await;
     set_state(&handle, &rt, &shared, AgentState::Idle, None).await;
@@ -422,7 +462,14 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
             }
         });
     }
-    Ok(json!({ "id": id.to_hex(), "label": agent.label, "sandbox": mech, "preset": preset }))
+    Ok(json!({
+        "id": id.to_hex(),
+        "label": agent.label,
+        "sandbox": mech,
+        "preset": preset,
+        "worktree": task_wt.as_ref().map(|w| w.path.clone()),
+        "branch": task_wt.as_ref().map(|w| w.branch.clone()),
+    }))
 }
 
 /// The ledger and budgets of a room, from its shared documents.

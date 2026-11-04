@@ -1,5 +1,6 @@
 [package]
 name = "polyph-merge"
+description = "Intent-aware merging for Polyph: symbol-level three-way merge and conflict hand-off to a resolver agent"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,3 +11,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+polyph-git = { workspace = true }
+serde = { workspace = true }
+similar = "2"

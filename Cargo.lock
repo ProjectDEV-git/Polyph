@@ -2556,6 +2556,7 @@ version = "0.1.0"
 dependencies = [
  "polyph-proto",
  "proptest",
+ "regex",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -2581,7 +2582,9 @@ dependencies = [
  "parking_lot",
  "polyph-agents",
  "polyph-core",
+ "polyph-git",
  "polyph-mcp",
+ "polyph-merge",
  "polyph-proto",
  "polyph-relay",
  "polyph-sandbox",
@@ -2600,6 +2603,11 @@ dependencies = [
 [[package]]
 name = "polyph-git"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "polyph-i18n"
@@ -2642,6 +2650,11 @@ dependencies = [
 [[package]]
 name = "polyph-merge"
 version = "0.1.0"
+dependencies = [
+ "polyph-git",
+ "serde",
+ "similar",
+]
 
 [[package]]
 name = "polyph-plugins"

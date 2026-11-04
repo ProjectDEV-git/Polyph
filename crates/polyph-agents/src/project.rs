@@ -36,6 +36,41 @@ pub struct RouterConfig {
     pub enabled: bool,
 }
 
+/// `[merge]`: how finished tasks reach their target branch.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct MergeConfig {
+    /// Branch tasks merge into; default: the branch the task started from.
+    pub into: Option<String>,
+    /// Agent kind that reviews each task before it merges; none by default.
+    pub reviewer: Option<String>,
+    /// Agent kind that resolves conflicts Polyph cannot merge by itself.
+    pub resolver: Option<String>,
+    /// Ask a person before merging (default true).
+    pub approval: Option<bool>,
+    /// Run `checks` on the merge result before the branch moves (default true).
+    pub run_checks: Option<bool>,
+    /// Remote to push the target branch to after each merge (asks a person first).
+    pub push: Option<String>,
+}
+
+/// `[planner]`: the agent that splits a goal into tasks.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct PlannerConfig {
+    pub agent: Option<String>,
+}
+
+/// `[claims]`: how edits become claims.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct ClaimsConfig {
+    /// "file" (default) or "symbol": claim only the functions an edit changes.
+    pub granularity: Option<String>,
+    /// Watch worktrees for edits made outside the agent protocol (default true).
+    pub watch: Option<bool>,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct ProjectConfig {
@@ -46,6 +81,9 @@ pub struct ProjectConfig {
     pub policy: PolicyConfig,
     pub sandbox: SandboxConfig,
     pub router: RouterConfig,
+    pub merge: MergeConfig,
+    pub planner: PlannerConfig,
+    pub claims: ClaimsConfig,
 }
 
 impl ProjectConfig {
@@ -65,6 +103,14 @@ impl ProjectConfig {
 
     pub fn auto_claim(&self) -> bool {
         self.policy.auto_claim.unwrap_or(true)
+    }
+
+    pub fn symbol_claims(&self) -> bool {
+        self.claims.granularity.as_deref() == Some("symbol")
+    }
+
+    pub fn watch(&self) -> bool {
+        self.claims.watch.unwrap_or(true)
     }
 }
 

@@ -5,6 +5,7 @@ pub mod claims;
 pub mod docs;
 pub mod election;
 pub mod memory;
+pub mod redact;
 pub mod room;
 pub mod voice;
 

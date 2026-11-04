@@ -15,6 +15,7 @@ pub mod paths;
 pub mod runtime;
 pub mod secrets;
 pub mod status;
+pub mod tasks;
 
 pub use clock::Clock;
 pub use daemon::{Daemon, DaemonOptions};

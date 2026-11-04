@@ -116,3 +116,73 @@ pub fn usage_records(doc: &Doc) -> Vec<UsageRecord> {
         })
         .collect()
 }
+
+/// Board document: `merge_queue` Y.Map entry id -> JSON [`MergeEntry`].
+pub const MERGE_QUEUE: &str = "merge_queue";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeState {
+    Queued,
+    Reviewing,
+    ChangesRequested,
+    AwaitingApproval,
+    Merging,
+    Resolving,
+    Checking,
+    Merged,
+    Failed,
+}
+
+impl MergeState {
+    pub fn finished(self) -> bool {
+        matches!(self, MergeState::Merged | MergeState::Failed | MergeState::ChangesRequested)
+    }
+}
+
+/// One finished task waiting to merge. Only the device holding the task's
+/// worktree (`device`) works on an entry; everyone else watches.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MergeEntry {
+    pub id: String,
+    /// Board card id, if the task has one.
+    pub card: Option<String>,
+    pub branch: String,
+    pub into: String,
+    /// The commit that was queued.
+    pub head: String,
+    pub device: String,
+    pub member: String,
+    pub agent: Option<String>,
+    pub state: MergeState,
+    /// Why it failed, review comments, or how conflicts were resolved.
+    pub detail: Option<String>,
+    /// Files whose conflicts Polyph resolved, and how.
+    #[serde(default)]
+    pub resolved: Vec<(String, String)>,
+    pub merge_commit: Option<String>,
+    pub queued_at: i64,
+    pub updated_at: i64,
+}
+
+pub fn put_merge_entry(doc: &Doc, e: &MergeEntry) {
+    let m = doc.get_or_insert_map(MERGE_QUEUE);
+    let json = serde_json::to_string(e).unwrap_or_default();
+    let mut txn = doc.transact_mut();
+    m.insert(&mut txn, e.id.as_str(), json);
+}
+
+/// Entries in queue order.
+pub fn merge_entries(doc: &Doc) -> Vec<MergeEntry> {
+    let m = doc.get_or_insert_map(MERGE_QUEUE);
+    let txn = doc.transact();
+    let mut v: Vec<MergeEntry> = m
+        .iter(&txn)
+        .filter_map(|(_, o)| match o {
+            Out::Any(Any::String(s)) => serde_json::from_str(&s).ok(),
+            _ => None,
+        })
+        .collect();
+    v.sort_by(|a, b| a.queued_at.cmp(&b.queued_at).then_with(|| a.id.cmp(&b.id)));
+    v
+}

@@ -266,3 +266,32 @@ async fn memory_notes_are_shared_and_follow_their_line() {
     let all = bm.iter().rev().find(|m| m.starts_with("mcp recall")).unwrap();
     assert!(!all.contains("idempotent") && all.contains("no panics"), "{all}");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn secrets_are_redacted_before_leaving_the_device() {
+    let (h, rid) = room_of_two().await;
+    let (a, b) = (0, 1);
+    // A fake token, built from pieces so secret scanners do not flag the source.
+    let key = &["gh", "p_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"].concat();
+    let bo = worktree(
+        json!({ "turns": [[
+            { "message": format!("found the token {key} in .env") },
+            { "run": { "command": "sh", "args": ["-c", format!("echo GITHUB_TOKEN={key}")] } }
+        ]] }),
+        "",
+    );
+    // The command is a declared check, so it runs without asking anyone.
+    std::fs::write(bo.path().join("polyph.toml"), format!("checks = [\"sh -c 'echo GITHUB_TOKEN={key}'\"]\n")).unwrap();
+    let bid = start_agent(&h, b, &rid, bo.path()).await;
+    prompt(&h, b, &bid, "look around").await;
+    h.until("Ann sees the transcript", || async {
+        messages(&h, a, &rid, &bid).await.iter().any(|m| m.starts_with("run: exit"))
+    })
+    .await
+    .unwrap();
+    let all = serde_json::to_string(&events(&h, a, &rid, &bid).await).unwrap();
+    assert!(!all.contains(key), "the token reached Ann: {all}");
+    assert!(all.contains("[REDACTED:github-token]"), "{all}");
+    // Inbox messages from people are redacted too.
+    h.nodes[a].call("inbox.send", json!({ "room": rid, "agent": bid, "text": format!("use {key}") })).await.unwrap();
+}
