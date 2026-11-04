@@ -22,11 +22,11 @@ brief is the source of all requirements.
 - **Milestone 6 (TUI): done**, with gaps in `STUBS.md` ("Milestone 6 gaps").
 - **Milestone 7 (desktop app, browser client, status pill): done**, with
   gaps in `STUBS.md` ("Milestone 7 gaps").
-- **Milestone 8 (PWA, VS Code extension, Nublet provider): done except the
-  Nublet provider**, which waits for Nublet's provider interface (not in the
-  repository); gaps in `STUBS.md` ("Milestone 8 gaps").
-- **Milestone 9 (cloud agents and extensibility): next** (or the Nublet
-  provider first, once its interface is known).
+- **Milestone 8 (PWA, VS Code extension, Nublet provider): done**, with the
+  Nublet provider **skipped** by the project owner's decision (its interface
+  is not available; see `DECISIONS.md` "Skipped work"); gaps in `STUBS.md`
+  ("Milestone 8 gaps").
+- **Milestone 9 (cloud agents and extensibility): in progress.**
 
 ## How to build and test
 
@@ -228,8 +228,8 @@ target/debug/polyph --home /tmp/a room knocks     # then: polyph --home /tmp/a a
 
 ## Next steps
 
-1. The Nublet provider, once Nublet's provider interface is available.
-2. M9: cloud agents and extensibility.
+1. M9: cloud agents and extensibility.
+2. The skipped Nublet provider, if its interface becomes available.
 3. Give `polyph-localagent` the Polyph MCP tools.
 4. Run the real-agent smoke tests, including review, resolve and planning.
 5. Build and try the desktop app and VS Code extension on macOS and Windows;

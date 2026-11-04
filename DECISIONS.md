@@ -330,6 +330,13 @@ could not be followed exactly. Newest at the bottom of each section.
 - **Manifest strings for VS Code** come from `locales/*/vscode.ftl` and are
   written to `package.nls*.json` at build time, keeping one source of text.
 
+## Skipped work
+
+- **The Nublet provider (M8) was skipped** on 2026-11-04 at the project
+  owner's request: Nublet's provider interface was not available, and an
+  integration guessed without it would have been wrong. The status feed it
+  would read already exists. Tracked in `STUBS.md` and `PLAN.md`.
+
 ## Process
 
 - **Design skills.** Impeccable, Emil Kowalski's design-engineering skill,

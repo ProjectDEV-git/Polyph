@@ -173,11 +173,12 @@ accepted but hosted mode is M4.
 
 ## Milestone 8 gaps
 
-- **Nublet provider: not built.** The brief names a Nublet provider, but
-  Nublet's provider interface is not in the repository and could not be
-  found. The status feed (`polyph status --watch`, NDJSON, versioned in
-  `polyph-proto::status`) is what it would read; the provider itself waits
-  for Nublet's interface.
+- **Nublet provider: skipped** (2026-11-04, the project owner's decision).
+  The brief names a Nublet provider, but Nublet's provider interface is not
+  in the repository and could not be found, so the work moved on to M9
+  without it. When it is picked up, the status feed (`polyph status
+  --watch`, NDJSON, versioned in `polyph-proto::status`) is what it would
+  read. Nothing else depends on it.
 - **One room per phone.** The phone engine holds one room; joining another
   means leaving the first on that phone (Settings > Leave this room).
 - **No push when the phone app is closed.** Approval alerts show while the

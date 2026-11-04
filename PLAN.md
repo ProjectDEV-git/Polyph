@@ -104,7 +104,7 @@ commit and an updated `HANDOFF.md`. Stubs go in `STUBS.md`.
 - [x] VS Code extension (`apps/vscode`): daemon discovery and start, claim badges and editor notes, approvals as notifications, status bar, the shared app in a sidebar view and an editor tab through a message bridge, Pair a phone
 - [x] four locales (`app.ftl`, `cli.ftl`, `vscode.ftl`; manifest strings generated into `package.nls*.json`)
 - [x] tests: `polyph-testkit/tests/m8.rs` (phone engine through a real relay and daemon: join, chat, board, approvals, save/restore), Vitest (`PhoneClient`, extension with a stand-in `vscode` and a fake daemon), `scripts/e2e-phone.mjs` (Chromium at phone size, wasm engine, real daemon), `apps/vscode/test/e2e` (real VS Code, webview bundle)
-- [ ] Nublet provider: waiting for Nublet's provider interface (not in the repository; see `STUBS.md`)
+- [ ] ~~Nublet provider~~ **skipped** on 2026-11-04 by the project owner's decision: Nublet's provider interface is not in the repository. Recorded in `STUBS.md` and `DECISIONS.md`; pick it up when the interface is available.
 ## M9 — cloud agents and extensibility
 ## M10 — website, accounts, billing
 ## M11 — release
