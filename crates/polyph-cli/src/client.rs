@@ -81,6 +81,8 @@ pub fn spawn_daemon(home: &Path) -> std::io::Result<()> {
         const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+        // Otherwise the daemon keeps our stdout pipe open after we exit.
+        polyph_sandbox::lowil::stop_std_handle_inheritance();
     }
     cmd.spawn().map(|_| ())
 }

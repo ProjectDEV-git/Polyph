@@ -141,13 +141,22 @@ async fn host_survives_a_restart_and_needs_a_workdir() {
     })
     .await
     .unwrap();
-    // Without a working directory it refuses, and says how to fix it.
+    // Without a working directory it refuses, and says how to fix it. The
+    // laptop can still show the server's presence from before the restart and
+    // then briefly see it go away, so retry while the host reads as offline.
     h.nodes[s].daemon.shared.config.lock().host_workdir = None;
-    let e = h.nodes[a]
-        .call("agent.start", json!({ "room": rid, "kind": "fake", "on": "cloud" }))
+    let e = h
+        .until_value("the host answers a start", || async {
+            let e = h.nodes[a]
+                .call("agent.start", json!({ "room": rid, "kind": "fake", "on": "cloud" }))
+                .await
+                .unwrap_err()
+                .to_string();
+            let unreachable = e.contains("no agent host of yours matches") || e.contains("is offline");
+            (!unreachable).then_some(e)
+        })
         .await
-        .unwrap_err()
-        .to_string();
+        .unwrap();
     assert!(e.contains("polyph agent-host workdir"), "{e}");
 }
 

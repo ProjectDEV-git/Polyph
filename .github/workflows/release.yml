@@ -101,6 +101,7 @@ jobs:
           - { os: macos-15, target: aarch64-apple-darwin, bundles: "app,dmg" }
           - { os: windows-2022, target: x86_64-pc-windows-msvc, bundles: "nsis,msi" }
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     env:
       # macOS signing and notarization (Tauri reads these); unset = unsigned.
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -133,6 +134,15 @@ jobs:
       - name: Desktop app with polyph inside
         shell: bash
         run: |
+          # An unset secret arrives as an empty string, and Tauri signs (or
+          # notarizes) whenever the variable exists. Without a certificate or an
+          # Apple ID, drop that group so the build comes out unsigned.
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY
+          fi
+          if [ -z "$APPLE_ID" ]; then
+            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+          fi
           node scripts/release/desktop-prep.mjs --profile dist
           cd apps/desktop
           pnpm tauri build --config src-tauri/tauri.release.conf.json --bundles ${{ matrix.bundles }}

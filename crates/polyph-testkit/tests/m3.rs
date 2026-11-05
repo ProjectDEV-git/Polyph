@@ -43,6 +43,20 @@ fn worktree(script: Value, toml: &str) -> tempfile::TempDir {
 
 async fn messages(h: &Harness, i: usize, rid: &str, agent: &str) -> Vec<String> {
     let t = h.nodes[i].call("agent.transcript", json!({ "room": rid, "agent": agent })).await.unwrap();
+    transcript_messages(&t)
+}
+
+/// Like [`messages`], but empty while node `i` has not heard of the agent yet
+/// (a teammate learns about it from the host a moment after it starts).
+async fn messages_once_known(h: &Harness, i: usize, rid: &str, agent: &str) -> Vec<String> {
+    match h.nodes[i].call("agent.transcript", json!({ "room": rid, "agent": agent })).await {
+        Ok(t) => transcript_messages(&t),
+        Err(e) if e.to_string().contains("no such agent") => Vec::new(),
+        Err(e) => panic!("{e}"),
+    }
+}
+
+fn transcript_messages(t: &Value) -> Vec<String> {
     t["events"]
         .as_array()
         .unwrap()
@@ -82,7 +96,7 @@ async fn scripted_task_completes_and_teammates_see_it() {
 
     // Ann sees the transcript, with structured summaries.
     h.until("Ann sees the transcript", || async {
-        messages(&h, a, &rid, &id).await.iter().any(|m| m == "run: exit 0")
+        messages_once_known(&h, a, &rid, &id).await.iter().any(|m| m == "run: exit 0")
     })
     .await
     .unwrap();
