@@ -313,7 +313,7 @@ fn resolve_agent(ctx: &RoomCtx, me: &AgentRef, to: &str) -> Result<AgentRef, Str
 
 /// Repository-relative form of a path an agent gave, or an error for paths
 /// outside its worktree.
-fn rel_path(worktree: &Path, p: &str) -> Result<String, String> {
+pub(crate) fn rel_path(worktree: &Path, p: &str) -> Result<String, String> {
     let (path, symbol) = match p.split_once('#') {
         Some((a, s)) => (a, Some(s)),
         None => (p, None),
@@ -415,6 +415,10 @@ pub async fn call_tool(h: &Caller, rt: &RoomRuntime, shared: &Shared, tool: &str
         tools::READ_WB => read_whiteboard(rt, args).await,
         tools::DRAW => draw_diagram(h, rt, shared, args).await,
         tools::SKILLS => Ok(list_skills(h, shared)),
+        tools::CONTEXT => crate::context::get_context(h, rt, shared, args).await,
+        tools::SEARCH => crate::context::search_tool(&mut *rt.ctx.lock().await, args),
+        tools::RECENT => Ok(crate::context::recent_tool(&mut *rt.ctx.lock().await, args)),
+        tools::NEXT_TASK => crate::pickup::next_task(h, rt, shared).await,
         tools::READ_SKILL => read_skill(h, shared, args),
         _ => Err(ToolOutput::err(format!("unknown tool {tool}"))),
     };
@@ -466,22 +470,7 @@ async fn claim(h: &Caller, rt: &RoomRuntime, shared: &Shared, args: &Value) -> T
         .map(|p| rel_path(&h.worktree, p).map(|s| ClaimTarget::parse(&s)))
         .collect::<Result<_, _>>()
         .map_err(ToolOutput::err)?;
-    let rx = {
-        let mut ctx = rt.ctx.lock().await;
-        let now = shared.clock.now();
-        let (req, fx) = ctx
-            .core
-            .request_claims(&h.agent, &targets, &a.reason, h.task, polyph_core::room::DEFAULT_LEASE, now)
-            .map_err(|e| ToolOutput::err(e.to_string()))?;
-        let (tx, rx) = oneshot::channel();
-        ctx.claim_waiters.insert(req, tx);
-        apply(rt, &mut ctx, shared, fx).await;
-        rx
-    };
-    let (granted, denied) = match tokio::time::timeout(Duration::from_secs(15), rx).await {
-        Ok(Ok(v)) => v,
-        _ => return Err(ToolOutput::err("the claim arbiter did not answer; try again in a moment")),
-    };
+    let (granted, denied) = request_claims(h, rt, shared, &targets, &a.reason).await?;
     let mut text = String::new();
     if !granted.is_empty() {
         let t: Vec<String> = granted.iter().map(|c| c.target.to_string()).collect();
@@ -498,11 +487,55 @@ async fn claim(h: &Caller, rt: &RoomRuntime, shared: &Shared, args: &Value) -> T
             t.join("; ")
         ));
     }
+    // Areas are advice: say when a file is someone else's to look after.
+    let areas = crate::areas::load(&h.worktree);
+    let mut others: Vec<String> = vec![];
+    for c in &granted {
+        if let Some(a) = areas.owner_of(&c.target.path)
+            && !a.owners.is_empty()
+            && !a.owned_by(&h.agent.label)
+        {
+            others.push(format!("{} is in {}", c.target.path, a.describe()));
+        }
+    }
+    if !others.is_empty() {
+        text.push_str(&format!(
+            " Note: {}. Tell its owners what you change, with ask_agent or a note.",
+            others.join("; ")
+        ));
+    }
     let data = json!({
+        "areas": others,
         "granted": granted.iter().map(|c| c.target.to_string()).collect::<Vec<_>>(),
         "denied": denied.iter().map(|c| json!({ "target": c.target.to_string(), "holder": c.owner.label, "reason": c.reason })).collect::<Vec<_>>(),
     });
     Ok(ToolOutput { text, data, error: false })
+}
+
+/// Asks the room's claim arbiter for `targets` and waits for its answer.
+pub(crate) async fn request_claims(
+    h: &Caller,
+    rt: &RoomRuntime,
+    shared: &Shared,
+    targets: &[ClaimTarget],
+    reason: &str,
+) -> Result<(Vec<polyph_proto::messages::Claim>, Vec<polyph_proto::messages::Claim>), ToolOutput> {
+    let rx = {
+        let mut ctx = rt.ctx.lock().await;
+        let now = shared.clock.now();
+        let (req, fx) = ctx
+            .core
+            .request_claims(&h.agent, targets, reason, h.task, polyph_core::room::DEFAULT_LEASE, now)
+            .map_err(|e| ToolOutput::err(e.to_string()))?;
+        let (tx, rx) = oneshot::channel();
+        ctx.claim_waiters.insert(req, tx);
+        apply(rt, &mut ctx, shared, fx).await;
+        rx
+    };
+    match tokio::time::timeout(Duration::from_secs(15), rx).await {
+        Ok(Ok(v)) => Ok(v),
+        _ => Err(ToolOutput::err("the claim arbiter did not answer; try again in a moment")),
+    }
 }
 
 async fn release(h: &Caller, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {

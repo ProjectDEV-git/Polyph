@@ -5,6 +5,7 @@
 mod account;
 mod client;
 mod clients;
+mod knowledge;
 mod repo;
 mod setup;
 mod update;
@@ -216,6 +217,26 @@ enum Cmd {
         no_connect: bool,
     },
     Doctor,
+    Brief {
+        #[command(subcommand)]
+        cmd: Option<knowledge::BriefCmd>,
+        #[arg(long, global = true)]
+        room: Option<String>,
+    },
+    Search {
+        #[arg(required = true)]
+        query: Vec<String>,
+        #[arg(long)]
+        room: Option<String>,
+    },
+    Catchup {
+        #[arg(long)]
+        room: Option<String>,
+    },
+    Areas {
+        /// A file to look up (default: list every area).
+        path: Option<String>,
+    },
     Sync {
         #[arg(long)]
         room: Option<String>,
@@ -731,6 +752,10 @@ async fn run(ctx: &Ctx, cmd: Option<Cmd>) -> anyhow::Result<()> {
         Cmd::Start { name, yes, no_connect } => setup::start(ctx, name, yes, no_connect).await,
         Cmd::Doctor => setup::doctor(ctx).await,
         Cmd::Sync { room, all } => repo::sync(ctx, room, all).await,
+        Cmd::Brief { cmd, room } => knowledge::brief(ctx, cmd, room).await,
+        Cmd::Search { query, room } => knowledge::search(ctx, &query, room).await,
+        Cmd::Catchup { room } => knowledge::catchup(ctx, room).await,
+        Cmd::Areas { path } => knowledge::areas(ctx, path).await,
         Cmd::Update { check, version, force } => update::run(ctx, check, version, force).await,
         Cmd::Uninstall { purge, yes } => update::uninstall(ctx, purge, yes).await,
         Cmd::Completions { shell } => {
@@ -1355,6 +1380,10 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
         | Cmd::Disconnect { .. }
         | Cmd::Start { .. }
         | Cmd::Doctor
+        | Cmd::Brief { .. }
+        | Cmd::Search { .. }
+        | Cmd::Catchup { .. }
+        | Cmd::Areas { .. }
         | Cmd::Sync { .. }
         | Cmd::Update { .. }
         | Cmd::Uninstall { .. } => {}

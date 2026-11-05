@@ -33,12 +33,70 @@ pub const READ_WB: &str = "read_whiteboard";
 pub const DRAW: &str = "draw_diagram";
 pub const SKILLS: &str = "list_skills";
 pub const READ_SKILL: &str = "read_skill";
+pub const CONTEXT: &str = "get_context";
+pub const SEARCH: &str = "search";
+pub const RECENT: &str = "recent_work";
+pub const NEXT_TASK: &str = "next_task";
 
 fn no_args() -> Value {
     json!({ "type": "object", "properties": {}, "additionalProperties": false })
 }
 
 pub static TOOLS: &[ToolDef] = &[
+    ToolDef {
+        name: CONTEXT,
+        description: "Everything you need before you start, in one call: the project brief (architecture, \
+conventions, decisions), your task with its acceptance criteria, the notes pinned to your files, who holds them, \
+which code area they belong to, and what was finished lately. Call it first, and again when you move to other \
+files (pass them in `paths`). The answer is cut to `max_chars` (default 12000), most important first.",
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "paths": { "type": "array", "items": { "type": "string" }, "maxItems": 100,
+                        "description": "Files or directories you are about to work on." },
+                    "max_chars": { "type": "integer", "minimum": 1000, "maximum": 60000 }
+                },
+                "additionalProperties": false
+            })
+        },
+    },
+    ToolDef {
+        name: SEARCH,
+        description: "Search the room's notes, task cards (with what finished tasks did) and discussion threads \
+for every word of `query`. Use it to find earlier decisions and who worked on something before you change it.",
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
+                },
+                "required": ["query"],
+                "additionalProperties": false
+            })
+        },
+    },
+    ToolDef {
+        name: RECENT,
+        description: "What was finished lately, with the summary each agent left, and what is in progress now. \
+Use it to catch up when you join a room that has been working without you.",
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": { "limit": { "type": "integer", "minimum": 1, "maximum": 50 } },
+                "additionalProperties": false
+            })
+        },
+    },
+    ToolDef {
+        name: NEXT_TASK,
+        description: "Take the next ready task: one in the ready column whose dependencies are done, that nobody \
+has, and whose files nobody holds, preferring tasks in your code areas. Polyph makes sure no two agents get the \
+same task. The task becomes yours (claimed); its files are not claimed for you, so claim them before editing. \
+Returns nothing when no task is ready.",
+        schema: no_args,
+    },
     ToolDef {
         name: CLAIM,
         description: "Claim files before editing them so other agents in the room do not edit them at the same time. \

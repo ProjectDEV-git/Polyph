@@ -4,11 +4,13 @@
 
 pub mod agents;
 pub mod api;
+pub mod areas;
 pub mod boards;
 pub mod clock;
 pub mod cloud;
 pub mod config;
 pub mod connect_keys;
+pub mod context;
 pub mod coord;
 pub mod daemon;
 #[cfg(target_os = "linux")]
@@ -27,6 +29,7 @@ pub mod mirror;
 pub mod notify;
 pub mod paths;
 pub mod phone;
+pub mod pickup;
 pub mod plan;
 pub mod plugins;
 pub mod runtime;

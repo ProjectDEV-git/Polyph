@@ -73,3 +73,34 @@ sync-held-dirty = { $dir }: { $branch } ตามหลัง { $count } คอ�
 sync-held-diverged = { $dir }: { $branch } มีคอมมิตของตัวเอง { $ahead } คอมมิต และตามหลัง { $behind } คอมมิต ให้ merge หรือ rebase เอง
 sync-ahead = { $dir }: { $branch } เป็นปัจจุบัน และมี { $count } คอมมิตที่ยังไม่ได้ push
 sync-current = { $dir }: { $branch } เป็นปัจจุบันแล้ว
+
+help-brief = อ่านหรือแก้สรุปโปรเจกต์ที่เอเจนต์ทุกตัวอ่าน: สถาปัตยกรรม ข้อตกลง และการตัดสินใจ
+help-brief-show = แสดงสรุปโปรเจกต์
+help-brief-set = แทนที่สรุปด้วยไฟล์ (- อ่านจากอินพุตมาตรฐาน)
+help-brief-edit = แก้สรุปในโปรแกรมแก้ไขของคุณ
+help-search = ค้นหาในโน้ต การ์ดงาน และเธรดของห้อง
+help-catchup = งานที่เสร็จล่าสุด พร้อมสรุปจากเอเจนต์แต่ละตัว
+help-areas = แสดงพื้นที่โค้ด (.polyph/AREAS หรือ CODEOWNERS) และผู้ดูแล
+
+brief-by = แก้ไขล่าสุดโดย { $name }
+brief-empty = ห้องนี้ยังไม่มีสรุปโปรเจกต์ เขียนได้ด้วย polyph brief edit ระหว่างนี้เอเจนต์จะอ่าน .polyph/brief.md ถ้ารีโพมีไฟล์นี้
+brief-saved = บันทึกสรุปแล้ว เอเจนต์ทุกตัวในห้องอ่านได้ด้วย get_context
+brief-unchanged = สรุปไม่มีการเปลี่ยนแปลง
+brief-template = # สรุปโปรเจกต์
+    
+    ## สถาปัตยกรรม
+    
+    ## ข้อตกลง
+    
+    ## การตัดสินใจ
+search-none = ไม่พบสิ่งที่ตรงกับ "{ $query }"
+search-kind-note = โน้ต
+search-kind-card = งาน
+search-kind-thread = เธรด
+catchup-brief = จากสรุปโปรเจกต์:
+catchup-finished = เสร็จล่าสุด:
+catchup-nothing = ยังไม่มีงานที่เสร็จ
+areas-empty = รีโพนี้ยังไม่มีพื้นที่โค้ด เพิ่มไฟล์ .polyph/AREAS (รูปแบบเดียวกับ CODEOWNERS): แพตเทิร์น ตามด้วยผู้ดูแล
+areas-from = พื้นที่โค้ดจาก { $file }:
+areas-of = { $path } อยู่ใน { $pattern } ดูแลโดย { $owners }
+areas-none-for = { $path } ไม่อยู่ในพื้นที่โค้ดใด

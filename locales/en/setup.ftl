@@ -74,3 +74,34 @@ sync-held-dirty = { $dir }: { $branch } is { $count } commit(s) behind, but you 
 sync-held-diverged = { $dir }: { $branch } has { $ahead } commit(s) of its own and is { $behind } behind; merge or rebase it yourself.
 sync-ahead = { $dir }: { $branch } is up to date, with { $count } commit(s) not pushed yet.
 sync-current = { $dir }: { $branch } is up to date.
+
+help-brief = Read or change the project brief every agent reads: architecture, conventions, decisions.
+help-brief-show = Print the brief.
+help-brief-set = Replace the brief with a file (- reads standard input).
+help-brief-edit = Edit the brief in your editor.
+help-search = Search the room's notes, task cards and threads.
+help-catchup = What was finished lately, with each agent's summary.
+help-areas = Show the code areas (.polyph/AREAS or CODEOWNERS) and who looks after them.
+
+brief-by = Last edited by { $name }.
+brief-empty = This room has no brief yet. Write one with polyph brief edit; until then agents read .polyph/brief.md if the repository has one.
+brief-saved = Saved the brief; every agent in the room reads it with get_context.
+brief-unchanged = The brief is unchanged.
+brief-template = # Project brief
+    
+    ## Architecture
+    
+    ## Conventions
+    
+    ## Decisions
+search-none = Nothing matches "{ $query }".
+search-kind-note = note
+search-kind-card = task
+search-kind-thread = thread
+catchup-brief = From the brief:
+catchup-finished = Finished lately:
+catchup-nothing = No task has been finished yet.
+areas-empty = This repository has no code areas. Add .polyph/AREAS (same form as CODEOWNERS): a pattern, then owners.
+areas-from = Code areas from { $file }:
+areas-of = { $path } is in { $pattern }, looked after by { $owners }.
+areas-none-for = { $path } is in no code area.

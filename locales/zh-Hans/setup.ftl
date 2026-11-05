@@ -73,3 +73,34 @@ sync-held-dirty = { $dir }：{ $branch } 落后 { $count } 个提交，但你有
 sync-held-diverged = { $dir }：{ $branch } 有 { $ahead } 个自己的提交，并落后 { $behind } 个；请自行合并或变基。
 sync-ahead = { $dir }：{ $branch } 已是最新，有 { $count } 个提交尚未推送。
 sync-current = { $dir }：{ $branch } 已是最新。
+
+help-brief = 查看或修改每个智能体都会读的项目简介：架构、约定、决策。
+help-brief-show = 显示简介。
+help-brief-set = 用文件内容替换简介（- 表示从标准输入读取）。
+help-brief-edit = 在编辑器中编辑简介。
+help-search = 搜索房间的笔记、任务卡片和讨论串。
+help-catchup = 最近完成的工作，以及每个智能体留下的总结。
+help-areas = 显示代码区域（.polyph/AREAS 或 CODEOWNERS）及其负责人。
+
+brief-by = 最后由 { $name } 编辑。
+brief-empty = 此房间还没有简介。用 polyph brief edit 编写；在此之前，如果仓库中有 .polyph/brief.md，智能体会读取它。
+brief-saved = 简介已保存；房间里的每个智能体都会通过 get_context 读取它。
+brief-unchanged = 简介没有变化。
+brief-template = # 项目简介
+    
+    ## 架构
+    
+    ## 约定
+    
+    ## 决策
+search-none = 没有与“{ $query }”匹配的内容。
+search-kind-note = 笔记
+search-kind-card = 任务
+search-kind-thread = 讨论串
+catchup-brief = 简介摘录：
+catchup-finished = 最近完成：
+catchup-nothing = 还没有完成的任务。
+areas-empty = 此仓库没有代码区域。添加 .polyph/AREAS（格式同 CODEOWNERS）：先写路径模式，再写负责人。
+areas-from = 来自 { $file } 的代码区域：
+areas-of = { $path } 属于 { $pattern }，由 { $owners } 负责。
+areas-none-for = { $path } 不属于任何代码区域。

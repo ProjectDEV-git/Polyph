@@ -73,3 +73,34 @@ sync-held-dirty = { $dir }: { $branch } は { $count } コミット遅れてい�
 sync-held-diverged = { $dir }: { $branch } には独自のコミットが { $ahead } 個あり、{ $behind } 個遅れています。マージかリベースを自分で行ってください。
 sync-ahead = { $dir }: { $branch } は最新です。まだ push していないコミットが { $count } 個あります。
 sync-current = { $dir }: { $branch } は最新です。
+
+help-brief = すべてのエージェントが読むプロジェクト概要（アーキテクチャ、規約、決定事項）を表示・変更します。
+help-brief-show = 概要を表示します。
+help-brief-set = 概要をファイルの内容で置き換えます（- で標準入力）。
+help-brief-edit = エディターで概要を編集します。
+help-search = ルームのメモ、タスクカード、スレッドを検索します。
+help-catchup = 最近終わった作業を、各エージェントの要約付きで表示します。
+help-areas = コード領域（.polyph/AREAS または CODEOWNERS）と担当者を表示します。
+
+brief-by = 最終更新: { $name }
+brief-empty = このルームにはまだ概要がありません。polyph brief edit で書けます。それまでは、リポジトリに .polyph/brief.md があればエージェントはそれを読みます。
+brief-saved = 概要を保存しました。ルームのすべてのエージェントが get_context で読みます。
+brief-unchanged = 概要は変わっていません。
+brief-template = # プロジェクト概要
+    
+    ## アーキテクチャ
+    
+    ## 規約
+    
+    ## 決定事項
+search-none = 「{ $query }」に一致するものはありません。
+search-kind-note = メモ
+search-kind-card = タスク
+search-kind-thread = スレッド
+catchup-brief = 概要より:
+catchup-finished = 最近終わったもの:
+catchup-nothing = まだ終わったタスクはありません。
+areas-empty = このリポジトリにはコード領域がありません。.polyph/AREAS（CODEOWNERS と同じ形式: パターンと担当者）を追加してください。
+areas-from = { $file } のコード領域:
+areas-of = { $path } は { $pattern } に含まれ、担当は { $owners } です。
+areas-none-for = { $path } はどのコード領域にも含まれません。

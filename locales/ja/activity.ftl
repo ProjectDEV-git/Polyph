@@ -18,3 +18,5 @@ activity-whiteboard-created = ホワイトボード { $name } を作成しまし
 activity-terminal-opened = ターミナル { $title } を開きました
 activity-agent-connected = { $client } を接続しました
 activity-task-finished = タスクを終えました: { $summary }
+activity-brief-updated = プロジェクト概要を更新しました
+activity-task-taken = タスク { $title } を引き受けました

@@ -18,3 +18,5 @@ activity-whiteboard-created = 创建了白板 { $name }
 activity-terminal-opened = 打开了终端 { $title }
 activity-agent-connected = 连接了 { $client }
 activity-task-finished = 完成了一项任务：{ $summary }
+activity-brief-updated = 更新了项目简介
+activity-task-taken = 接手了任务 { $title }

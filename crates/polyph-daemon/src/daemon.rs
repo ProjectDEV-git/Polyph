@@ -1015,11 +1015,17 @@ impl Daemon {
                     assignee: Option<String>,
                     acceptance: Option<Vec<String>>,
                     files: Option<Vec<String>>,
+                    /// Cards (ids or unique prefixes) this one waits for.
+                    depends_on: Option<Vec<String>>,
                 }
                 let p: P = param(&params)?;
                 let rt = self.find(&p.room).await?;
                 let mut c = rt.ctx.lock().await;
                 let card = find_card(&mut c, &p.card)?;
+                let deps = match &p.depends_on {
+                    Some(d) => Some(d.iter().map(|x| find_card(&mut c, x)).collect::<Result<Vec<String>, _>>()?),
+                    None => None,
+                };
                 let red = |s: &str| polyph_core::redact::redact(s).into_owned();
                 let fx = c.core.change_doc(DocName::Board, |d| {
                     let b = Board::new(d);
@@ -1048,6 +1054,12 @@ impl Daemon {
                     if let Some(l) = &p.files {
                         set(
                             polyph_proto::crdt::card::FILES,
+                            yrs::Any::String(serde_json::to_string(l).unwrap_or_default().into()),
+                        );
+                    }
+                    if let Some(l) = &deps {
+                        set(
+                            polyph_proto::crdt::card::DEPENDS_ON,
                             yrs::Any::String(serde_json::to_string(l).unwrap_or_default().into()),
                         );
                     }
@@ -1822,6 +1834,68 @@ impl Daemon {
             }
             "mcp.sessions" => ok(crate::external::list(self).await),
             "repo.get" | "repo.set" | "sync.run" => crate::sync::call(self, method, params).await,
+            "brief.get" => {
+                let p: RoomParam = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let mut c = rt.ctx.lock().await;
+                match crate::context::brief(&mut c) {
+                    Some(b) => ok(b),
+                    None => ok(Value::Null),
+                }
+            }
+            "brief.set" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    text: String,
+                }
+                let p: P = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                ok(crate::context::set_brief(&rt, &self.shared, &p.text).await?)
+            }
+            "search" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    query: String,
+                    limit: Option<usize>,
+                }
+                let p: P = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let mut c = rt.ctx.lock().await;
+                ok(crate::context::search(&mut c, &p.query, p.limit.unwrap_or(20)))
+            }
+            "recent" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    limit: Option<usize>,
+                }
+                let p: P = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let mut c = rt.ctx.lock().await;
+                ok(crate::context::recent(&mut c, p.limit.unwrap_or(20)))
+            }
+            "areas.get" => {
+                #[derive(Deserialize)]
+                struct P {
+                    dir: PathBuf,
+                    path: Option<String>,
+                }
+                let p: P = param(&params)?;
+                let root = crate::folders::root(&p.dir);
+                let areas = crate::areas::load(&root);
+                match p.path {
+                    Some(path) => {
+                        let rel = std::path::Path::new(&path)
+                            .strip_prefix(&root)
+                            .map(|r| r.to_string_lossy().replace('\\', "/"))
+                            .unwrap_or(path.replace('\\', "/"));
+                        ok(json!({ "path": rel, "area": areas.owner_of(&rel), "source": areas.source }))
+                    }
+                    None => ok(areas),
+                }
+            }
             "connect.key" | "connect.revoke" => {
                 #[derive(Deserialize)]
                 struct P {

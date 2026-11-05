@@ -18,3 +18,5 @@ activity-whiteboard-created = created the whiteboard { $name }
 activity-terminal-opened = opened the terminal { $title }
 activity-agent-connected = connected { $client }
 activity-task-finished = finished a task: { $summary }
+activity-brief-updated = updated the project brief
+activity-task-taken = took the task { $title }

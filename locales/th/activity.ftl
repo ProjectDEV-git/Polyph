@@ -18,3 +18,5 @@ activity-whiteboard-created = สร้างไวต์บอร์ด { $name
 activity-terminal-opened = เปิดเทอร์มินัล { $title }
 activity-agent-connected = เชื่อมต่อ { $client }
 activity-task-finished = ทำงานเสร็จ: { $summary }
+activity-brief-updated = แก้ไขสรุปโปรเจกต์
+activity-task-taken = รับงาน { $title }
