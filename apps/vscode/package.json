@@ -2,7 +2,7 @@
   "name": "polyph-vscode",
   "displayName": "%vscode-display-name%",
   "description": "%vscode-description%",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "polyph",
   "private": true,
   "type": "module",

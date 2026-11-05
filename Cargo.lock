@@ -3087,7 +3087,7 @@ dependencies = [
 
 [[package]]
 name = "polyph-agents"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3106,7 +3106,7 @@ dependencies = [
 
 [[package]]
 name = "polyph-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -3135,7 +3135,7 @@ dependencies = [
 
 [[package]]
 name = "polyph-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "polyph-proto",
  "proptest",
@@ -3149,7 +3149,7 @@ dependencies = [
 
 [[package]]
 name = "polyph-daemon"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -3196,7 +3196,7 @@ dependencies = [
 
 [[package]]
 name = "polyph-git"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "tempfile",
@@ -3205,7 +3205,7 @@ dependencies = [
 
 [[package]]
 name = "polyph-i18n"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "fluent-bundle",
  "fluent-langneg",
@@ -3215,7 +3215,7 @@ dependencies = [
 
 [[package]]
 name = "polyph-localagent"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -3232,7 +3232,7 @@ dependencies = [
 
 [[package]]
 name = "polyph-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "polyph-sandbox",
@@ -3243,7 +3243,7 @@ dependencies = [
 
 [[package]]
 name = "polyph-merge"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "polyph-git",
  "serde",
@@ -3252,7 +3252,7 @@ dependencies = [
 
 [[package]]
 name = "polyph-phone"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "polyph-core",
  "polyph-proto",
@@ -3264,7 +3264,7 @@ dependencies = [
 
 [[package]]
 name = "polyph-plugins"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -3275,7 +3275,7 @@ dependencies = [
 
 [[package]]
 name = "polyph-proto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "blake3",
@@ -3307,7 +3307,7 @@ dependencies = [
 
 [[package]]
 name = "polyph-relay"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -3339,7 +3339,7 @@ dependencies = [
 
 [[package]]
 name = "polyph-sandbox"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "landlock",
@@ -3356,7 +3356,7 @@ dependencies = [
 
 [[package]]
 name = "polyph-term"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "portable-pty",
@@ -3365,7 +3365,7 @@ dependencies = [
 
 [[package]]
 name = "polyph-testkit"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -3398,7 +3398,7 @@ dependencies = [
 
 [[package]]
 name = "polyph-tui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
