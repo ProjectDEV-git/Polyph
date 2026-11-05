@@ -2620,7 +2620,7 @@ dependencies = [
 
 [[package]]
 name = "polyph-desktop"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "directories",
  "polyph-i18n",
@@ -2634,7 +2634,7 @@ dependencies = [
 
 [[package]]
 name = "polyph-i18n"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "fluent-bundle",
  "fluent-langneg",

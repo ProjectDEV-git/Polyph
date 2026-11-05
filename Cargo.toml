@@ -24,7 +24,7 @@ members = [
 exclude = ["cloud", "apps/desktop/src-tauri"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.94"
 license = "Apache-2.0"
@@ -43,22 +43,22 @@ todo = "warn"
 
 [workspace.dependencies]
 # internal
-polyph-proto = { path = "crates/polyph-proto", version = "0.1.1" }
-polyph-core = { path = "crates/polyph-core", version = "0.1.1" }
-polyph-phone = { path = "crates/polyph-phone", version = "0.1.1" }
-polyph-agents = { path = "crates/polyph-agents", version = "0.1.1" }
-polyph-localagent = { path = "crates/polyph-localagent", version = "0.1.1" }
-polyph-sandbox = { path = "crates/polyph-sandbox", version = "0.1.1" }
-polyph-mcp = { path = "crates/polyph-mcp", version = "0.1.1" }
-polyph-git = { path = "crates/polyph-git", version = "0.1.1" }
-polyph-merge = { path = "crates/polyph-merge", version = "0.1.1" }
-polyph-term = { path = "crates/polyph-term", version = "0.1.1" }
-polyph-plugins = { path = "crates/polyph-plugins", version = "0.1.1" }
-polyph-i18n = { path = "crates/polyph-i18n", version = "0.1.1" }
-polyph-daemon = { path = "crates/polyph-daemon", version = "0.1.1" }
-polyph-tui = { path = "crates/polyph-tui", version = "0.1.1" }
-polyph-relay = { path = "crates/polyph-relay", version = "0.1.1" }
-polyph-testkit = { path = "crates/polyph-testkit", version = "0.1.1" }
+polyph-proto = { path = "crates/polyph-proto", version = "0.1.2" }
+polyph-core = { path = "crates/polyph-core", version = "0.1.2" }
+polyph-phone = { path = "crates/polyph-phone", version = "0.1.2" }
+polyph-agents = { path = "crates/polyph-agents", version = "0.1.2" }
+polyph-localagent = { path = "crates/polyph-localagent", version = "0.1.2" }
+polyph-sandbox = { path = "crates/polyph-sandbox", version = "0.1.2" }
+polyph-mcp = { path = "crates/polyph-mcp", version = "0.1.2" }
+polyph-git = { path = "crates/polyph-git", version = "0.1.2" }
+polyph-merge = { path = "crates/polyph-merge", version = "0.1.2" }
+polyph-term = { path = "crates/polyph-term", version = "0.1.2" }
+polyph-plugins = { path = "crates/polyph-plugins", version = "0.1.2" }
+polyph-i18n = { path = "crates/polyph-i18n", version = "0.1.2" }
+polyph-daemon = { path = "crates/polyph-daemon", version = "0.1.2" }
+polyph-tui = { path = "crates/polyph-tui", version = "0.1.2" }
+polyph-relay = { path = "crates/polyph-relay", version = "0.1.2" }
+polyph-testkit = { path = "crates/polyph-testkit", version = "0.1.2" }
 
 # async and networking
 tokio = { version = "1.54", default-features = false }
