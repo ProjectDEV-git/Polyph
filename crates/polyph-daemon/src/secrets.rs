@@ -125,6 +125,19 @@ pub fn storage_key(paths: &Paths, force_file: bool) -> anyhow::Result<(StorageKe
     }
 }
 
+/// Removes this home's storage key from the keychain, if it is there
+/// (`polyph uninstall --purge`). The data it protected is gone with it.
+pub fn forget_keychain(paths: &Paths) {
+    let p = paths.clone();
+    // A plain thread, as in `storage_key`: some backends need their own runtime.
+    let _ = std::thread::spawn(move || {
+        if let Ok(e) = keyring::Entry::new(SERVICE, &account_for(&p)) {
+            let _ = e.delete_credential();
+        }
+    })
+    .join();
+}
+
 /// Loads or creates this device's identity, encrypted with the storage key.
 pub fn identity(paths: &Paths, key: &StorageKey) -> anyhow::Result<Arc<DeviceIdentity>> {
     let p = paths.identity();

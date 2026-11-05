@@ -118,14 +118,36 @@ jobs:
         run: |
           node scripts/release/package.mjs --profile dev
           scripts/release/smoke.sh dist/polyph-*-x86_64-unknown-linux-gnu.tar.gz
-      - name: Install script from a local release
+      - name: Install, update and uninstall from a local release
+        env:
+          POLYPH_HOME: ${{ runner.temp }}/polyph-home
+          POLYPH_KEYSTORE: file
         run: |
           cat dist/*.sha256 > dist/SHA256SUMS
           python3 -m http.server 4320 --bind 127.0.0.1 --directory dist &
           sleep 1
-          POLYPH_INSTALL_BASE=http://127.0.0.1:4320 POLYPH_PREFIX="$RUNNER_TEMP/prefix" sh scripts/install.sh
-          "$RUNNER_TEMP/prefix/bin/polyph" --version
-          test -f "$RUNNER_TEMP/prefix/share/polyph/web/app/index.html"
+          p="$RUNNER_TEMP/prefix"
+          POLYPH_INSTALL_BASE=http://127.0.0.1:4320 POLYPH_PREFIX="$p" sh scripts/install.sh
+          "$p/bin/polyph" --version
+          test -f "$p/share/polyph/web/app/index.html"
+          # polyph update finds the same release, then reinstalls it over a running daemon.
+          export POLYPH_UPDATE_BASE=http://127.0.0.1:4320
+          "$p/bin/polyph" update --check | grep -q "latest release"
+          "$p/bin/polyph" daemon start
+          "$p/bin/polyph" update --force | tee update.log
+          grep -q "restarted on the new version" update.log
+          "$p/bin/polyph" daemon status
+          test -f "$p/share/polyph/web/app/index.html"
+          # A tampered download changes nothing.
+          cp dist/SHA256SUMS dist/SHA256SUMS.good
+          sed -i 's/^./0/' dist/SHA256SUMS
+          if "$p/bin/polyph" update --force; then exit 1; fi
+          test -x "$p/bin/polyph"
+          mv dist/SHA256SUMS.good dist/SHA256SUMS
+          # polyph uninstall removes its files and keeps the data unless asked.
+          "$p/bin/polyph" uninstall --yes
+          test ! -e "$p/bin/polyph" && test ! -e "$p/bin/polyph-relay" && test ! -e "$p/share/polyph"
+          test -d "$POLYPH_HOME"
       - name: Package the VS Code extension
         run: pnpm --filter polyph-vscode package
       - uses: actions/upload-artifact@v4

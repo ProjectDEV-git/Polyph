@@ -56,6 +56,7 @@ try {
     Write-Host "Added $bin to your PATH; open a new terminal to use it."
   }
   Write-Host ("Installed " + (& (Join-Path $bin 'polyph.exe') --version) + " to $bin")
+  Write-Host "Later: polyph update to update, polyph uninstall to remove."
 } finally {
   Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }

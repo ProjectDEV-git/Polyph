@@ -4,6 +4,7 @@
 
 mod account;
 mod client;
+mod update;
 mod work;
 
 use std::path::PathBuf;
@@ -249,6 +250,25 @@ enum Cmd {
     Cloud {
         #[command(subcommand)]
         cmd: account::CloudCmd,
+    },
+    Update {
+        /// Only say whether a newer release exists.
+        #[arg(long)]
+        check: bool,
+        /// Install this version (for example 0.2.0) instead of the latest.
+        #[arg(long)]
+        version: Option<String>,
+        /// Reinstall even when this version is already the latest.
+        #[arg(long)]
+        force: bool,
+    },
+    Uninstall {
+        /// Also delete this device's Polyph data: identity, rooms and settings.
+        #[arg(long)]
+        purge: bool,
+        /// Do not ask for confirmation.
+        #[arg(long, short)]
+        yes: bool,
     },
 }
 
@@ -656,6 +676,8 @@ async fn run(ctx: &Ctx, cmd: Option<Cmd>) -> anyhow::Result<()> {
         }
         // Started by agents inside their sandbox; speaks MCP on stdin/stdout.
         Cmd::Mcp => polyph_mcp::run_stdio().await,
+        Cmd::Update { check, version, force } => update::run(ctx, check, version, force).await,
+        Cmd::Uninstall { purge, yes } => update::uninstall(ctx, purge, yes).await,
         Cmd::Completions { shell } => {
             let mut c = Cli::command();
             clap_complete::generate(shell, &mut c, "polyph", &mut std::io::stdout());
@@ -1253,7 +1275,12 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
             call(&mut api, "budget.set", json!({ "room": room, "budgets": budgets })).await?;
             ctx.out(l.t("budget-saved"));
         }
-        Cmd::Daemon { .. } | Cmd::Relay { .. } | Cmd::Completions { .. } | Cmd::Mcp => {}
+        Cmd::Daemon { .. }
+        | Cmd::Relay { .. }
+        | Cmd::Completions { .. }
+        | Cmd::Mcp
+        | Cmd::Update { .. }
+        | Cmd::Uninstall { .. } => {}
     }
     Ok(())
 }

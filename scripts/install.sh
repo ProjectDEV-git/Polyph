@@ -92,3 +92,4 @@ case ":$PATH:" in
   *) say "Add $PREFIX/bin to your PATH, for example: echo 'export PATH=\"$PREFIX/bin:\$PATH\"' >> ~/.profile" ;;
 esac
 say "If a daemon was running, restart it: polyph daemon stop"
+say "Later: polyph update to update, polyph uninstall to remove."

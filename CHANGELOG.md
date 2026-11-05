@@ -12,6 +12,12 @@ GitHub release page.
 - **Join from a browser.** `polyph room invite` prints a link that opens the
   phone app on the website (now on GitHub Pages) with the code filled in, so
   someone can join without installing anything.
+- **`polyph update` and `polyph uninstall`.** `polyph update` installs the
+  latest release over an install made with the install scripts, checks it
+  against the release's `SHA256SUMS` and restarts the daemon on it (not
+  while agents are working). `--check` only looks. `polyph uninstall`
+  removes polyph and keeps your data; `--purge` deletes that too. 0.1.0 has
+  neither: run the install script again once to get them.
 
 ## 0.1.0
 
