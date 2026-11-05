@@ -557,6 +557,16 @@ pub fn clean_remote(url: &str) -> Option<String> {
 /// they are checked out, which is much faster for large repositories.
 pub fn clone(url: &str, dir: &Path, branch: Option<&str>, partial: bool) -> Result<Repo> {
     let url = clean_remote(url).ok_or_else(|| GitError::Invalid(format!("not a remote URL: {url}")))?;
+    clone_from(&url, dir, branch, partial)
+}
+
+/// [`clone`] without the check that `url` is a shareable remote (local
+/// paths and `file://` work): for URLs the person typed themselves.
+pub fn clone_from(url: &str, dir: &Path, branch: Option<&str>, partial: bool) -> Result<Repo> {
+    if url.starts_with('-') {
+        return Err(GitError::Invalid(format!("not a remote URL: {url}")));
+    }
+    let url = url.to_string();
     let parent = dir.parent().unwrap_or(Path::new("."));
     let mut args: Vec<String> = vec!["clone".into(), "--quiet".into()];
     if partial {
@@ -694,6 +704,49 @@ mod tests {
         r.commit_all("initial", &Signature::agent("Ann/test", "0")).unwrap();
         let r = Repo::open(d.path()).unwrap();
         (d, r)
+    }
+
+    #[test]
+    fn clone_partial_and_sync() {
+        let (src, r) = init();
+        r.git(&["config", "uploadpack.allowFilter", "true"]).unwrap();
+        let bare = tempfile::tempdir().unwrap();
+        let bare_path = bare.path().join("origin.git");
+        run(src.path(), &["clone", "-q", "--bare", ".", &bare_path.to_string_lossy()], &[], None).unwrap();
+        run(&bare_path, &["config", "uploadpack.allowFilter", "true"], &[], None).unwrap();
+        let url = format!("file://{}", bare_path.to_string_lossy().replace('\\', "/"));
+        let out = tempfile::tempdir().unwrap();
+        let mine = clone_from(&url, &out.path().join("mine"), Some("main"), true).unwrap();
+        assert_eq!(mine.git(&["config", "remote.origin.promisor"]).unwrap().trim(), "true", "blobless clone");
+        assert_eq!(std::fs::read_to_string(mine.root().join("lib.rs")).unwrap(), "fn a() {}\n");
+        assert_eq!(mine.file_count().unwrap(), 1);
+        // Up to date.
+        let rep = mine.sync("origin").unwrap();
+        assert_eq!((rep.ahead, rep.behind, rep.fast_forwarded), (0, 0, false));
+        assert_eq!(rep.upstream.as_deref(), Some("origin/main"));
+        // A teammate pushes: sync moves the branch forward.
+        let theirs = clone_from(&url, &out.path().join("theirs"), None, false).unwrap();
+        std::fs::write(theirs.root().join("b.rs"), "fn b() {}\n").unwrap();
+        theirs.commit_all("add b", &Signature::agent("Bo/test", "1")).unwrap();
+        theirs.push("origin", "main").unwrap();
+        let rep = mine.sync("origin").unwrap();
+        assert!(rep.fast_forwarded && rep.behind == 1, "{rep:?}");
+        assert!(mine.root().join("b.rs").exists());
+        // Uncommitted work holds it back; so do commits of its own.
+        std::fs::write(theirs.root().join("c.rs"), "fn c() {}\n").unwrap();
+        theirs.commit_all("add c", &Signature::agent("Bo/test", "1")).unwrap();
+        theirs.push("origin", "main").unwrap();
+        std::fs::write(mine.root().join("lib.rs"), "fn a() { 1 }\n").unwrap();
+        let rep = mine.sync("origin").unwrap();
+        assert_eq!(rep.held.as_deref(), Some("dirty"));
+        assert!(!mine.root().join("c.rs").exists());
+        mine.commit_all("mine", &Signature::agent("Ann/test", "0")).unwrap();
+        let rep = mine.sync("origin").unwrap();
+        assert_eq!((rep.held.as_deref(), rep.ahead, rep.behind), (Some("diverged"), 1, 1));
+        assert!(
+            clone("/local/path", &out.path().join("x"), None, false).is_err(),
+            "local paths are not shared remotes"
+        );
     }
 
     #[test]

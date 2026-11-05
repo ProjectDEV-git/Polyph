@@ -104,3 +104,10 @@ areas-empty = 此仓库没有代码区域。添加 .polyph/AREAS（格式同 COD
 areas-from = 来自 { $file } 的代码区域：
 areas-of = { $path } 属于 { $pattern }，由 { $owners } 负责。
 areas-none-for = { $path } 不属于任何代码区域。
+
+help-repo = 查看或修改房间使用的仓库。
+help-repo-show = 显示房间的仓库。
+help-repo-set = 设置房间的仓库；URL 中的凭据会被移除。
+help-repo-clear = 忘记房间的仓库。
+repo-show = 房间使用 { $url }（分支 { $branch }）。
+repo-none = 房间还没有仓库。用 polyph repo set <url> 设置。

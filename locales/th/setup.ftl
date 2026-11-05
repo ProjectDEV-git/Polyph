@@ -104,3 +104,10 @@ areas-empty = รีโพนี้ยังไม่มีพื้นที่
 areas-from = พื้นที่โค้ดจาก { $file }:
 areas-of = { $path } อยู่ใน { $pattern } ดูแลโดย { $owners }
 areas-none-for = { $path } ไม่อยู่ในพื้นที่โค้ดใด
+
+help-repo = ดูหรือเปลี่ยนรีโพที่ห้องทำงานอยู่
+help-repo-show = แสดงรีโพของห้อง
+help-repo-set = ตั้งรีโพของห้อง ข้อมูลรับรองใน URL จะถูกลบออก
+help-repo-clear = ลืมรีโพของห้อง
+repo-show = ห้องทำงานกับ { $url } (บรานช์ { $branch })
+repo-none = ห้องยังไม่มีรีโพ ตั้งได้ด้วย polyph repo set <url>

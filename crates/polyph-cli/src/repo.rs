@@ -70,7 +70,15 @@ pub async fn after_join(ctx: &Ctx, api: &mut Api, room: &str, clone: Option<bool
         }
         return Ok(());
     }
-    let info: Value = call(api, "repo.get", json!({ "room": room })).await.unwrap_or_default();
+    // A room just joined is still catching up on its shared settings.
+    let mut info = Value::Null;
+    for _ in 0..30 {
+        info = call(api, "repo.get", json!({ "room": room })).await.unwrap_or_default();
+        if !info.is_null() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
     let Some(url) = info["url"].as_str() else { return Ok(()) };
     if clone == Some(false) || !empty_dir(&cwd) {
         if !ctx.json {
@@ -99,6 +107,56 @@ pub async fn after_join(ctx: &Ctx, api: &mut Api, room: &str, clone: Option<bool
     call(api, "folder.link", json!({ "room": room, "dir": cwd })).await?;
     if !ctx.json {
         ctx.out(tr!(l, "repo-cloned", url = url, dir = cwd.display().to_string()));
+    }
+    Ok(())
+}
+
+#[derive(clap::Subcommand, Debug)]
+pub enum RepoCmd {
+    /// Show the room's repository.
+    Show,
+    /// Set the room's repository (credentials in the URL are removed).
+    Set {
+        url: String,
+        #[arg(long)]
+        branch: Option<String>,
+    },
+    /// Forget the room's repository.
+    Clear,
+}
+
+/// `polyph repo`: show or change the room's repository.
+pub async fn repo_cmd(ctx: &Ctx, cmd: Option<RepoCmd>, room: Option<String>) -> anyhow::Result<()> {
+    let l = &ctx.l;
+    let mut api = ctx.api().await?;
+    let room = match room {
+        Some(r) => r,
+        None => {
+            let linked = call(&mut api, "folder.find", json!({ "dir": std::env::current_dir()? })).await?;
+            match linked["room"].as_str() {
+                Some(r) => r.to_string(),
+                None => ctx.room(&mut api, None).await?,
+            }
+        }
+    };
+    let v = match cmd.unwrap_or(RepoCmd::Show) {
+        RepoCmd::Show => call(&mut api, "repo.get", json!({ "room": room })).await?,
+        RepoCmd::Set { url, branch } => {
+            let files = std::env::current_dir()
+                .ok()
+                .and_then(|d| polyph_git::Repo::open(&d).ok())
+                .filter(|r| r.remote_url("origin").is_some_and(|o| same_repo(&o, &url)))
+                .and_then(|r| r.file_count().ok());
+            call(&mut api, "repo.set", json!({ "room": room, "url": url, "branch": branch, "files": files })).await?
+        }
+        RepoCmd::Clear => call(&mut api, "repo.set", json!({ "room": room, "clear": true })).await?,
+    };
+    if ctx.json {
+        ctx.print_json(&v);
+    } else if let Some(url) = v["url"].as_str() {
+        ctx.out(tr!(l, "repo-show", url = url, branch = v["branch"].as_str().unwrap_or("-")));
+    } else {
+        ctx.out(l.t("repo-none"));
     }
     Ok(())
 }

@@ -104,3 +104,10 @@ areas-empty = このリポジトリにはコード領域がありません。.po
 areas-from = { $file } のコード領域:
 areas-of = { $path } は { $pattern } に含まれ、担当は { $owners } です。
 areas-none-for = { $path } はどのコード領域にも含まれません。
+
+help-repo = ルームが作業するリポジトリを表示・変更します。
+help-repo-show = ルームのリポジトリを表示します。
+help-repo-set = ルームのリポジトリを設定します。URL に含まれる認証情報は取り除かれます。
+help-repo-clear = ルームのリポジトリを忘れます。
+repo-show = ルームは { $url }（ブランチ { $branch }）で作業しています。
+repo-none = ルームにはまだリポジトリがありません。polyph repo set <url> で設定してください。

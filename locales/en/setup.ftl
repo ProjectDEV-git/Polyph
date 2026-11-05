@@ -105,3 +105,10 @@ areas-empty = This repository has no code areas. Add .polyph/AREAS (same form as
 areas-from = Code areas from { $file }:
 areas-of = { $path } is in { $pattern }, looked after by { $owners }.
 areas-none-for = { $path } is in no code area.
+
+help-repo = Show or change the repository the room works on.
+help-repo-show = Show the room's repository.
+help-repo-set = Set the room's repository; any credentials in the URL are removed.
+help-repo-clear = Forget the room's repository.
+repo-show = The room works on { $url } (branch { $branch }).
+repo-none = The room has no repository yet. Set one with polyph repo set <url>.

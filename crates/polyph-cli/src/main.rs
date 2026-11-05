@@ -217,6 +217,12 @@ enum Cmd {
         no_connect: bool,
     },
     Doctor,
+    Repo {
+        #[command(subcommand)]
+        cmd: Option<repo::RepoCmd>,
+        #[arg(long, global = true)]
+        room: Option<String>,
+    },
     Brief {
         #[command(subcommand)]
         cmd: Option<knowledge::BriefCmd>,
@@ -753,6 +759,7 @@ async fn run(ctx: &Ctx, cmd: Option<Cmd>) -> anyhow::Result<()> {
         Cmd::Doctor => setup::doctor(ctx).await,
         Cmd::Sync { room, all } => repo::sync(ctx, room, all).await,
         Cmd::Brief { cmd, room } => knowledge::brief(ctx, cmd, room).await,
+        Cmd::Repo { cmd, room } => repo::repo_cmd(ctx, cmd, room).await,
         Cmd::Search { query, room } => knowledge::search(ctx, &query, room).await,
         Cmd::Catchup { room } => knowledge::catchup(ctx, room).await,
         Cmd::Areas { path } => knowledge::areas(ctx, path).await,
@@ -1381,6 +1388,7 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
         | Cmd::Start { .. }
         | Cmd::Doctor
         | Cmd::Brief { .. }
+        | Cmd::Repo { .. }
         | Cmd::Search { .. }
         | Cmd::Catchup { .. }
         | Cmd::Areas { .. }
