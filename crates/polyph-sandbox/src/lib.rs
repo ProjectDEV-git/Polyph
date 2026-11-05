@@ -4,13 +4,15 @@
 //! |---|---|
 //! | Linux | bubblewrap with a private network namespace; Landlock when bubblewrap is missing |
 //! | macOS | a Seatbelt profile run with `sandbox-exec` |
-//! | Windows | a job object plus proxy settings (see `docs/sandbox.md` for what this does not cover) |
+//! | Windows | low integrity level (writes only to the worktree, writable paths and TMPDIR), a job object and proxy settings (see `docs/sandbox.md` for what this does not cover) |
 //! | Any | rootless Podman or Docker in "container mode" |
 //!
 //! Outbound network always goes through [`proxy`], which passes allowlisted
 //! hosts and turns everything else into an approval request.
 
 pub mod helper;
+#[cfg(windows)]
+pub mod lowil;
 pub mod proxy;
 pub mod selftest;
 
@@ -215,7 +217,26 @@ fn wrap_inner(mech: Mechanism, policy: &Policy, program: &str, args: &[String]) 
             })
         }
         Mechanism::WindowsJob => {
-            Ok(Wrapped { program: program.into(), args: args.to_vec(), env: proxy_env(&tcp_url), cwd, mechanism: mech })
+            // Through the helper, which runs the command at low integrity
+            // level so it can write only to the policy's folders.
+            let Some(helper) = policy.helper.first().cloned() else {
+                return Ok(Wrapped {
+                    program: program.into(),
+                    args: args.to_vec(),
+                    env: proxy_env(&tcp_url),
+                    cwd,
+                    mechanism: mech,
+                });
+            };
+            let mut a: Vec<String> = policy.helper[1..].to_vec();
+            a.push("lowil".into());
+            for w in policy.writable_all() {
+                a.extend(["--write".into(), w.to_string_lossy().into_owned()]);
+            }
+            a.push("--".into());
+            a.push(program.into());
+            a.extend(args.iter().cloned());
+            Ok(Wrapped { program: helper, args: a, env: proxy_env(&tcp_url), cwd, mechanism: mech })
         }
         Mechanism::Container => {
             let engine = container_engine().ok_or_else(|| anyhow::anyhow!("container mode needs podman or docker"))?;
@@ -356,7 +377,7 @@ pub fn detect(helper: &[String]) -> Vec<Availability> {
         v.push(Availability {
             mechanism: Mechanism::WindowsJob,
             available: true,
-            detail: "job object; file and network isolation are limited".into(),
+            detail: "low integrity level and a job object; network isolation is limited".into(),
         });
     }
     let c = container_engine();

@@ -7,6 +7,8 @@
 //! - `landlock --proxy-port P --write DIR... -- cmd...`: restrict this
 //!   process with Landlock (writes only to DIRs, TCP connects only to port
 //!   P), then run `cmd`; the restriction is inherited by everything it spawns.
+//! - `lowil --write DIR... -- cmd...` (Windows): label DIRs low integrity
+//!   and run `cmd` at low integrity level, so it can write only there.
 //! - `probe write PATH | connect HOST:PORT | proxy HOST:PORT | landlock`:
 //!   self-test probes; exit 0 when the action succeeded, 3 when blocked.
 
@@ -22,9 +24,10 @@ pub fn main_with_args(args: Vec<String>) -> i32 {
     match mode {
         "forward" => forward(rest),
         "landlock" => landlock(rest),
+        "lowil" => lowil(rest),
         "probe" => probe(rest),
         _ => {
-            eprintln!("usage: polyph-sandbox-exec forward|landlock|probe ...");
+            eprintln!("usage: polyph-sandbox-exec forward|landlock|lowil|probe ...");
             2
         }
     }
@@ -52,6 +55,32 @@ fn run_child(cmd: &[String]) -> i32 {
             eprintln!("cannot run {prog}: {e}");
             127
         }
+    }
+}
+
+fn lowil(args: Vec<String>) -> i32 {
+    let (flags, cmd) = split_cmd(&args);
+    let writable: Vec<std::path::PathBuf> = flags
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| *f == "--write")
+        .filter_map(|(i, _)| flags.get(i + 1).map(std::path::PathBuf::from))
+        .collect();
+    #[cfg(windows)]
+    {
+        match crate::lowil::run(&writable, &cmd) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("sandbox: {e}");
+                126
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (writable, cmd);
+        eprintln!("lowil works only on Windows");
+        2
     }
 }
 

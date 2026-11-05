@@ -44,9 +44,11 @@ accepted but hosted mode is M4.
   domain (`polyph.dev`) are placeholders set at build time with
   `POLYPH_DEFAULT_RELAY` and `POLYPH_DOMAIN`; the real domain is undecided.
 - **Display-name changes** need a re-issued certificate and are not exposed.
-- **Windows sandbox.** Only a job object (agents die with the daemon) plus
-  proxy variables; no AppContainer or restricted token yet, so files and
-  network are not isolated on Windows. Documented in `docs/sandbox.md`.
+- **Windows sandbox.** Since M11 agents run at low integrity level, so
+  writes are limited to the worktree, writable paths and TMPDIR; hidden paths
+  are still readable and the network is steered only by proxy variables (no
+  AppContainer yet). Tested only on GitHub's Windows runners. Documented in
+  `docs/sandbox.md`.
 - **seccomp.** The Landlock fallback restricts files and TCP connects but adds
   no seccomp filter (for example against raw sockets or UDP). bubblewrap mode
   isolates the network with a namespace instead.
@@ -219,8 +221,8 @@ accepted but hosted mode is M4.
   Linux with Landlock.
 - **Plugins are not signed or sandboxed beyond the agent sandbox**, and there
   is no plugin registry; people install folders they trust. On Windows the
-  sandbox is weak (see the Windows sandbox entry above), so plugins there
-  run with little isolation.
+  sandbox does not isolate the network (see the Windows sandbox entry
+  above), so plugins there are only partly contained.
 - **Hook actions** are limited to chat posts; no card or thread actions yet.
 - **Built-in skill texts are English.** Template descriptions are
   translated; the skill files a template writes into a repository are team

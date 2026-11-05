@@ -29,14 +29,20 @@ agents doctor` shows the mechanism in use.
 | Linux (preferred) | bubblewrap: read-only root bind, writable binds for the paths above, tmpfs over hidden paths and `/tmp`, new PID, session and network namespaces | enforced | the agent's network namespace has only loopback; a helper inside it listens on `127.0.0.1:3128` and forwards to the proxy's Unix socket |
 | Linux (no bubblewrap) | Landlock, applied by a helper that then runs the agent | writes limited to the paths above; hidden paths are **not** hidden (Landlock can only allow) | TCP connects allowed only to the proxy's port (kernel 6.7+, Landlock ABI 4) |
 | macOS | Seatbelt profile run with `sandbox-exec` | writes only to the worktree, writable paths and the agent's own TMPDIR (not the shared `/private/tmp` or `/private/var/folders`); hidden paths denied for reading | outbound only to the proxy's port on localhost |
-| Windows | job object (the agent and its children die with the daemon) | **not isolated** | proxy variables only; a program that ignores them is not stopped |
+| Windows | low integrity level, applied by a helper that then runs the agent, inside a job object (the agent and its children die with the helper) | writes only to the worktree, writable paths and the agent's own TMPDIR (labelled low integrity); hidden paths are **not** hidden | proxy variables only; a program that ignores them is not stopped |
 | Any (opt-in) | rootless Podman or Docker, `[sandbox] mode = "container"` with an image | only the worktree is mounted | `--network none` plus the proxy helper |
 
-On Windows, file and network isolation is weaker than on Linux and macOS.
-Claims, approvals for commands Polyph runs on the agent's behalf, the
-filesystem watcher (milestone 4) and review still apply, but a determined
-agent process can write outside its worktree. Container mode is the strong
-option on Windows. AppContainer support is listed in `STUBS.md`.
+On Windows, network isolation is weaker than on Linux and macOS: the
+proxy variables steer well-behaved programs, but a program can open other
+connections. Writes are limited by Windows' mandatory integrity control: a
+low-integrity process cannot write to ordinary user files, which are medium
+integrity. The helper labels the worktree, the configured writable paths
+and the agent's TMPDIR low (the label stays on them afterwards, so other
+low-integrity programs may write there too). Agents that keep settings in
+the user profile need those folders in their `writable` list. Claims,
+approvals, the filesystem watcher and review apply as everywhere. Container
+mode is the strong option on Windows; AppContainer support is listed in
+`STUBS.md`.
 
 If no mechanism works, agents do not start. To run agents without a sandbox
 anyway (for example inside a disposable VM), set `[sandbox] mode = "off"` in
