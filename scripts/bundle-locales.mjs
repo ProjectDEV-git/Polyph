@@ -3,8 +3,9 @@
 // bundler (Vite, Next.js, Vitest) gets the same strings without loaders.
 import { readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("..", import.meta.url));
 const dir = join(root, "locales");
 const out = {};
 for (const lang of readdirSync(dir).sort()) {

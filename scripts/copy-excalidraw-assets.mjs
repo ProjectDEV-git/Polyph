@@ -3,8 +3,9 @@
 // load fonts from a CDN. Usage: copy-excalidraw-assets.mjs <public dir>
 import { cpSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const target = resolve(process.argv[2] ?? "public", "excalidraw");
-const root = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("..", import.meta.url));
 const fonts = join(root, "packages/ui/node_modules/@excalidraw/excalidraw/dist/prod/fonts");
 if (!existsSync(join(target, "fonts"))) cpSync(fonts, join(target, "fonts"), { recursive: true });

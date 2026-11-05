@@ -3,8 +3,9 @@
 // Usage: node scripts/release/notes.mjs v0.1.0
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = new URL("../..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+const root = fileURLToPath(new URL("../..", import.meta.url));
 const v = (process.argv[2] ?? "").replace(/^v/, "");
 const lines = readFileSync(join(root, "CHANGELOG.md"), "utf8").split("\n");
 const start = lines.findIndex((l) => l.startsWith(`## ${v}`));

@@ -9,8 +9,9 @@
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("..", import.meta.url));
 
 const target = process.env.CARGO_TARGET_DIR ?? join(root, "target");
 const wasm = join(target, "wasm32-unknown-unknown/wasm/polyph_phone.wasm");
