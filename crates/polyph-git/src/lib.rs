@@ -405,6 +405,62 @@ impl Repo {
         }
     }
 
+    /// Fetches `remote` (all branches, pruning gone ones) without ever prompting.
+    pub fn fetch(&self, remote: &str) -> Result<()> {
+        if remote.starts_with('-') {
+            return Err(GitError::Invalid(format!("not a valid remote: {remote}")));
+        }
+        self.git(&["fetch", "--quiet", "--prune", remote]).map(|_| ())
+    }
+
+    /// Files tracked in the index.
+    pub fn file_count(&self) -> Result<usize> {
+        Ok(self.git(&["ls-files", "-z"])?.split('\0').filter(|s| !s.is_empty()).count())
+    }
+
+    /// Commits `(ahead, behind)` of `head` relative to `upstream`.
+    pub fn ahead_behind(&self, head: &str, upstream: &str) -> Result<(usize, usize)> {
+        let out = self.git(&["rev-list", "--left-right", "--count", &format!("{head}...{upstream}")])?;
+        let mut n = out.split_whitespace().map(|x| x.parse::<usize>().unwrap_or(0));
+        Ok((n.next().unwrap_or(0), n.next().unwrap_or(0)))
+    }
+
+    /// The upstream of the checked-out branch (`origin/main`), if set.
+    pub fn upstream(&self) -> Option<String> {
+        self.git(&["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])
+            .ok()
+            .map(|s| s.trim().to_string())
+    }
+
+    /// Fetches `remote`, then moves the checked-out branch forward to its
+    /// upstream when that loses nothing: the working copy is clean and the
+    /// branch has no commits of its own. Otherwise reports and changes nothing.
+    pub fn sync(&self, remote: &str) -> Result<SyncReport> {
+        self.fetch(remote)?;
+        let branch = self.current_branch();
+        let upstream = self.upstream();
+        let mut r =
+            SyncReport { branch, upstream: upstream.clone(), behind: 0, ahead: 0, fast_forwarded: false, held: None };
+        let Some(up) = upstream else { return Ok(r) };
+        let (ahead, behind) = self.ahead_behind("HEAD", &up)?;
+        r.ahead = ahead;
+        r.behind = behind;
+        if behind == 0 {
+            return Ok(r);
+        }
+        if ahead > 0 {
+            r.held = Some("diverged".into());
+            return Ok(r);
+        }
+        if !self.dirty_files()?.is_empty() {
+            r.held = Some("dirty".into());
+            return Ok(r);
+        }
+        self.git(&["merge", "--ff-only", "--quiet", &up])?;
+        r.fast_forwarded = true;
+        Ok(r)
+    }
+
     /// A remote's URL.
     pub fn remote_url(&self, remote: &str) -> Option<String> {
         self.git(&["remote", "get-url", "--", remote]).ok().map(|s| s.trim().to_string())
@@ -448,6 +504,125 @@ fn sig_env(who: &Signature) -> Vec<(&'static str, String)> {
         ("GIT_COMMITTER_NAME", who.name.clone()),
         ("GIT_COMMITTER_EMAIL", who.email.clone()),
     ]
+}
+
+/// A remote URL safe to share with a room: no user name and password or
+/// token (`https://user:ghp_x@host/...`), no query or fragment. SSH URLs
+/// keep their login name (`git@host:o/r.git`), which is not a secret. Local
+/// paths and `file://` URLs give `None`: they mean nothing on another machine.
+pub fn clean_remote(url: &str) -> Option<String> {
+    let u = url.trim();
+    if u.is_empty() || u.starts_with('-') || u.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return None;
+    }
+    let u = u.split(['?', '#']).next().unwrap_or(u);
+    if let Some((scheme, rest)) = u.split_once("://") {
+        let scheme = scheme.to_ascii_lowercase();
+        if !["https", "http", "ssh", "git"].contains(&scheme.as_str()) {
+            return None;
+        }
+        let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+        let (user, host) = match authority.rsplit_once('@') {
+            Some((user, host)) => (Some(user), host),
+            None => (None, authority),
+        };
+        if host.is_empty() {
+            return None;
+        }
+        // ssh://git@host/...: keep a plain login name, never a password.
+        let host = match user {
+            Some(user) if scheme == "ssh" && !user.contains(':') && !user.is_empty() => format!("{user}@{host}"),
+            _ => host.to_string(),
+        };
+        return Some(format!("{scheme}://{host}/{path}"));
+    }
+    // scp-like: [user[:password]@]host:path (not a Windows drive letter or a local path).
+    let head = u.split('/').next().unwrap_or(u);
+    let (user, rest) = match head.rfind('@') {
+        Some(i) => (Some(&u[..i]), &u[i + 1..]),
+        None => (None, u),
+    };
+    let (host, path) = rest.split_once(':')?;
+    if host.len() <= 1 || host.contains('\\') || path.is_empty() {
+        return None;
+    }
+    Some(match user.filter(|u| !u.contains(':') && !u.is_empty()) {
+        Some(user) => format!("{user}@{host}:{path}"),
+        None => format!("{host}:{path}"),
+    })
+}
+
+/// Clones `url` into `dir` with the person's own git login. `partial` makes
+/// a blobless clone (`--filter=blob:none`): history now, file contents as
+/// they are checked out, which is much faster for large repositories.
+pub fn clone(url: &str, dir: &Path, branch: Option<&str>, partial: bool) -> Result<Repo> {
+    let url = clean_remote(url).ok_or_else(|| GitError::Invalid(format!("not a remote URL: {url}")))?;
+    clone_from(&url, dir, branch, partial)
+}
+
+/// [`clone`] without the check that `url` is a shareable remote (local
+/// paths and `file://` work): for URLs the person typed themselves.
+pub fn clone_from(url: &str, dir: &Path, branch: Option<&str>, partial: bool) -> Result<Repo> {
+    if url.starts_with('-') {
+        return Err(GitError::Invalid(format!("not a remote URL: {url}")));
+    }
+    let url = url.to_string();
+    let parent = dir.parent().unwrap_or(Path::new("."));
+    let mut args: Vec<String> = vec!["clone".into(), "--quiet".into()];
+    if partial {
+        args.push("--filter=blob:none".into());
+    }
+    if let Some(b) = branch {
+        check_branch_name(b)?;
+        args.extend(["--branch".into(), b.to_string()]);
+    }
+    args.extend(["--".into(), url, dir.to_string_lossy().into_owned()]);
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    // Unlike other calls, cloning may ask for a password in the terminal.
+    let mut c = Command::new("git");
+    c.arg("-C").arg(parent).args(&refs).env("GIT_PAGER", "cat");
+    let status = c.status().map_err(GitError::Spawn)?;
+    if !status.success() {
+        return Err(GitError::Failed { cmd: "clone".into(), stderr: format!("git clone exited with {status}") });
+    }
+    Repo::open(dir)
+}
+
+/// What [`Repo::sync`] did.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SyncReport {
+    pub branch: Option<String>,
+    pub upstream: Option<String>,
+    /// Commits the branch had to take in, and that are still only here.
+    pub behind: usize,
+    pub ahead: usize,
+    /// The branch was moved forward to its upstream.
+    pub fast_forwarded: bool,
+    /// Why it was not moved forward, when it was behind.
+    pub held: Option<String>,
+}
+
+#[cfg(test)]
+mod remote_tests {
+    use super::clean_remote;
+
+    #[test]
+    fn remotes_lose_their_secrets() {
+        let c = |s: &str| clean_remote(s);
+        assert_eq!(c("https://github.com/o/r.git").as_deref(), Some("https://github.com/o/r.git"));
+        assert_eq!(c("https://bo:ghp_SECRET@github.com/o/r.git").as_deref(), Some("https://github.com/o/r.git"));
+        assert_eq!(c("https://x-access-token:abc@github.com/o/r").as_deref(), Some("https://github.com/o/r"));
+        assert_eq!(c("https://github.com/o/r.git?token=abc#x").as_deref(), Some("https://github.com/o/r.git"));
+        assert_eq!(c("git@github.com:o/r.git").as_deref(), Some("git@github.com:o/r.git"));
+        assert_eq!(c("git:pw@github.com:o/r.git").as_deref(), Some("github.com:o/r.git"));
+        assert_eq!(c("ssh://git@host:22/o/r").as_deref(), Some("ssh://git@host:22/o/r"));
+        assert_eq!(c("ssh://git:pw@host/o/r").as_deref(), Some("ssh://host/o/r"));
+        assert_eq!(c("/home/me/repo"), None);
+        assert_eq!(c("file:///home/me/repo"), None);
+        assert_eq!(c("C:\\repo"), None);
+        assert_eq!(c("--upload-pack=x"), None);
+        assert_eq!(c("https://a b@h/r"), None);
+    }
 }
 
 /// `owner/name` from a GitHub remote URL (https, ssh or scp-like).
@@ -529,6 +704,49 @@ mod tests {
         r.commit_all("initial", &Signature::agent("Ann/test", "0")).unwrap();
         let r = Repo::open(d.path()).unwrap();
         (d, r)
+    }
+
+    #[test]
+    fn clone_partial_and_sync() {
+        let (src, r) = init();
+        r.git(&["config", "uploadpack.allowFilter", "true"]).unwrap();
+        let bare = tempfile::tempdir().unwrap();
+        let bare_path = bare.path().join("origin.git");
+        run(src.path(), &["clone", "-q", "--bare", ".", &bare_path.to_string_lossy()], &[], None).unwrap();
+        run(&bare_path, &["config", "uploadpack.allowFilter", "true"], &[], None).unwrap();
+        let url = format!("file://{}", bare_path.to_string_lossy().replace('\\', "/"));
+        let out = tempfile::tempdir().unwrap();
+        let mine = clone_from(&url, &out.path().join("mine"), Some("main"), true).unwrap();
+        assert_eq!(mine.git(&["config", "remote.origin.promisor"]).unwrap().trim(), "true", "blobless clone");
+        assert_eq!(std::fs::read_to_string(mine.root().join("lib.rs")).unwrap(), "fn a() {}\n");
+        assert_eq!(mine.file_count().unwrap(), 1);
+        // Up to date.
+        let rep = mine.sync("origin").unwrap();
+        assert_eq!((rep.ahead, rep.behind, rep.fast_forwarded), (0, 0, false));
+        assert_eq!(rep.upstream.as_deref(), Some("origin/main"));
+        // A teammate pushes: sync moves the branch forward.
+        let theirs = clone_from(&url, &out.path().join("theirs"), None, false).unwrap();
+        std::fs::write(theirs.root().join("b.rs"), "fn b() {}\n").unwrap();
+        theirs.commit_all("add b", &Signature::agent("Bo/test", "1")).unwrap();
+        theirs.push("origin", "main").unwrap();
+        let rep = mine.sync("origin").unwrap();
+        assert!(rep.fast_forwarded && rep.behind == 1, "{rep:?}");
+        assert!(mine.root().join("b.rs").exists());
+        // Uncommitted work holds it back; so do commits of its own.
+        std::fs::write(theirs.root().join("c.rs"), "fn c() {}\n").unwrap();
+        theirs.commit_all("add c", &Signature::agent("Bo/test", "1")).unwrap();
+        theirs.push("origin", "main").unwrap();
+        std::fs::write(mine.root().join("lib.rs"), "fn a() { 1 }\n").unwrap();
+        let rep = mine.sync("origin").unwrap();
+        assert_eq!(rep.held.as_deref(), Some("dirty"));
+        assert!(!mine.root().join("c.rs").exists());
+        mine.commit_all("mine", &Signature::agent("Ann/test", "0")).unwrap();
+        let rep = mine.sync("origin").unwrap();
+        assert_eq!((rep.held.as_deref(), rep.ahead, rep.behind), (Some("diverged"), 1, 1));
+        assert!(
+            clone("/local/path", &out.path().join("x"), None, false).is_err(),
+            "local paths are not shared remotes"
+        );
     }
 
     #[test]

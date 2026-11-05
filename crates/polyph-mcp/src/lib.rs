@@ -7,6 +7,11 @@
 //! agent is calling from the proxy the request arrived on, and checks the
 //! per-agent token in [`ENV_TOKEN`] as well.
 //!
+//! Agents the person runs themselves (Claude Code, Codex, Cursor...) use the
+//! same server and tools: outside a sandbox, `polyph mcp` talks to the local
+//! daemon instead ([`bridge::LocalBridge`]), or the agent points at the
+//! daemon's `/mcp` web address, which answers with the same [`server::step`].
+//!
 //! MCP messages are our own lean serde-free JSON handling, for the same
 //! reason as the ACP types: the server needs four methods.
 
@@ -52,6 +57,21 @@ impl ToolOutput {
 pub async fn run_stdio() -> anyhow::Result<()> {
     let backend = bridge::HttpBridge::from_env()?;
     server::serve(tokio::io::stdin(), tokio::io::stdout(), std::sync::Arc::new(backend)).await
+}
+
+/// True when this process runs inside an agent Polyph started (its sandbox
+/// sets the proxy); otherwise `polyph mcp` serves an agent the person runs.
+pub fn inside_polyph() -> bool {
+    std::env::var_os(ENV_PROXY).is_some()
+}
+
+/// Runs the server on stdin/stdout for an agent the person runs themselves,
+/// connected to the local daemon.
+pub async fn run_direct(bridge: bridge::LocalBridge) -> anyhow::Result<()> {
+    let bridge = std::sync::Arc::new(bridge);
+    // Show up in the room at once; if this fails, the first call says why.
+    let _ = bridge.connect().await;
+    server::serve(tokio::io::stdin(), tokio::io::stdout(), bridge).await
 }
 
 #[cfg(test)]

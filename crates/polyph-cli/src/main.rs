@@ -4,6 +4,10 @@
 
 mod account;
 mod client;
+mod hook;
+mod knowledge;
+mod repo;
+mod setup;
 mod update;
 mod work;
 
@@ -80,6 +84,12 @@ enum Cmd {
         /// Look for the room on the local network.
         #[arg(long)]
         lan: bool,
+        /// Clone the room's repository into this (empty) folder without asking.
+        #[arg(long, conflicts_with = "no_clone")]
+        clone: bool,
+        /// Do not offer to clone the room's repository.
+        #[arg(long)]
+        no_clone: bool,
     },
     Discover,
     Phone {
@@ -172,7 +182,78 @@ enum Cmd {
         #[command(subcommand)]
         cmd: SandboxCmd,
     },
-    Mcp,
+    Mcp {
+        /// How the agent shows in the room (claude-code, codex, cursor...).
+        #[arg(long)]
+        client: Option<String>,
+        /// Room to join (default: the room linked to this folder).
+        #[arg(long)]
+        room: Option<String>,
+    },
+    Connect {
+        /// Clients to connect (default: every one found on this computer).
+        clients: Vec<String>,
+        /// Use the daemon's local web address instead of starting `polyph mcp`.
+        #[arg(long)]
+        http: bool,
+        /// Write the changes without asking.
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+    Disconnect {
+        /// Clients to disconnect (default: all).
+        clients: Vec<String>,
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+    Start {
+        /// Name for a new room (default: the folder's name).
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long, short = 'y')]
+        yes: bool,
+        /// Do not connect agents.
+        #[arg(long)]
+        no_connect: bool,
+    },
+    Doctor,
+    Hook {
+        #[command(subcommand)]
+        cmd: HookCmd,
+    },
+    Repo {
+        #[command(subcommand)]
+        cmd: Option<repo::RepoCmd>,
+        #[arg(long, global = true)]
+        room: Option<String>,
+    },
+    Brief {
+        #[command(subcommand)]
+        cmd: Option<knowledge::BriefCmd>,
+        #[arg(long, global = true)]
+        room: Option<String>,
+    },
+    Search {
+        #[arg(required = true)]
+        query: Vec<String>,
+        #[arg(long)]
+        room: Option<String>,
+    },
+    Catchup {
+        #[arg(long)]
+        room: Option<String>,
+    },
+    Areas {
+        /// A file to look up (default: list every area).
+        path: Option<String>,
+    },
+    Sync {
+        #[arg(long)]
+        room: Option<String>,
+        /// Every folder linked to a room.
+        #[arg(long)]
+        all: bool,
+    },
     Usage {
         #[arg(long)]
         room: Option<String>,
@@ -474,6 +555,16 @@ enum ConfigCmd {
 }
 
 #[derive(Subcommand, Debug)]
+enum HookCmd {
+    /// Before an agent edits a file: block it when another agent holds the file.
+    PreEdit {
+        /// The editing client (claude-code, cursor...).
+        #[arg(long, default_value = "claude-code")]
+        client: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 enum RelayCmd {
     Serve {
         #[arg(long)]
@@ -674,8 +765,25 @@ async fn run(ctx: &Ctx, cmd: Option<Cmd>) -> anyhow::Result<()> {
             h.shutdown().await;
             Ok(())
         }
-        // Started by agents inside their sandbox; speaks MCP on stdin/stdout.
-        Cmd::Mcp => polyph_mcp::run_stdio().await,
+        // Started by agents (Polyph's, or the person's own); speaks MCP on stdin/stdout.
+        Cmd::Mcp { client, room } => setup::mcp(ctx, client, room).await,
+        Cmd::Connect { clients, http, yes } => setup::connect(ctx, &clients, http, yes).await.map(|_| ()),
+        Cmd::Disconnect { clients, yes } => setup::disconnect(ctx, &clients, yes).await,
+        Cmd::Start { name, yes, no_connect } => setup::start(ctx, name, yes, no_connect).await,
+        Cmd::Doctor => setup::doctor(ctx).await,
+        Cmd::Hook { cmd: HookCmd::PreEdit { client } } => {
+            let code = hook::pre_edit(ctx, &client).await;
+            if code != 0 {
+                std::process::exit(code);
+            }
+            Ok(())
+        }
+        Cmd::Sync { room, all } => repo::sync(ctx, room, all).await,
+        Cmd::Brief { cmd, room } => knowledge::brief(ctx, cmd, room).await,
+        Cmd::Repo { cmd, room } => repo::repo_cmd(ctx, cmd, room).await,
+        Cmd::Search { query, room } => knowledge::search(ctx, &query, room).await,
+        Cmd::Catchup { room } => knowledge::catchup(ctx, room).await,
+        Cmd::Areas { path } => knowledge::areas(ctx, path).await,
         Cmd::Update { check, version, force } => update::run(ctx, check, version, force).await,
         Cmd::Uninstall { purge, yes } => update::uninstall(ctx, purge, yes).await,
         Cmd::Completions { shell } => {
@@ -726,6 +834,13 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
             } else {
                 None
             };
+            // A room made in a checkout belongs to it, and remembers where the code lives.
+            if let Ok(repo) = polyph_git::Repo::open(&std::env::current_dir()?) {
+                call(&mut api, "folder.link", json!({ "room": rid, "dir": repo.root() })).await?;
+                if !room["quick"].as_bool().unwrap_or(false) {
+                    repo::remember(ctx, &mut api, &rid, repo.root()).await;
+                }
+            }
             let inv = call(&mut api, "room.invite", json!({ "room": rid })).await?;
             if let Some(s) = &shared
                 && !ctx.json
@@ -748,7 +863,7 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                 print_invite(ctx, &inv);
             }
         }
-        Cmd::Join { code, name, relay, lan } => {
+        Cmd::Join { code, name, relay, lan, clone, no_clone } => {
             if !ctx.json {
                 ctx.out(l.t("join-connecting"));
             }
@@ -771,6 +886,16 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                     name = r["name"].as_str().unwrap_or_default(),
                     role = ctx.role(r["role"].as_str().unwrap_or("member"))
                 ));
+            }
+            if let Some(rid) = r["id"].as_str() {
+                let choice = if clone {
+                    Some(true)
+                } else if no_clone {
+                    Some(false)
+                } else {
+                    None
+                };
+                repo::after_join(ctx, &mut api, rid, choice).await?;
             }
         }
         Cmd::Web { no_open } => {
@@ -1278,7 +1403,18 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
         Cmd::Daemon { .. }
         | Cmd::Relay { .. }
         | Cmd::Completions { .. }
-        | Cmd::Mcp
+        | Cmd::Mcp { .. }
+        | Cmd::Connect { .. }
+        | Cmd::Disconnect { .. }
+        | Cmd::Start { .. }
+        | Cmd::Doctor
+        | Cmd::Hook { .. }
+        | Cmd::Brief { .. }
+        | Cmd::Repo { .. }
+        | Cmd::Search { .. }
+        | Cmd::Catchup { .. }
+        | Cmd::Areas { .. }
+        | Cmd::Sync { .. }
         | Cmd::Update { .. }
         | Cmd::Uninstall { .. } => {}
     }

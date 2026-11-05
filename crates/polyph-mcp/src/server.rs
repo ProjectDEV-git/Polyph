@@ -16,6 +16,10 @@ pub const VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 /// Carries tool calls to the daemon.
 pub trait Backend: Send + Sync + 'static {
     fn call(&self, tool: String, args: Value) -> Pin<Box<dyn Future<Output = ToolOutput> + Send + '_>>;
+    /// The client went away.
+    fn close(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async {})
+    }
 }
 
 fn error(id: Value, code: i64, message: &str) -> Value {
@@ -32,6 +36,70 @@ fn tool_result(out: ToolOutput, structured: bool) -> Value {
         r["structuredContent"] = out.data;
     }
     r
+}
+
+/// Instructions sent to the client on `initialize`.
+pub const INSTRUCTIONS: &str = "You are working in a Polyph room with other people and their agents. \
+Call get_context before you start (the project brief, your task and the notes for your files), claim files \
+before editing them, ask the holder with ask_agent when a file is taken, and check read_inbox when told you \
+have messages. When you are free, next_task gives you the next ready task.";
+
+/// What to do with one incoming message.
+#[derive(Debug)]
+pub enum Step {
+    /// Send this answer.
+    Reply(Value),
+    /// Run a tool and answer `id` with [`tool_result`].
+    Call { id: Value, name: String, args: Value, structured: bool },
+    /// A notification or a response: nothing to send.
+    Nothing,
+}
+
+/// Handles one message; `version` is the negotiated protocol revision and
+/// is updated by `initialize`.
+pub fn step(msg: &Value, version: &mut &'static str) -> Step {
+    let Some(method) = msg.get("method").and_then(|m| m.as_str()) else { return Step::Nothing };
+    // Notifications (no id) need no answer.
+    let Some(id) = msg.get("id").cloned() else { return Step::Nothing };
+    let params = msg.get("params").cloned().unwrap_or(Value::Null);
+    match method {
+        "initialize" => {
+            let asked = params.get("protocolVersion").and_then(|v| v.as_str()).unwrap_or_default();
+            *version = VERSIONS.iter().find(|v| **v == asked).copied().unwrap_or(VERSIONS[0]);
+            Step::Reply(result(
+                id,
+                json!({
+                    "protocolVersion": *version,
+                    "capabilities": { "tools": { "listChanged": false } },
+                    "serverInfo": { "name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION") },
+                    "instructions": INSTRUCTIONS,
+                }),
+            ))
+        }
+        "ping" => Step::Reply(result(id, json!({}))),
+        "tools/list" => Step::Reply(result(id, tools::list())),
+        "tools/call" => {
+            let name = params.get("name").and_then(|n| n.as_str()).unwrap_or_default().to_string();
+            let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+            if tools::find(&name).is_none() {
+                return Step::Reply(error(id, -32602, &format!("unknown tool: {name}")));
+            }
+            Step::Call { id, name, args, structured: *version >= "2025-06-18" }
+        }
+        "resources/list" => Step::Reply(result(id, json!({ "resources": [] }))),
+        "prompts/list" => Step::Reply(result(id, json!({ "prompts": [] }))),
+        _ => Step::Reply(error(id, -32601, "method not found")),
+    }
+}
+
+/// The answer to a tool call.
+pub fn tool_reply(id: Value, out: ToolOutput, structured: bool) -> Value {
+    result(id, tool_result(out, structured))
+}
+
+/// The answer to a message that could not be parsed.
+pub fn parse_error() -> Value {
+    error(Value::Null, -32700, "parse error")
 }
 
 /// Serves one client until its input closes.
@@ -60,62 +128,28 @@ where
         let msg: Value = match serde_json::from_str(&line) {
             Ok(v) => v,
             Err(_) => {
-                let _ = tx.send(error(Value::Null, -32700, "parse error")).await;
+                let _ = tx.send(parse_error()).await;
                 continue;
             }
         };
-        let Some(method) = msg.get("method").and_then(|m| m.as_str()).map(str::to_string) else { continue };
-        // Notifications (no id) need no answer.
-        let Some(id) = msg.get("id").cloned() else { continue };
-        let params = msg.get("params").cloned().unwrap_or(Value::Null);
-        match method.as_str() {
-            "initialize" => {
-                let asked = params.get("protocolVersion").and_then(|v| v.as_str()).unwrap_or_default();
-                version = VERSIONS.iter().find(|v| **v == asked).copied().unwrap_or(VERSIONS[0]);
-                let r = json!({
-                    "protocolVersion": version,
-                    "capabilities": { "tools": { "listChanged": false } },
-                    "serverInfo": { "name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "You are working in a Polyph room with other people and their agents. \
-                Call team_state before you start, claim files before editing them, read notes with recall, \
-                and check read_inbox when told you have messages."
-                });
-                let _ = tx.send(result(id, r)).await;
+        match step(&msg, &mut version) {
+            Step::Reply(v) => {
+                let _ = tx.send(v).await;
             }
-            "ping" => {
-                let _ = tx.send(result(id, json!({}))).await;
-            }
-            "tools/list" => {
-                let _ = tx.send(result(id, tools::list())).await;
-            }
-            "tools/call" => {
-                let name = params.get("name").and_then(|n| n.as_str()).unwrap_or_default().to_string();
-                let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
-                if tools::find(&name).is_none() {
-                    let _ = tx.send(error(id, -32602, &format!("unknown tool: {name}"))).await;
-                    continue;
-                }
+            Step::Call { id, name, args, structured } => {
                 let (tx, backend) = (tx.clone(), backend.clone());
-                let structured = version >= "2025-06-18";
                 // Calls run concurrently: ask_agent may wait for a reply.
                 tokio::spawn(async move {
                     let out = backend.call(name, args).await;
-                    let _ = tx.send(result(id, tool_result(out, structured))).await;
+                    let _ = tx.send(tool_reply(id, out, structured)).await;
                 });
             }
-            "resources/list" => {
-                let _ = tx.send(result(id, json!({ "resources": [] }))).await;
-            }
-            "prompts/list" => {
-                let _ = tx.send(result(id, json!({ "prompts": [] }))).await;
-            }
-            _ => {
-                let _ = tx.send(error(id, -32601, "method not found")).await;
-            }
+            Step::Nothing => {}
         }
     }
     drop(tx);
     let _ = writer.await;
+    backend.close().await;
     Ok(())
 }
 

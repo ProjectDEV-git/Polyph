@@ -3111,6 +3111,7 @@ dependencies = [
  "anyhow",
  "clap",
  "clap_complete",
+ "directories",
  "futures-util",
  "polyph-agents",
  "polyph-daemon",
@@ -3188,6 +3189,7 @@ dependencies = [
  "time",
  "tokio",
  "toml",
+ "toml_edit",
  "tracing",
  "yrs",
  "zbus",
@@ -3377,6 +3379,7 @@ dependencies = [
  "parking_lot",
  "polyph-agents",
  "polyph-daemon",
+ "polyph-git",
  "polyph-i18n",
  "polyph-localagent",
  "polyph-mcp",
@@ -5058,6 +5061,7 @@ dependencies = [
  "indexmap 2.14.2",
  "toml_datetime 1.1.2+spec-1.1.0",
  "toml_parser",
+ "toml_writer",
  "winnow 1.0.4",
 ]
 

@@ -107,6 +107,18 @@ const until = async (what: string, f: () => boolean) => {
 };
 
 describe("extension", () => {
+  it("registers Polyph as an MCP server for Copilot", () => {
+    extension.activate({ subscriptions: [], extensionUri: Uri.file("/ext") } as any);
+    const p = recorded.mcpProviders.get("polyph");
+    expect(p).toBeDefined();
+    const [d] = p!.provideMcpServerDefinitions();
+    expect(d.command).toBe("polyph");
+    expect(d.args).toEqual(["mcp", "--client", "vscode"]);
+    expect(d.env.POLYPH_HOME).toBe(recorded.config.home);
+    expect(d.cwd.fsPath).toContain("polyph-repo-");
+    extension.deactivate();
+  });
+
   it("shows the room, claims and approvals from the daemon", async () => {
     extension.activate({ subscriptions: [], extensionUri: Uri.file("/ext") } as any);
     await until("status bar", () => !!recorded.bar?.text.includes("payments"));

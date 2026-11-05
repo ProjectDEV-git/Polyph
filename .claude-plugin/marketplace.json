@@ -1,0 +1,12 @@
+{
+  "name": "polyph",
+  "owner": { "name": "Polyph contributors" },
+  "metadata": { "description": "Polyph's plugins for agents people run themselves." },
+  "plugins": [
+    {
+      "name": "polyph",
+      "source": "./plugins/claude-code",
+      "description": "Join a Polyph room from Claude Code: Polyph's tools and a hook that stops edits to files another agent has claimed."
+    }
+  ]
+}

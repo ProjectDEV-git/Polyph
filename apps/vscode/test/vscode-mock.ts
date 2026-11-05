@@ -13,6 +13,25 @@ export const recorded = {
   clipboard: "",
   bar: null as StatusBarItem | null,
   config: {} as Record<string, string>,
+  mcpProviders: new Map<string, { provideMcpServerDefinitions(): any[] }>(),
+};
+
+export class McpStdioServerDefinition {
+  cwd?: Uri;
+  constructor(
+    readonly label: string,
+    readonly command: string,
+    readonly args: string[] = [],
+    readonly env: Record<string, string> = {},
+    readonly version?: string,
+  ) {}
+}
+
+export const lm = {
+  registerMcpServerDefinitionProvider(id: string, p: { provideMcpServerDefinitions(): any[] }) {
+    recorded.mcpProviders.set(id, p);
+    return disposable;
+  },
 };
 
 export class Uri {

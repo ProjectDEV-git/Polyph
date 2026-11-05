@@ -169,6 +169,7 @@ pub async fn finish(daemon: Arc<Daemon>, h: Arc<AgentHandle>, message: Option<St
         .or_else(|| card.as_ref().map(|c| c.title.clone()))
         .unwrap_or_else(|| format!("Work by {}", h.agent.label));
     let msg = polyph_core::redact::redact(&msg).into_owned();
+    let summary = msg.clone();
     let sig = Signature::agent(&h.agent.label, &h.agent.id.short());
     let (path, branch, base) = (wt.path.clone(), wt.branch.clone(), wt.base.clone());
     let project = ProjectConfig::load(&wt.repo).unwrap_or_default();
@@ -209,7 +210,9 @@ pub async fn finish(daemon: Arc<Daemon>, h: Arc<AgentHandle>, message: Option<St
     };
     put_entry(&rt, &daemon.shared, &entry).await;
     if let Some(c) = &entry.card {
-        update_card(&rt, &daemon.shared, c, Some("review"), &[]).await;
+        // The commit message is the agent's summary: keep it for late joiners.
+        update_card(&rt, &daemon.shared, c, Some("review"), &[(polyph_proto::crdt::card::SUMMARY, Some(summary))])
+            .await;
     }
     // The work is committed: its files are free for others, and any overlap
     // from here on is the merge queue's to settle.

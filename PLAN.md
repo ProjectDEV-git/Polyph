@@ -153,3 +153,11 @@ earlier milestones left for "release" (`STUBS.md`, `HANDOFF.md`) and the
 - [x] one version everywhere (`scripts/release/version.mjs`), `CHANGELOG.md`, `docs/release.md`; `docs/self-hosting.md` with Docker, systemd, EC2 and LAN mode; README install section; the website's download page
 - [x] workflows: `test.yml` (unit tests on three systems, the hosted service, TypeScript, end-to-end suites, desktop build, packaging), `release.yml` (runs `test.yml` first; tag, Actions-tab version, or dry run), `release-prepare.yml` (version bump pull request); shared setup in `.github/actions/`
 - [ ] not done: tagging and publishing the first release, Windows code signing, Marketplace publishing, deployments (see `STUBS.md` "Milestone 11 gaps")
+
+## M12 — your own agents, shared context, cloning, plugins, big projects
+
+- [x] connect your own agents: `polyph mcp` outside a sandbox and `/mcp` on the daemon; `polyph connect`/`disconnect` for Claude Code, Codex, Cursor, VS Code, Gemini CLI, Windsurf, Zed, OpenCode; `polyph start`; `polyph doctor` (`tests/connect.rs`)
+- [x] shared context: project brief, `get_context`, `search`, `recent_work`/`polyph catchup`, task summaries; agent messages kept across restarts (`tests/context.rs`)
+- [x] clone from GitHub: the room remembers its repository without credentials; `polyph join` clones into an empty folder (blobless for large repositories); `polyph sync`; background fetch (`tests/repo.rs`)
+- [x] plugins: Claude Code plugin with an edit hook (`plugins/claude-code`), VS Code registers Polyph for Copilot, first-run checklist in the desktop app
+- [x] big projects: `next_task` through the claim arbiter, code areas (`.polyph/AREAS` or CODEOWNERS) in get_context, claims, next_task and the planner; 30 agents on a 100,000-file repository (`tests/scale.rs`, `docs/big-projects.md`)

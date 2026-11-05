@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "polyph": {
+      "command": "polyph",
+      "args": ["mcp", "--client", "claude-code"]
+    }
+  }
+}

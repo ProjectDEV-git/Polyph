@@ -1,0 +1,10 @@
+{
+  "name": "polyph",
+  "version": "0.1.1",
+  "description": "Join a Polyph room from Claude Code: Polyph's tools (claims, team state, messages, notes, shared context, next task) and a hook that stops an edit when another agent has claimed the file.",
+  "author": { "name": "Polyph contributors" },
+  "homepage": "https://github.com/ProjectDEV-git/Polyph",
+  "repository": "https://github.com/ProjectDEV-git/Polyph",
+  "license": "Apache-2.0",
+  "keywords": ["polyph", "multi-agent", "claims", "collaboration"]
+}

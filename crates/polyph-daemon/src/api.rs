@@ -107,6 +107,7 @@ pub async fn serve(daemon: Arc<Daemon>, port: u16) -> anyhow::Result<ApiServer> 
         .route("/rpc", post(rpc))
         .route("/healthz", get(|| async { "ok" }))
         .route("/web/session", post(web_session))
+        .route("/mcp", post(mcp_post).get(mcp_get).delete(mcp_delete))
         .route("/", get(|| async { axum::response::Redirect::temporary("/app/") }))
         .route("/{*path}", get(web_file))
         .with_state(st);
@@ -114,6 +115,120 @@ pub async fn serve(daemon: Arc<Daemon>, port: u16) -> anyhow::Result<ApiServer> 
         let _ = axum::serve(listener, app).await;
     });
     Ok(ApiServer { addr, task })
+}
+
+fn bearer(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|v| v.trim().to_string())
+}
+
+/// Who may use `/mcp`: a connect key, or the API token itself (then the
+/// client names itself with `X-Polyph-Client`).
+fn mcp_key(st: &ApiState, headers: &HeaderMap) -> Option<crate::connect_keys::Key> {
+    let t = bearer(headers)?;
+    if let Some(k) = crate::connect_keys::find(&st.daemon.shared.paths.home, &t) {
+        return Some(k);
+    }
+    if eq(t.as_bytes(), st.token.as_bytes()) {
+        let client = headers.get("x-polyph-client").and_then(|v| v.to_str().ok()).unwrap_or("agent").to_string();
+        return Some(crate::connect_keys::Key { key: String::new(), client, dir: None, created: 0 });
+    }
+    None
+}
+
+fn mcp_json(status: StatusCode, v: Value, session: Option<&str>) -> Response {
+    let mut r = (status, Json(v)).into_response();
+    if let Some(s) = session
+        && let Ok(h) = s.parse()
+    {
+        r.headers_mut().insert("mcp-session-id", h);
+    }
+    r
+}
+
+/// MCP over HTTP ("streamable HTTP", answering with plain JSON): agents the
+/// person runs point their MCP config at this address. `initialize` joins
+/// the room as a connected agent and returns `Mcp-Session-Id`; each later
+/// request carries it.
+async fn mcp_post(State(st): State<ApiState>, headers: HeaderMap, body: axum::body::Bytes) -> Response {
+    if !crate::web::local_host(&headers) || !crate::web::origin_allowed(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(key) = mcp_key(&st, &headers) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "missing or unknown Polyph connect key; run `polyph connect`" })),
+        )
+            .into_response();
+    };
+    if body.len() > MAX_REQUEST {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    }
+    let msg: Value = match serde_json::from_slice(&body) {
+        Ok(v @ Value::Object(_)) => v,
+        _ => return mcp_json(StatusCode::BAD_REQUEST, polyph_mcp::server::parse_error(), None),
+    };
+    let session = headers.get("mcp-session-id").and_then(|v| v.to_str().ok()).map(str::to_string);
+    let asked = headers.get("mcp-protocol-version").and_then(|v| v.to_str().ok()).unwrap_or_default();
+    let mut version =
+        polyph_mcp::server::VERSIONS.iter().find(|v| **v == asked).copied().unwrap_or(polyph_mcp::server::VERSIONS[1]);
+    let is_init = msg.get("method").and_then(|m| m.as_str()) == Some("initialize");
+    match polyph_mcp::server::step(&msg, &mut version) {
+        polyph_mcp::server::Step::Reply(reply) if is_init => {
+            let cwd = key
+                .dir
+                .clone()
+                .or_else(|| directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf()))
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            let p = crate::external::ConnectParams { room: None, cwd, client: key.client.clone(), via: "http".into() };
+            match crate::external::connect(&st.daemon, p).await {
+                Ok(r) => {
+                    let s = r["session"].as_str().unwrap_or_default().to_string();
+                    mcp_json(StatusCode::OK, reply, Some(&s))
+                }
+                Err(e) => {
+                    let id = msg.get("id").cloned().unwrap_or(Value::Null);
+                    mcp_json(
+                        StatusCode::OK,
+                        json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": e.to_string() } }),
+                        None,
+                    )
+                }
+            }
+        }
+        polyph_mcp::server::Step::Reply(reply) => mcp_json(StatusCode::OK, reply, session.as_deref()),
+        polyph_mcp::server::Step::Call { id, name, args, structured } => {
+            let Some(session) = session else {
+                return (StatusCode::BAD_REQUEST, "initialize first").into_response();
+            };
+            match crate::external::call(&st.daemon, &session, &name, &args).await {
+                Ok(out) => {
+                    mcp_json(StatusCode::OK, polyph_mcp::server::tool_reply(id, out, structured), Some(&session))
+                }
+                // Unknown session: the client must initialize again.
+                Err(_) => StatusCode::NOT_FOUND.into_response(),
+            }
+        }
+        polyph_mcp::server::Step::Nothing => StatusCode::ACCEPTED.into_response(),
+    }
+}
+
+async fn mcp_get() -> Response {
+    // No server-to-client stream: every answer comes back on its POST.
+    StatusCode::METHOD_NOT_ALLOWED.into_response()
+}
+
+async fn mcp_delete(State(st): State<ApiState>, headers: HeaderMap) -> Response {
+    if !crate::web::local_host(&headers) || mcp_key(&st, &headers).is_none() {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if let Some(s) = headers.get("mcp-session-id").and_then(|v| v.to_str().ok()) {
+        let _ = crate::external::disconnect(&st.daemon, s, "disconnected").await;
+    }
+    StatusCode::OK.into_response()
 }
 
 async fn rpc(
@@ -162,6 +277,10 @@ async fn dispatch(st: &ApiState, auth: Auth, req: Value) -> Value {
     let Some(method) = req.get("method").and_then(|m| m.as_str()) else {
         return json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32600, "message": "missing method" } });
     };
+    if method == "clients.connect" && auth != Auth::Token {
+        // Writes agents' settings files: only the CLI and the desktop app may.
+        return json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32001, "message": "not allowed from a browser session; run `polyph connect` instead" } });
+    }
     if method == "web.link" {
         // Only the API token's holder (the CLI, the desktop app) can sign in a browser.
         if auth != Auth::Token || st.web_dir.is_none() {

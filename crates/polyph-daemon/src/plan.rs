@@ -48,11 +48,21 @@ fn parse(text: &str) -> Result<TaskGraph, String> {
     Ok(g)
 }
 
-fn prompt(goal: &str, team: &str) -> String {
+fn prompt(goal: &str, team: &str, areas: &crate::areas::Areas) -> String {
+    let areas = if areas.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n\nCode areas (who looks after which part of the code, from {}). Split the work along them where you \
+can, so each task stays inside one area, and suggest the area's owner:\n{}",
+            areas.source.as_deref().unwrap_or(crate::areas::FILE),
+            areas.describe()
+        )
+    };
     format!(
         "Plan this goal for a team whose agents work in parallel, each on its own branch:\n\n{goal}\n\n\
 The repository is checked out in your working directory. Read what you need; do not edit anything.\n\n\
-The team right now:\n{team}\n\n\
+The team right now:\n{team}{areas}\n\n\
 Split the goal into tasks that different agents can do at the same time while touching as few of the same files \
 as possible. For each task give: a short id (t1, t2, ...), a title, a description, acceptance criteria (what done \
 means), the files it will most likely change (predicted_files), the ids it depends on (depends_on), a size \
@@ -85,9 +95,10 @@ pub async fn create(daemon: Arc<Daemon>, p: PlanParams) -> Result<Value, ApiErro
         None => None,
     };
     let dir = scratch.as_ref().map(|(_, w)| w.clone()).unwrap_or_else(|| cwd.clone());
+    let areas = crate::areas::load(&dir);
     let result = async {
         let helper = Helper::start(&daemon, &rt, &kind, &dir).await?;
-        let mut answer = helper.turn(&daemon, &rt, &prompt(&goal, &team)).await;
+        let mut answer = helper.turn(&daemon, &rt, &prompt(&goal, &team, &areas)).await;
         let mut graph = answer.as_ref().map_err(|e| e.to_string()).and_then(|a| parse(a));
         // One retry, telling the planner what was wrong.
         if let Err(why) = &graph
@@ -106,7 +117,7 @@ pub async fn create(daemon: Arc<Daemon>, p: PlanParams) -> Result<Value, ApiErro
         drop_worktree(root, w).await;
     }
     let graph = result?;
-    write_cards(&daemon, &rt, &plan_id, &goal, &graph).await
+    write_cards(&daemon, &rt, &plan_id, &goal, &graph, &crate::areas::load(&cwd)).await
 }
 
 async fn write_cards(
@@ -115,6 +126,7 @@ async fn write_cards(
     plan_id: &str,
     goal: &str,
     g: &TaskGraph,
+    areas: &crate::areas::Areas,
 ) -> Result<Value, ApiError> {
     let now = daemon.shared.clock.now();
     let ids: HashMap<String, String> = g
@@ -153,8 +165,9 @@ async fn write_cards(
             };
             if b.add_card(&c).is_ok() {
                 let _ = b.set_field(&id, card::PLAN, Any::String(plan_id.into()), now);
-                if let Some(s) = &t.suggested_assignee {
-                    let _ = b.set_field(&id, card::SUGGESTED_ASSIGNEE, Any::String(s.as_str().into()), now);
+                // The planner's suggestion, or the owner of the area its files are in.
+                if let Some(s) = t.suggested_assignee.clone().or_else(|| areas.suggest(&t.predicted_files)) {
+                    let _ = b.set_field(&id, card::SUGGESTED_ASSIGNEE, Any::String(s.into()), now);
                 }
                 created.push(json!({ "id": id, "planner_id": t.id, "title": c.title, "depends_on": c.depends_on }));
             }
