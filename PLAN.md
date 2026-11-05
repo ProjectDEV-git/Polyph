@@ -153,3 +153,7 @@ earlier milestones left for "release" (`STUBS.md`, `HANDOFF.md`) and the
 - [x] one version everywhere (`scripts/release/version.mjs`), `CHANGELOG.md`, `docs/release.md`; `docs/self-hosting.md` with Docker, systemd, EC2 and LAN mode; README install section; the website's download page
 - [x] workflows: `test.yml` (unit tests on three systems, the hosted service, TypeScript, end-to-end suites, desktop build, packaging), `release.yml` (runs `test.yml` first; tag, Actions-tab version, or dry run), `release-prepare.yml` (version bump pull request); shared setup in `.github/actions/`
 - [ ] not done: tagging and publishing the first release, Windows code signing, Marketplace publishing, deployments (see `STUBS.md` "Milestone 11 gaps")
+## Proposed: M12 onward — connect any agent, shared context, clone on join
+
+Not started. The full plan, with phases, tests, security review and the
+decisions needed first, is in `docs/plan-connect-agents.md`.
