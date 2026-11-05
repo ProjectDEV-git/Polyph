@@ -3,6 +3,31 @@
 All notable changes, newest first. Each release's section is copied to its
 GitHub release page.
 
+## 0.1.2
+
+- **Bring your own agents.** Agents you already run (Claude Code, Codex,
+  Cursor, VS Code, Gemini CLI, Windsurf, Zed, OpenCode) can join a room
+  through Polyph's MCP tools. `polyph connect` shows and writes each
+  client's config entry (keeping a backup); `polyph disconnect` removes it.
+  `polyph start` sets everything up in one command, and `polyph doctor`
+  checks the setup and prints a fix for each problem.
+- **Claude Code plugin and Copilot.** A Claude Code plugin adds Polyph's
+  tools and blocks an edit when another agent holds the file. The VS Code
+  extension registers Polyph as an MCP server, so Copilot gets its tools
+  with no settings file.
+- **Shared context.** A project brief synced to everyone (`polyph brief`),
+  a `get_context` tool with the agent's task, notes and who holds its
+  files, `search` across notes, cards and threads, and `recent_work` /
+  `polyph catchup` for late joiners. `next_task` hands each ready card to
+  exactly one agent.
+- **The room's repository.** `polyph join` in an empty folder offers to
+  clone the room's repository and link it; `polyph sync` moves a checkout
+  forward only when nothing would be lost, and the daemon fetches linked
+  folders in the background.
+- **Big projects.** Code areas from `.polyph/AREAS` or CODEOWNERS guide the
+  planner and task assignment; tested with 30 agents on 100,000 files.
+- **Desktop app.** A first-run checklist that shows the next step.
+
 ## 0.1.1
 
 - **A relay to connect through.** The default relay is now the project's
