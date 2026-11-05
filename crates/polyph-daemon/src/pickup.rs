@@ -23,9 +23,12 @@ use crate::coord::Caller;
 use crate::daemon::Shared;
 use crate::runtime::RoomRuntime;
 
+/// Where cards' leases live in the claim space.
+pub const TASK_PREFIX: &str = ".polyph/tasks/";
+
 /// Where a card's lease lives in the claim space.
 pub fn task_target(card: &str) -> ClaimTarget {
-    ClaimTarget { path: format!(".polyph/tasks/{card}"), symbol: None }
+    ClaimTarget { path: format!("{TASK_PREFIX}{card}"), symbol: None }
 }
 
 /// Candidate cards, best first.
@@ -44,7 +47,7 @@ pub fn candidates(cards: &[CardView], held_by_others: &[String], areas: &Areas, 
         .enumerate()
         .map(|(i, c)| {
             let mine = c.files.iter().any(|f| areas.owner_of(f).is_some_and(|a| a.owned_by(who)))
-                || c.suggested_assignee.as_deref().is_some_and(|s| s.eq_ignore_ascii_case(who));
+                || c.suggested_assignee.as_deref().is_some_and(|s| crate::areas::same_owner(s, who));
             (!mine, i, c.clone())
         })
         .collect();

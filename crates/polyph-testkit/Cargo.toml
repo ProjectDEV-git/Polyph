@@ -57,6 +57,7 @@ serde_json = { workspace = true }
 tempfile = { workspace = true }
 
 [dev-dependencies]
+polyph-git = { workspace = true }
 ratatui = "0.30"
 crossterm = "0.29"
 unicode-width = "0.2"

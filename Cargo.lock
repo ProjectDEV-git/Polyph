@@ -3379,6 +3379,7 @@ dependencies = [
  "parking_lot",
  "polyph-agents",
  "polyph-daemon",
+ "polyph-git",
  "polyph-i18n",
  "polyph-localagent",
  "polyph-mcp",

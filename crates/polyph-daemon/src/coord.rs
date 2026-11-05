@@ -560,7 +560,12 @@ async fn release(h: &Caller, rt: &RoomRuntime, shared: &Shared, args: &Value) ->
         .all()
         .into_iter()
         .filter(|c| c.owner.id == h.agent.id)
-        .filter(|c| wanted.as_ref().is_none_or(|w| w.contains(&c.target)))
+        // Releasing everything keeps the task leases from next_task, which
+        // finishing the task releases.
+        .filter(|c| match &wanted {
+            Some(w) => w.contains(&c.target),
+            None => !c.target.path.starts_with(crate::pickup::TASK_PREFIX),
+        })
         .collect();
     let ids: Vec<ObjectId> = mine.iter().map(|c| c.id).collect();
     let fx = ctx.core.release_claims(&ids);

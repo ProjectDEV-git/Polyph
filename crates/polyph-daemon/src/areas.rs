@@ -78,6 +78,48 @@ impl Areas {
     pub fn is_empty(&self) -> bool {
         self.areas.is_empty()
     }
+
+    /// Who should do a task touching `files`: the first owner of the area
+    /// most of them fall in (without `@`), when any has owners.
+    pub fn suggest(&self, files: &[String]) -> Option<String> {
+        let mut counts: Vec<(&Area, usize)> = vec![];
+        for f in files {
+            let Some(a) = self.owner_of(f).filter(|a| !a.owners.is_empty()) else { continue };
+            match counts.iter_mut().find(|(x, _)| std::ptr::eq(*x, a)) {
+                Some((_, n)) => *n += 1,
+                None => counts.push((a, 1)),
+            }
+        }
+        // The most files wins; ties go to the first seen.
+        let best = counts.iter().fold(None::<(&Area, usize)>, |best, (a, n)| match best {
+            Some((_, m)) if m >= *n => best,
+            _ => Some((a, *n)),
+        });
+        best.and_then(|(a, _)| a.owners.first()).map(|o| o.trim_start_matches('@').to_string())
+    }
+
+    /// The areas as text for a prompt (the planner reads it).
+    pub fn describe(&self) -> String {
+        self.areas
+            .iter()
+            .map(|a| {
+                let mut l = format!("- {}: {}", a.pattern, a.owners.join(" "));
+                if let Some(n) = &a.note {
+                    l.push_str(&format!(" ({n})"));
+                }
+                l
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Whether `suggested` (a person's name or an agent label) means `who`
+/// (an agent label): the label itself, or the person running it.
+pub fn same_owner(suggested: &str, who: &str) -> bool {
+    let s = suggested.trim().trim_start_matches('@').to_lowercase();
+    let w = who.trim().to_lowercase();
+    s == w || (!s.contains('/') && w.split('/').next() == Some(s.as_str()))
 }
 
 /// `*` within a segment, `**` across segments, `?` one character.
@@ -166,6 +208,13 @@ mod tests {
         assert!(billing.owned_by("Ann") && billing.owned_by("ann/codex") && billing.owned_by("Ann/claude"));
         assert!(!billing.owned_by("Bo") && !billing.owned_by("Bo/claude"));
         assert!(billing.describe().contains("looked after by @ann, Ann/claude"));
+        let files = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(a.suggest(&files(&["src/billing/a.rs", "src/billing/b.rs", "x.sql"])).as_deref(), Some("ann"));
+        assert_eq!(a.suggest(&files(&["db/x.sql"])).as_deref(), Some("bo"));
+        assert_eq!(parse("", None).suggest(&files(&["a"])), None);
+        assert!(a.describe().contains("- *.sql: @bo"));
+        assert!(same_owner("@Ann", "Ann/claude") && same_owner("Ann/claude", "ann/claude"));
+        assert!(!same_owner("Ann/codex", "Ann/claude") && !same_owner("Bo", "Ann/claude"));
     }
 
     #[test]
