@@ -378,6 +378,10 @@ pub fn top_level(content: &str, lang: Lang) -> Vec<Symbol> {
 /// None when a change falls outside every symbol (then claim the whole file).
 pub fn changed_symbols(old: &str, new: &str, lang: Lang) -> Option<Vec<String>> {
     use similar::{DiffTag, TextDiff};
+    // Line endings are not a change: git on Windows checks files out with
+    // CRLF while agents usually write LF. Lines keep their numbers.
+    let (old, new) = (old.replace("\r\n", "\n"), new.replace("\r\n", "\n"));
+    let (old, new) = (old.as_str(), new.as_str());
     let new_syms = symbols(new, lang);
     let old_syms = symbols(old, lang);
     let innermost = |syms: &[Symbol], line: usize| -> Option<String> {
@@ -473,6 +477,15 @@ pub async fn transfer(a: &mut Account, b: &mut Account) -> Result<(), String> {
         let s = symbols(py, Lang::Indent);
         let n: Vec<(&str, usize, usize)> = s.iter().map(|x| (x.name.as_str(), x.start, x.end)).collect();
         assert_eq!(n, vec![("User", 2, 7), ("User::greet", 6, 7), ("main", 10, 11)]);
+    }
+
+    #[test]
+    fn line_endings_alone_are_not_a_change() {
+        let lf = "fn a() {\n    1\n}\n\nfn b() {\n    2\n}\n";
+        let crlf = lf.replace('\n', "\r\n");
+        assert_eq!(changed_symbols(&crlf, lf, Lang::Braces), Some(vec![]));
+        let edited = lf.replace("    2\n", "    3\n");
+        assert_eq!(changed_symbols(&crlf, &edited, Lang::Braces), Some(vec!["b".to_string()]));
     }
 
     #[test]

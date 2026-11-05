@@ -153,6 +153,8 @@ async fn two_tasks_merge_keeping_both_intents() {
     let repo = tempfile::tempdir().unwrap();
     let r = repo.path();
     git(r, &["init", "-q", "-b", "main"]);
+    // Byte-exact merge results: no CRLF conversion on Windows checkouts.
+    git(r, &["config", "core.autocrlf", "false"]);
     std::fs::create_dir_all(r.join("src")).unwrap();
     std::fs::write(r.join("src/lib.rs"), LIB).unwrap();
     std::fs::write(
@@ -269,6 +271,8 @@ async fn setup(kinds: Vec<(&str, Value)>, toml: &str) -> (Harness, String, tempf
     let repo = tempfile::tempdir().unwrap();
     let r = repo.path();
     git(r, &["init", "-q", "-b", "main"]);
+    // Byte-exact merge results: no CRLF conversion on Windows checkouts.
+    git(r, &["config", "core.autocrlf", "false"]);
     std::fs::create_dir_all(r.join("src")).unwrap();
     std::fs::write(r.join("src/lib.rs"), LIB).unwrap();
     std::fs::write(r.join("polyph.toml"), toml).unwrap();
@@ -390,9 +394,14 @@ async fn a_reviewer_can_send_a_task_back() {
     let e = wait_state(&h, 0, &rid, &abr, "changes_requested").await;
     assert_eq!(e["detail"], "refund() must reject negative amounts.");
     assert_eq!(std::fs::read_to_string(r.join("src/lib.rs")).unwrap(), LIB, "main did not move");
-    // The card went back, and the agent hears the review at its next turn.
-    let board = h.nodes[0].call("board.get", json!({ "room": rid })).await.unwrap();
-    assert_eq!(board["cards"][0]["column"], "in_progress");
+    // The card went back (moved just after the review state is announced),
+    // and the agent hears the review at its next turn.
+    h.until("the card is back in progress", || async {
+        let board = h.nodes[0].call("board.get", json!({ "room": rid })).await.unwrap();
+        board["cards"][0]["column"] == "in_progress"
+    })
+    .await
+    .unwrap();
     h.nodes[0].call("agent.prompt", json!({ "agent": aid, "text": "continue" })).await.unwrap();
     let said = messages(&h, 0, &rid, &aid).await;
     let p = said.iter().rev().find(|m| m.starts_with("prompt:")).unwrap();

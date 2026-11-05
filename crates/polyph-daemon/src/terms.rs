@@ -230,7 +230,7 @@ fn default_shell() -> Vec<String> {
 pub async fn open(d: &Arc<Daemon>, p: OpenParams) -> Result<Value, ApiError> {
     let rt = d.find(&p.room).await?;
     let cwd = match p.cwd {
-        Some(c) => c.canonicalize().map_err(|e| ApiError::BadRequest(format!("{}: {e}", c.display())))?,
+        Some(c) => polyph_git::canonical(&c).map_err(|e| ApiError::BadRequest(format!("{}: {e}", c.display())))?,
         None => polyph_sandbox::home_dir().unwrap_or_else(std::env::temp_dir),
     };
     let command = if p.command.is_empty() { default_shell() } else { p.command };

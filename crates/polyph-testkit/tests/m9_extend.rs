@@ -72,7 +72,8 @@ async fn templates_skills_and_plugin_tools_reach_agents() {
     std::fs::write(
         plug.join("polyph-plugin.toml"),
         format!(
-            "name = \"greeter\"\nversion = \"0.1.0\"\ndescription = \"Says hello.\"\n[mcp]\ncommand = \"{}\"\n",
+            // A literal string: Windows paths hold backslashes.
+            "name = \"greeter\"\nversion = \"0.1.0\"\ndescription = \"Says hello.\"\n[mcp]\ncommand = '{}'\n",
             env!("CARGO_BIN_EXE_polyph-test-plugin-mcp")
         ),
     )

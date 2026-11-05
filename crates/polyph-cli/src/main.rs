@@ -969,7 +969,7 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
             }
         }
         Cmd::Plugin { cmd: PluginCmd::Add { path, replace } } => {
-            let path = path.canonicalize()?;
+            let path = polyph_git::canonical(&path)?;
             let v = call(&mut api, "plugin.add", json!({ "path": path, "replace": replace })).await?;
             if ctx.json {
                 ctx.print_json(&v);
@@ -1016,7 +1016,7 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                     }
                 }
                 SkillsCmd::Add { path } => {
-                    let from = path.canonicalize()?;
+                    let from = polyph_git::canonical(&path)?;
                     let v = call(&mut api, "skills.add", json!({ "cwd": cwd, "from": from })).await?;
                     ctx.out(tr!(l, "skill-added", name = v["name"].as_str().unwrap_or_default()));
                 }
@@ -1081,7 +1081,7 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
             }
         }
         Cmd::AgentHost { cmd: HostCmd::Workdir { dir } } => {
-            let dir = dir.canonicalize()?;
+            let dir = polyph_git::canonical(&dir)?;
             call(&mut api, "config.set", json!({ "key": "host_workdir", "value": dir })).await?;
             ctx.out(l.t("config-set"));
         }

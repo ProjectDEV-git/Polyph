@@ -17,6 +17,7 @@ path = "src/main.rs"
 [dependencies]
 polyph-proto = { workspace = true }
 polyph-daemon = { workspace = true }
+polyph-git = { workspace = true }
 polyph-relay = { workspace = true }
 polyph-i18n = { workspace = true }
 polyph-sandbox = { workspace = true }

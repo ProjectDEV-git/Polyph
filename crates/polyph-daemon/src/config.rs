@@ -100,7 +100,7 @@ impl UserConfig {
                 if !p.is_dir() {
                     anyhow::bail!("{value} is not a directory");
                 }
-                self.host_workdir = Some(p.canonicalize()?.to_string_lossy().into_owned());
+                self.host_workdir = Some(polyph_git::canonical(p)?.to_string_lossy().into_owned());
             }
             other => {
                 anyhow::bail!("unknown setting {other}; known: name, relay, lang, theme, api_port, host_workdir, cloud")

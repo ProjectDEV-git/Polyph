@@ -3114,6 +3114,7 @@ dependencies = [
  "futures-util",
  "polyph-agents",
  "polyph-daemon",
+ "polyph-git",
  "polyph-i18n",
  "polyph-mcp",
  "polyph-proto",

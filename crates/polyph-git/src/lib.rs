@@ -398,7 +398,7 @@ impl Repo {
     /// The main working copy's root (the parent of the shared `.git`).
     pub fn main_root(&self) -> Result<PathBuf> {
         let common = self.common_dir()?;
-        let common = common.canonicalize().unwrap_or(common);
+        let common = canonical(&common).unwrap_or(common);
         match (common.file_name().and_then(|n| n.to_str()), common.parent()) {
             (Some(".git"), Some(p)) => Ok(p.to_path_buf()),
             _ => Ok(self.root.clone()),
@@ -492,6 +492,28 @@ pub fn task_branch(title: &str, short_id: &str) -> String {
     if slug.is_empty() { format!("polyph/task-{short_id}") } else { format!("polyph/{slug}-{short_id}") }
 }
 
+/// `path` made absolute with links resolved, in the form other programs
+/// accept. On Windows `std::fs::canonicalize` returns verbatim paths
+/// (`\\?\C:\...`), which git and many tools cannot use; this returns
+/// `C:\...` (and `\\server\share\...` for network paths) instead.
+pub fn canonical(path: &Path) -> std::io::Result<PathBuf> {
+    Ok(simplify_verbatim(path.canonicalize()?))
+}
+
+fn simplify_verbatim(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        let b = rest.as_bytes();
+        if b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\' {
+            return PathBuf::from(rest);
+        }
+    }
+    p
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -501,6 +523,8 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let r = Repo { root: d.path().to_path_buf() };
         r.git(&["init", "-q", "-b", "main"]).unwrap();
+        // Byte-exact merge results: no CRLF conversion on Windows checkouts.
+        r.git(&["config", "core.autocrlf", "false"]).unwrap();
         std::fs::write(d.path().join("lib.rs"), "fn a() {}\n").unwrap();
         r.commit_all("initial", &Signature::agent("Ann/test", "0")).unwrap();
         let r = Repo::open(d.path()).unwrap();
@@ -555,7 +579,7 @@ mod tests {
             MergeOutcome::UpToDate
         );
         assert_eq!(r.merged_files(&commit).unwrap(), vec!["new.rs"]);
-        assert_eq!(wt.main_root().unwrap(), d.path().canonicalize().unwrap());
+        assert_eq!(wt.main_root().unwrap(), canonical(d.path()).unwrap());
         r.remove_worktree(&wt_path).unwrap();
         assert_eq!(r.worktrees().unwrap().len(), 1);
         // Push to a bare remote.
@@ -602,5 +626,13 @@ mod tests {
         assert_eq!(r.show(&commit, "lib.rs").unwrap(), "fn a() { 1 + 2 }\n");
         // The working copy was not touched.
         assert_eq!(std::fs::read_to_string(d.path().join("lib.rs")).unwrap(), "fn a() { 1 }\n");
+    }
+
+    #[test]
+    fn verbatim_paths_are_simplified() {
+        assert_eq!(simplify_verbatim(PathBuf::from(r"\\?\C:\w\repo")), PathBuf::from(r"C:\w\repo"));
+        assert_eq!(simplify_verbatim(PathBuf::from(r"\\?\UNC\srv\share\x")), PathBuf::from(r"\\srv\share\x"));
+        assert_eq!(simplify_verbatim(PathBuf::from(r"\\?\Volume{1}\x")), PathBuf::from(r"\\?\Volume{1}\x"));
+        assert_eq!(simplify_verbatim(PathBuf::from("/w/repo")), PathBuf::from("/w/repo"));
     }
 }
