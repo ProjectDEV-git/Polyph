@@ -39,6 +39,9 @@ pub struct UserConfig {
     pub host_rooms: Vec<String>,
     /// The hosted account service `polyph login` signs in to.
     pub cloud: String,
+    /// Minutes between background fetches of folders linked to rooms; 0 turns
+    /// them off (see `sync`).
+    pub auto_fetch: u32,
 }
 
 impl Default for UserConfig {
@@ -53,6 +56,7 @@ impl Default for UserConfig {
             host_workdir: None,
             host_rooms: vec![],
             cloud: DEFAULT_CLOUD.into(),
+            auto_fetch: 5,
         }
     }
 }
@@ -89,6 +93,11 @@ impl UserConfig {
                 self.theme = value.to_string();
             }
             "api_port" => self.api_port = value.parse().map_err(|_| anyhow::anyhow!("api_port must be a number"))?,
+            "auto_fetch" => {
+                self.auto_fetch = value
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("auto_fetch is minutes between fetches, or 0 for never"))?
+            }
             "cloud" => {
                 if !(value.starts_with("https://") || value.starts_with("http://")) {
                     anyhow::bail!("cloud must be an https:// URL, for example https://api.example.com");
@@ -103,7 +112,9 @@ impl UserConfig {
                 self.host_workdir = Some(polyph_git::canonical(p)?.to_string_lossy().into_owned());
             }
             other => {
-                anyhow::bail!("unknown setting {other}; known: name, relay, lang, theme, api_port, host_workdir, cloud")
+                anyhow::bail!(
+                    "unknown setting {other}; known: name, relay, lang, theme, api_port, host_workdir, cloud, auto_fetch"
+                )
             }
         }
         Ok(())
@@ -117,6 +128,7 @@ impl UserConfig {
             "lang" => self.lang.clone(),
             "theme" => Some(self.theme.clone()),
             "api_port" => Some(self.api_port.to_string()),
+            "auto_fetch" => Some(self.auto_fetch.to_string()),
             "cloud" => Some(self.cloud.clone()),
             "host_workdir" => self.host_workdir.clone(),
             _ => None,

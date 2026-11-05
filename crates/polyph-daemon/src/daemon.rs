@@ -232,6 +232,8 @@ pub struct Daemon {
     pub agents: crate::agents::Agents,
     /// Start requests waiting for this member's agent hosts.
     pub hosts: crate::hosts::Hosts,
+    /// Agents the person runs themselves, connected through `polyph mcp`.
+    pub external: crate::external::External,
     rooms: Mutex<HashMap<RoomId, Arc<RoomRuntime>>>,
     open: Mutex<Vec<RoomId>>,
     pub shutdown: tokio::sync::Notify,
@@ -297,6 +299,7 @@ impl Daemon {
             shared: shared.clone(),
             agents: Default::default(),
             hosts: Default::default(),
+            external: Default::default(),
             rooms: Mutex::new(HashMap::new()),
             open: Mutex::new(vec![]),
             shutdown: tokio::sync::Notify::new(),
@@ -306,6 +309,18 @@ impl Daemon {
         tokio::spawn(crate::hosts::run(Arc::downgrade(&d), d.subscribe()));
         tokio::spawn(crate::plugins::run(Arc::downgrade(&d), d.subscribe()));
         tokio::spawn(crate::github::run(Arc::downgrade(&d)));
+        tokio::spawn(crate::sync::run(Arc::downgrade(&d)));
+        {
+            // Closes connections of agents that went quiet.
+            let weak = Arc::downgrade(&d);
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    let Some(d) = weak.upgrade() else { break };
+                    crate::external::reap(&d).await;
+                }
+            });
+        }
         #[cfg(target_os = "linux")]
         {
             let addr = match d.shared.opts.dbus.as_str() {
@@ -378,7 +393,13 @@ impl Daemon {
         );
     }
 
-    /// Finds a room by id, unique id prefix, or name (case-insensitive).
+    /// Open rooms, the current one last.
+    pub async fn open_rooms(&self) -> Vec<Arc<RoomRuntime>> {
+        let open = self.open.lock().await.clone();
+        let rooms = self.rooms.lock().await;
+        open.iter().filter_map(|id| rooms.get(id).cloned()).collect()
+    }
+
     /// Every open room.
     pub async fn room_list(&self) -> Vec<Arc<RoomRuntime>> {
         self.rooms.lock().await.values().cloned().collect()
@@ -1773,6 +1794,92 @@ impl Daemon {
                 apply(&rt, &mut c, &self.shared, fx).await;
                 ok(json!({}))
             }
+            "mcp.connect" => {
+                let p: crate::external::ConnectParams = param(&params)?;
+                crate::external::connect(self, p).await
+            }
+            "mcp.call" => {
+                #[derive(Deserialize)]
+                struct P {
+                    session: String,
+                    tool: String,
+                    #[serde(default)]
+                    args: Value,
+                }
+                let p: P = param(&params)?;
+                if polyph_mcp::tools::find(&p.tool).is_none() {
+                    return Err(ApiError::BadRequest(format!("unknown tool {}", p.tool)));
+                }
+                ok(crate::external::call(self, &p.session, &p.tool, &p.args).await?)
+            }
+            "mcp.disconnect" => {
+                #[derive(Deserialize)]
+                struct P {
+                    session: String,
+                }
+                let p: P = param(&params)?;
+                crate::external::disconnect(self, &p.session, "disconnected").await
+            }
+            "mcp.sessions" => ok(crate::external::list(self).await),
+            "repo.get" | "repo.set" | "sync.run" => crate::sync::call(self, method, params).await,
+            "connect.key" | "connect.revoke" => {
+                #[derive(Deserialize)]
+                struct P {
+                    client: String,
+                    dir: Option<PathBuf>,
+                }
+                let p: P = param(&params)?;
+                let home = &self.shared.paths.home;
+                if method == "connect.key" {
+                    let k = crate::connect_keys::issue(home, &p.client, p.dir.as_deref(), now)?;
+                    ok(json!({ "key": k.key, "client": k.client, "dir": k.dir }))
+                } else {
+                    ok(json!({ "revoked": crate::connect_keys::revoke(home, &p.client, p.dir.as_deref())? }))
+                }
+            }
+            "folder.link" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: String,
+                    dir: PathBuf,
+                }
+                let p: P = param(&params)?;
+                let rt = self.find(&p.room).await?;
+                let path = crate::folders::link(&self.shared.paths.home, &rt.id.to_hex(), &p.dir)?;
+                ok(json!({ "room": rt.id.to_hex(), "path": path }))
+            }
+            "folder.unlink" => {
+                #[derive(Deserialize)]
+                struct P {
+                    room: Option<String>,
+                    dir: Option<PathBuf>,
+                }
+                let p: P = param(&params)?;
+                let room = match &p.room {
+                    Some(r) => Some(self.find(r).await?.id.to_hex()),
+                    None => None,
+                };
+                let n = crate::folders::unlink(&self.shared.paths.home, room.as_deref(), p.dir.as_deref())?;
+                ok(json!({ "removed": n }))
+            }
+            "folder.list" => ok(crate::folders::load(&self.shared.paths.home)),
+            "folder.find" => {
+                #[derive(Deserialize)]
+                struct P {
+                    dir: PathBuf,
+                }
+                let p: P = param(&params)?;
+                match crate::folders::room_for(&self.shared.paths.home, &p.dir) {
+                    Some(l) => {
+                        let name = match self.find(&l.room).await {
+                            Ok(rt) => Some(rt.ctx.lock().await.core.name.clone()),
+                            Err(_) => None,
+                        };
+                        ok(json!({ "room": l.room, "path": l.path, "name": name }))
+                    }
+                    None => ok(Value::Null),
+                }
+            }
             "room.snapshot" => {
                 let p: RoomParam = param(&params)?;
                 let rt = self.find(&p.room).await?;
@@ -2016,8 +2123,14 @@ impl Daemon {
     /// Stops all rooms, saving state and uploading snapshots.
     pub async fn stop(&self) {
         let rooms: Vec<Arc<RoomRuntime>> = self.rooms.lock().await.values().cloned().collect();
+        let sessions = self.external.list().await;
         for rt in rooms {
+            for s in sessions.iter().filter(|s| s.room == rt.id) {
+                let reason = polyph_proto::messages::AgentEventKind::Stopped { reason: "daemon stopped".into() };
+                crate::agents::publish(&rt, &self.shared, &s.caller.agent, reason).await;
+            }
             let mut c = rt.ctx.lock().await;
+            crate::coord::persist_inboxes(&mut c, &self.shared);
             let now = self.shared.clock.now();
             if c.connected {
                 upload_snapshot(&mut c, now).await;
@@ -2057,7 +2170,7 @@ async fn recv_pake(client: &mut RelayClient, session: u64, secs: u64) -> Option<
 }
 
 /// The repository root holding `dir`, or `dir` itself outside a repository.
-fn polyph_git_root(dir: &std::path::Path) -> std::path::PathBuf {
+pub(crate) fn polyph_git_root(dir: &std::path::Path) -> std::path::PathBuf {
     let mut d = dir.to_path_buf();
     loop {
         if d.join(".git").exists() {

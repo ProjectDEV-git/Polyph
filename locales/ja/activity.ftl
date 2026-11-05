@@ -16,3 +16,5 @@ activity-overlap = { $agent } が { $path } を変更しましたが、このフ
 activity-thread-created = スレッド { $title } を開始しました
 activity-whiteboard-created = ホワイトボード { $name } を作成しました
 activity-terminal-opened = ターミナル { $title } を開きました
+activity-agent-connected = { $client } を接続しました
+activity-task-finished = タスクを終えました: { $summary }

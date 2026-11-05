@@ -514,6 +514,9 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
     });
     let _ = once.set(handle.clone());
     rt.ctx.lock().await.coord.wakers.insert(id, wake_tx);
+    if !p.helper {
+        crate::coord::restore_inbox(&rt, &shared, &agent).await;
+    }
     if handle.project.watch() && !p.helper {
         *handle.watcher.lock() = crate::watch::spawn(handle.clone(), rt.clone(), shared.clone());
     }
@@ -612,7 +615,14 @@ async fn run_turn(shared: &Shared, rt: &RoomRuntime, h: &AgentHandle, text: Opti
         ));
     }
     let _busy = h.busy.lock().await;
-    let (mut extra, hops) = crate::coord::turn_boundary(&mut *rt.ctx.lock().await, h.agent.id);
+    let (mut extra, hops) = {
+        let mut ctx = rt.ctx.lock().await;
+        let r = crate::coord::turn_boundary(&mut ctx, h.agent.id);
+        if r.0.is_some() {
+            crate::coord::persist_inboxes(&mut ctx, shared);
+        }
+        r
+    };
     if let Some(b) = h.brief.lock().await.take() {
         extra = Some(match extra {
             Some(x) => format!("[Polyph] Handoff:\n{b}\n\n{x}"),
@@ -680,12 +690,13 @@ pub async fn stop(shared: &Shared, agents: &Agents, rt: &RoomRuntime, id: Object
     {
         let mut ctx = rt.ctx.lock().await;
         ctx.coord.wakers.remove(&id);
-        ctx.coord.inboxes.remove(&id);
         let mine: Vec<ObjectId> =
             ctx.core.claims.all().into_iter().filter(|c| c.owner.id == id).map(|c| c.id).collect();
         let fx = ctx.core.release_claims(&mine);
         apply(rt, &mut ctx, shared, fx).await;
     }
+    // Unread messages wait for the next agent with this label.
+    crate::coord::save_inbox(rt, shared, &h.agent).await;
     publish(rt, shared, &h.agent, AgentEventKind::Stopped { reason: "stopped".into() }).await;
     if !h.helper {
         crate::feed::log(

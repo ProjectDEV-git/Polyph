@@ -16,3 +16,5 @@ activity-overlap = { $agent } แก้ไข { $path } ซึ่ง { $holder }
 activity-thread-created = เริ่มเธรด { $title }
 activity-whiteboard-created = สร้างไวต์บอร์ด { $name }
 activity-terminal-opened = เปิดเทอร์มินัล { $title }
+activity-agent-connected = เชื่อมต่อ { $client }
+activity-task-finished = ทำงานเสร็จ: { $summary }

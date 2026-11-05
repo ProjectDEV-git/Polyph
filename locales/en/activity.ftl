@@ -16,3 +16,5 @@ activity-overlap = { $agent } changed { $path }, which { $holder } holds
 activity-thread-created = started the thread { $title }
 activity-whiteboard-created = created the whiteboard { $name }
 activity-terminal-opened = opened the terminal { $title }
+activity-agent-connected = connected { $client }
+activity-task-finished = finished a task: { $summary }

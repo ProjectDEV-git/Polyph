@@ -230,6 +230,8 @@ pub async fn apply(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, effects
                     }
                     RoomEvent::Inbox { message, for_me: true } => {
                         ctx.coord.deliver(message.clone());
+                        // On disk at once, so a restart does not lose it.
+                        crate::coord::persist_inboxes(ctx, shared);
                     }
                     RoomEvent::ClaimRevoked { claim, winner } if claim.owner.device == ctx.core.me => {
                         ctx.coord.notice(

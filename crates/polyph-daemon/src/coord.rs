@@ -69,6 +69,9 @@ pub struct Coord {
     sent: HashMap<(ObjectId, ObjectId), VecDeque<i64>>,
     /// Wake times per agent.
     wakes: HashMap<ObjectId, VecDeque<i64>>,
+    /// Unread messages for agents that are not running here now, by label,
+    /// kept on disk so they survive restarts (loaded on first use).
+    parked: Option<HashMap<String, Vec<InboxMessage>>>,
 }
 
 impl Coord {
@@ -131,6 +134,88 @@ impl Coord {
         q.push_back(now);
         true
     }
+}
+
+fn inbox_file(shared: &Shared, room: polyph_proto::ids::RoomId) -> std::path::PathBuf {
+    shared.paths.home.join("inboxes").join(format!("{}.inbox", room.to_hex()))
+}
+
+fn load_parked<'a>(ctx: &'a mut RoomCtx, shared: &Shared) -> &'a mut HashMap<String, Vec<InboxMessage>> {
+    let room = ctx.core.id;
+    ctx.coord.parked.get_or_insert_with(|| {
+        let aad = format!("inbox:{}", room.to_hex());
+        std::fs::read(inbox_file(shared, room))
+            .ok()
+            .and_then(|b| shared.key.open(aad.as_bytes(), &b).ok())
+            .and_then(|pt| polyph_proto::codec::from_cbor(&pt).ok())
+            .unwrap_or_default()
+    })
+}
+
+/// Writes every unread message of this room's agents to disk: those of
+/// running agents and those parked for agents that are not running.
+pub fn persist_inboxes(ctx: &mut RoomCtx, shared: &Shared) {
+    let mut all = load_parked(ctx, shared).clone();
+    for inbox in ctx.coord.inboxes.values() {
+        for m in &inbox.unread {
+            all.entry(m.to.label.clone()).or_default().push(m.clone());
+        }
+    }
+    all.retain(|_, v| !v.is_empty());
+    let room = ctx.core.id;
+    let path = inbox_file(shared, room);
+    if all.is_empty() {
+        let _ = std::fs::remove_file(&path);
+        return;
+    }
+    let aad = format!("inbox:{}", room.to_hex());
+    let sealed = polyph_proto::codec::to_cbor(&all).ok().and_then(|b| shared.key.seal(aad.as_bytes(), &b).ok());
+    if let Some(sealed) = sealed {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = crate::paths::write_private(&path, &sealed);
+    }
+}
+
+/// Parks an agent's unread messages under its label (it is stopping).
+pub async fn save_inbox(rt: &RoomRuntime, shared: &Shared, agent: &AgentRef) {
+    let mut ctx = rt.ctx.lock().await;
+    let unread: Vec<InboxMessage> =
+        ctx.coord.inboxes.remove(&agent.id).map(|i| i.unread.into_iter().collect()).unwrap_or_default();
+    if !unread.is_empty() {
+        load_parked(&mut ctx, shared).entry(agent.label.clone()).or_default().extend(unread);
+    }
+    persist_inboxes(&mut ctx, shared);
+}
+
+/// Hands a starting agent the messages that waited for its label: parked
+/// ones and ones that arrived for an earlier agent of that label.
+pub async fn restore_inbox(rt: &RoomRuntime, shared: &Shared, agent: &AgentRef) {
+    let mut ctx = rt.ctx.lock().await;
+    let mut msgs = load_parked(&mut ctx, shared).remove(&agent.label).unwrap_or_default();
+    let stale: Vec<ObjectId> = ctx
+        .coord
+        .inboxes
+        .iter()
+        .filter(|(id, i)| **id != agent.id && i.unread.iter().any(|m| m.to.label == agent.label))
+        .map(|(id, _)| *id)
+        .collect();
+    for id in stale {
+        if let Some(i) = ctx.coord.inboxes.remove(&id) {
+            msgs.extend(i.unread);
+        }
+    }
+    if msgs.is_empty() {
+        return;
+    }
+    msgs.sort_by_key(|m| m.at);
+    let inbox = ctx.coord.inboxes.entry(agent.id).or_default();
+    for mut m in msgs {
+        m.to = agent.clone();
+        inbox.unread.push_back(m);
+    }
+    persist_inboxes(&mut ctx, shared);
 }
 
 /// Text appended to a prompt at a turn boundary: Polyph notices and unread
@@ -288,7 +373,7 @@ pub async fn internal(
         Ok(c) => c,
         Err(_) => return (400, br#"{"error":"bad request"}"#.to_vec()),
     };
-    let out = call_tool(&h, &rt, &shared, &call.tool, &call.args).await;
+    let out = call_tool(&h.caller(), &rt, &shared, &call.tool, &call.args).await;
     (200, serde_json::to_vec(&out).unwrap_or_default())
 }
 
@@ -296,7 +381,7 @@ fn constant_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-pub async fn call_tool(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, tool: &str, args: &Value) -> ToolOutput {
+pub async fn call_tool(h: &Caller, rt: &RoomRuntime, shared: &Shared, tool: &str, args: &Value) -> ToolOutput {
     let r = match tool {
         tools::CLAIM => claim(h, rt, shared, args).await,
         tools::RELEASE => release(h, rt, shared, args).await,
@@ -304,13 +389,14 @@ pub async fn call_tool(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, tool:
         tools::TEAM => Ok(team_state(&*rt.ctx.lock().await, shared.clock.now())),
         tools::ASK => ask(h, rt, shared, args).await,
         tools::REPLY => reply(h, rt, shared, args).await,
-        tools::INBOX => Ok(read_inbox(h, rt).await),
+        tools::INBOX => Ok(read_inbox(h, rt, shared).await),
         tools::REMEMBER => remember(h, rt, shared, args).await,
         tools::RECALL => recall(h, rt, args).await,
         tools::FORGET => forget(rt, shared, args).await,
         tools::TASKS => list_tasks(h, rt, args).await,
         tools::CREATE_TASK => create_task(h, rt, shared, args).await,
         tools::MOVE_TASK => move_task(h, rt, shared, args).await,
+        tools::FINISH if h.external => finish_external(h, rt, shared, args).await,
         tools::FINISH => finish_task(h, shared, args).await,
         tools::WHITEBOARDS => {
             let mut ctx = rt.ctx.lock().await;
@@ -337,7 +423,34 @@ pub async fn call_tool(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, tool:
 
 type ToolResult = Result<ToolOutput, ToolOutput>;
 
-async fn claim(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {
+/// Who is calling a tool: an agent Polyph started, or one the person runs
+/// themselves and connected with `polyph mcp` (see `connect`).
+#[derive(Debug, Clone)]
+pub struct Caller {
+    pub agent: AgentRef,
+    pub task: Option<ObjectId>,
+    /// Folder paths are checked against and relative to.
+    pub worktree: std::path::PathBuf,
+    /// Hops of the agent message that started the current turn.
+    pub hops: u8,
+    /// Connected from outside: no task worktree and no turn boundaries, so
+    /// Polyph cannot commit for it or hand it messages between turns.
+    pub external: bool,
+}
+
+impl AgentHandle {
+    pub fn caller(&self) -> Caller {
+        Caller {
+            agent: self.agent.clone(),
+            task: self.task,
+            worktree: self.worktree.clone(),
+            hops: self.trigger_hops.load(std::sync::atomic::Ordering::Relaxed),
+            external: false,
+        }
+    }
+}
+
+async fn claim(h: &Caller, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {
     #[derive(Deserialize)]
     struct A {
         paths: Vec<String>,
@@ -392,7 +505,7 @@ async fn claim(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, args: &Value)
     Ok(ToolOutput { text, data, error: false })
 }
 
-async fn release(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {
+async fn release(h: &Caller, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {
     #[derive(Deserialize)]
     struct A {
         paths: Option<Vec<String>>,
@@ -500,7 +613,7 @@ pub fn team_state(ctx: &RoomCtx, now: i64) -> ToolOutput {
 }
 
 async fn send(
-    h: &AgentHandle,
+    h: &Caller,
     rt: &RoomRuntime,
     shared: &Shared,
     to: AgentRef,
@@ -508,7 +621,7 @@ async fn send(
     text: &str,
     waiter: Option<oneshot::Sender<InboxMessage>>,
 ) -> Result<(InboxMessage, bool), ToolOutput> {
-    let hops = h.trigger_hops.load(std::sync::atomic::Ordering::Relaxed).saturating_add(1);
+    let hops = h.hops.saturating_add(1);
     let mut ctx = rt.ctx.lock().await;
     let now = shared.clock.now();
     if !ctx.coord.allow_send(h.agent.id, to.id, now) {
@@ -530,7 +643,7 @@ async fn send(
     Ok((m, hops < MAX_HOPS))
 }
 
-async fn ask(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {
+async fn ask(h: &Caller, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {
     #[derive(Deserialize)]
     struct A {
         to: String,
@@ -566,7 +679,7 @@ async fn ask(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, args: &Value) -
     }
 }
 
-async fn reply(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {
+async fn reply(h: &Caller, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {
     #[derive(Deserialize)]
     struct A {
         message_id: String,
@@ -593,14 +706,22 @@ async fn reply(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, args: &Value)
     Ok(ToolOutput::ok(format!("Replied to {}.", to.label), json!({ "id": m.id.to_hex() })))
 }
 
-async fn read_inbox(h: &AgentHandle, rt: &RoomRuntime) -> ToolOutput {
+async fn read_inbox(h: &Caller, rt: &RoomRuntime, shared: &Shared) -> ToolOutput {
     let mut ctx = rt.ctx.lock().await;
-    let msgs = ctx.coord.inboxes.get_mut(&h.agent.id).map(|i| i.take_unread()).unwrap_or_default();
-    if msgs.is_empty() {
+    let mut msgs = ctx.coord.inboxes.get_mut(&h.agent.id).map(|i| i.take_unread()).unwrap_or_default();
+    let notices = ctx.coord.inboxes.get_mut(&h.agent.id).map(|i| std::mem::take(&mut i.notices)).unwrap_or_default();
+    if !msgs.is_empty() {
+        persist_inboxes(&mut ctx, shared);
+    }
+    if msgs.is_empty() && notices.is_empty() {
         return ToolOutput::ok("No new messages.", json!({ "messages": [] }));
     }
     let mut text = String::from("New messages:");
+    for n in &notices {
+        text.push_str(&format!("\n- [Polyph] {n}"));
+    }
     let mut data = vec![];
+    msgs.sort_by_key(|m| m.at);
     for m in &msgs {
         let from = sender_name(&ctx, m);
         text.push_str(&format!("\n- [{}] from {from}: {}", m.id.short(), m.text));
@@ -615,7 +736,7 @@ fn read_text(worktree: &Path, rel: &str) -> Option<String> {
     std::fs::read_to_string(worktree.join(rel)).ok()
 }
 
-async fn remember(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {
+async fn remember(h: &Caller, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {
     #[derive(Deserialize)]
     struct A {
         path: String,
@@ -669,7 +790,7 @@ pub fn placed_notes(all: &[MemoryNote], path: &str, worktree: &Path) -> Vec<(Mem
         .collect()
 }
 
-fn list_skills(h: &AgentHandle, shared: &Shared) -> ToolOutput {
+fn list_skills(h: &Caller, shared: &Shared) -> ToolOutput {
     let all = polyph_plugins::skills::discover(Some(&h.worktree), &shared.paths.home.join("skills"));
     if all.is_empty() {
         return ToolOutput::ok("No skills in this project.", json!({ "skills": [] }));
@@ -681,7 +802,7 @@ fn list_skills(h: &AgentHandle, shared: &Shared) -> ToolOutput {
     ToolOutput::ok(text, json!({ "skills": all }))
 }
 
-fn read_skill(h: &AgentHandle, shared: &Shared, args: &Value) -> ToolResult {
+fn read_skill(h: &Caller, shared: &Shared, args: &Value) -> ToolResult {
     #[derive(Deserialize)]
     struct A {
         name: String,
@@ -692,7 +813,7 @@ fn read_skill(h: &AgentHandle, shared: &Shared, args: &Value) -> ToolResult {
     Ok(ToolOutput::ok(body, json!({ "name": s.name, "source": s.source })))
 }
 
-async fn recall(h: &AgentHandle, rt: &RoomRuntime, args: &Value) -> ToolResult {
+async fn recall(h: &Caller, rt: &RoomRuntime, args: &Value) -> ToolResult {
     #[derive(Deserialize)]
     struct A {
         path: Option<String>,
@@ -818,7 +939,7 @@ mod tests {
     }
 }
 
-async fn list_tasks(h: &AgentHandle, rt: &RoomRuntime, args: &Value) -> ToolResult {
+async fn list_tasks(h: &Caller, rt: &RoomRuntime, args: &Value) -> ToolResult {
     #[derive(Deserialize)]
     struct A {
         column: Option<String>,
@@ -870,7 +991,7 @@ async fn list_tasks(h: &AgentHandle, rt: &RoomRuntime, args: &Value) -> ToolResu
     Ok(ToolOutput::ok(text, json!({ "tasks": data })))
 }
 
-async fn create_task(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {
+async fn create_task(h: &Caller, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {
     #[derive(Deserialize)]
     struct A {
         title: String,
@@ -910,7 +1031,7 @@ async fn create_task(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, args: &
     Ok(ToolOutput::ok(format!("Added task [{}] to the backlog.", &id[..8]), json!({ "id": id })))
 }
 
-async fn move_task(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {
+async fn move_task(h: &Caller, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {
     #[derive(Deserialize)]
     struct A {
         id: String,
@@ -948,7 +1069,7 @@ async fn move_task(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, args: &Va
     Ok(ToolOutput::ok(format!("Moved \"{}\" to {}.", c.title, a.column), json!({ "id": c.id, "column": a.column })))
 }
 
-async fn finish_task(h: &AgentHandle, shared: &Shared, args: &Value) -> ToolResult {
+async fn finish_task(h: &Caller, shared: &Shared, args: &Value) -> ToolResult {
     #[derive(Deserialize)]
     struct A {
         summary: String,
@@ -975,6 +1096,62 @@ async fn finish_task(h: &AgentHandle, shared: &Shared, args: &Value) -> ToolResu
     ))
 }
 
+/// `finish_task` from an agent the person runs: it works in their own
+/// checkout, so Polyph does not commit; it releases the claims and records
+/// the summary on the task card for whoever comes next.
+async fn finish_external(h: &Caller, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {
+    #[derive(Deserialize)]
+    struct A {
+        summary: String,
+    }
+    let a: A = arg(args)?;
+    let summary = polyph_core::redact::redact(a.summary.trim()).into_owned();
+    let released = {
+        let mut ctx = rt.ctx.lock().await;
+        let mine: Vec<_> = ctx.core.claims.all().into_iter().filter(|c| c.owner.id == h.agent.id).collect();
+        let ids: Vec<ObjectId> = mine.iter().map(|c| c.id).collect();
+        let fx = ctx.core.release_claims(&ids);
+        apply(rt, &mut ctx, shared, fx).await;
+        mine.len()
+    };
+    let card = match h.task {
+        Some(t) => Some(t.to_hex()),
+        None => assigned_card(rt, &h.agent.label).await,
+    };
+    if let Some(card) = &card {
+        crate::tasks::update_card(
+            rt,
+            shared,
+            card,
+            Some("review"),
+            &[(polyph_proto::crdt::card::SUMMARY, Some(summary.clone()))],
+        )
+        .await;
+    }
+    crate::feed::log(rt, shared, "task_finished", Some(&h.agent.label), json!({ "card": card, "summary": summary }))
+        .await;
+    let mut text = format!("Released {released} claim(s).");
+    if card.is_some() {
+        text.push_str(" Your summary is on the task card, which is now in review.");
+    }
+    text.push_str(" You work in your own checkout, so commit and push your changes with git as you normally would.");
+    Ok(ToolOutput::ok(text, json!({ "released": released, "card": card })))
+}
+
+/// The card assigned to an agent label and still open, if exactly one.
+pub async fn assigned_card(rt: &RoomRuntime, label: &str) -> Option<String> {
+    let mut ctx = rt.ctx.lock().await;
+    let cards = polyph_proto::crdt::Board::new(ctx.core.doc(&DocName::Board)).all_cards();
+    let mine: Vec<_> = cards
+        .into_iter()
+        .filter(|c| c.assignee.as_deref() == Some(label) && !["done", "review"].contains(&c.column.as_str()))
+        .collect();
+    match mine.as_slice() {
+        [c] => Some(c.id.clone()),
+        _ => None,
+    }
+}
+
 /// A `finish_task` call handed to the daemon's worker.
 #[derive(Debug)]
 pub struct FinishJob {
@@ -998,7 +1175,7 @@ async fn read_whiteboard(rt: &RoomRuntime, args: &Value) -> ToolResult {
     ))
 }
 
-async fn draw_diagram(h: &AgentHandle, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {
+async fn draw_diagram(h: &Caller, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {
     #[derive(Deserialize)]
     struct Node {
         id: String,

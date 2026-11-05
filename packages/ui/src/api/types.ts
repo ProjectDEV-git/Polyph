@@ -64,6 +64,8 @@ export interface Card {
   branch: string | null;
   pr: { number?: number; url?: string } | number | null;
   url: string | null;
+  /** What the agent that finished it says it did. */
+  summary?: string | null;
   draft: boolean;
   plan: string | null;
   files: string[];

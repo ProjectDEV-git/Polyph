@@ -70,6 +70,8 @@ pub mod card {
     pub const EXTERNAL: &str = "external";
     /// Link to the issue it came from.
     pub const URL: &str = "url";
+    /// What the agent that finished the task says it did, for late joiners.
+    pub const SUMMARY: &str = "summary";
 }
 
 pub mod activity {
@@ -117,6 +119,8 @@ pub struct CardView {
     pub external: Option<String>,
     #[serde(default)]
     pub url: Option<String>,
+    #[serde(default)]
+    pub summary: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -358,6 +362,7 @@ fn read_card<T: ReadTxn>(m: &MapRef, txn: &T) -> CardView {
         kind: any_str(m.get(txn, card::KIND)),
         draft: any_bool(m.get(txn, card::DRAFT)),
         handoff: any_str(m.get(txn, card::HANDOFF)),
+        summary: any_str(m.get(txn, card::SUMMARY)),
         plan: any_str(m.get(txn, card::PLAN)),
         suggested_assignee: any_str(m.get(txn, card::SUGGESTED_ASSIGNEE)),
         external: any_str(m.get(txn, card::EXTERNAL)),
