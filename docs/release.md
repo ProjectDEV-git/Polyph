@@ -8,7 +8,7 @@ How Polyph is built, signed and published. The pipeline is
 
 | Workflow | Runs on | What it does |
 |---|---|---|
-| **Test** (`test.yml`) | every push to `Main` and `claude/**`, every pull request, by hand | format, lints and unit tests on Linux, macOS and Windows; the hosted service; TypeScript and translations; end-to-end suites (browser client, phone app, VS Code) against a real daemon; the desktop app's build; the packaging path (archive smoke test, `install.sh`, `.vsix`) |
+| **Test** (`test.yml`) | every push to `Main` and `claude/**`, every pull request, by hand | format, lints and unit tests on Linux, macOS and Windows; the hosted service; TypeScript and translations; end-to-end suites (browser client, phone app, VS Code) against a real daemon; the desktop app's build; the packaging path (archive smoke test, `install.sh`, `polyph update` and `polyph uninstall`, `.vsix`) |
 | **Prepare release** (`release-prepare.yml`) | by hand, with a version | sets that version in every manifest and lock file and opens a pull request to `Main` |
 | **Release** (`release.yml`) | a `v*` tag, or by hand | runs **Test**, builds everything below, and with a version opens a draft release; without one it is a dry run |
 

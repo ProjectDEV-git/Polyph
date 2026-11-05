@@ -458,7 +458,13 @@ impl Daemon {
     pub async fn call(self: &Arc<Self>, method: &str, params: Value) -> ApiResult {
         let now = self.shared.clock.now();
         match method {
-            "ping" => ok(json!({ "version": env!("CARGO_PKG_VERSION"), "protocol": polyph_proto::PROTOCOL_VERSION })),
+            "ping" => {
+                // Agents on this device; `polyph update` restarts the daemon only when none are.
+                let agents = self.agents.map.lock().await.len();
+                ok(
+                    json!({ "version": env!("CARGO_PKG_VERSION"), "protocol": polyph_proto::PROTOCOL_VERSION, "agents_running": agents }),
+                )
+            }
             "whoami" => {
                 let cfg = self.shared.config.lock().clone();
                 ok(json!({

@@ -28,6 +28,13 @@ release's `SHA256SUMS`. The desktop app (`.dmg`, `.msi`/`.exe`, `.deb`,
 desktop app carries its own `polyph`. To build from source instead, see
 "How to build and test" in `HANDOFF.md`.
 
+To update later, run `polyph update` (`polyph update --check` only looks).
+It downloads the new release, checks it the same way and restarts the daemon
+on it. `polyph uninstall` removes polyph again and keeps your rooms and
+settings; `polyph uninstall --purge` deletes those too. Both work for
+installs made with these scripts; the desktop app and the VS Code extension
+update with their own installers.
+
 Then, in a git repository:
 
 ```bash
