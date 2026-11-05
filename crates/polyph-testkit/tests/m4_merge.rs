@@ -596,7 +596,9 @@ async fn the_watcher_catches_edits_outside_the_protocol() {
                 "fake-b",
                 json!({ "turns": [
                 [
-                    { "run": { "command": "sed", "args": ["-i", "s/charge/charge2/", "src/lib.rs"] } },
+                    // perl -pi edits in place the same way on GNU and BSD systems
+                    // (BSD sed takes -i's next argument as a backup suffix).
+                    { "run": { "command": "perl", "args": ["-pi", "-e", "s/charge/charge2/", "src/lib.rs"] } },
                     { "run": { "command": "cp", "args": ["src/lib.rs", "src/new.rs"] } }
                 ],
                 [ { "echo_prompt": true } ]
@@ -604,7 +606,7 @@ async fn the_watcher_catches_edits_outside_the_protocol() {
             ),
         ],
         // Declared checks run without asking (commands with shell operators never do).
-        "checks = [\"sed -i s/charge/charge2/ src/lib.rs\", \"cp src/lib.rs src/new.rs\"]\n",
+        "checks = [\"perl -pi -e s/charge/charge2/ src/lib.rs\", \"cp src/lib.rs src/new.rs\"]\n",
     )
     .await;
     let r = repo.path();
