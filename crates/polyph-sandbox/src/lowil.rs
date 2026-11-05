@@ -164,11 +164,27 @@ pub fn quote_arg(arg: &str) -> String {
     out
 }
 
+/// Finds `prog` on PATH. Callers that clear the environment (plugin hooks)
+/// also drop PATHEXT, without which `which` will not guess an extension, so
+/// the usual ones are tried then.
+fn find_program(prog: &str) -> Result<PathBuf, String> {
+    match which::which(prog) {
+        Ok(p) => Ok(p),
+        Err(e) if std::env::var_os("PATHEXT").is_none() && Path::new(prog).extension().is_none() => {
+            [".exe", ".cmd", ".bat", ".com"]
+                .iter()
+                .find_map(|ext| which::which(format!("{prog}{ext}")).ok())
+                .ok_or_else(|| format!("cannot find {prog}: {e}"))
+        }
+        Err(e) => Err(format!("cannot find {prog}: {e}")),
+    }
+}
+
 /// The program to start and its full command line. Batch files (npm's
 /// `.cmd` shims, for example) run through `cmd.exe`.
 fn command_line(cmd: &[String]) -> Result<(PathBuf, String), String> {
     let Some(prog) = cmd.first() else { return Err("no command given".into()) };
-    let resolved = which::which(prog).map_err(|e| format!("cannot find {prog}: {e}"))?;
+    let resolved = find_program(prog)?;
     let quoted: Vec<String> = cmd[1..].iter().map(|a| quote_arg(a)).collect();
     let is_batch = resolved
         .extension()
