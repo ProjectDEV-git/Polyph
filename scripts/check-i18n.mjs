@@ -7,8 +7,9 @@
 // and strings with no letters (punctuation, numbers, symbols).
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("..", import.meta.url));
 const allowFile = join(root, "scripts/i18n-allowlist.txt");
 const allow = existsSync(allowFile)
   ? readFileSync(allowFile, "utf8")

@@ -14,6 +14,7 @@ import { createRequire } from "node:module";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // The test daemon gets a free port (never a stale daemon's default one) and
 // commands wait until it has written daemon.json.
@@ -25,7 +26,7 @@ async function waitForFile(file) {
   throw new Error(`${file} did not appear`);
 }
 
-const root = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("..", import.meta.url));
 const require = createRequire(import.meta.url);
 const { chromium, devices } = require("playwright");
 const bin = process.env.POLYPH_BIN ?? join(root, "target/debug/polyph");

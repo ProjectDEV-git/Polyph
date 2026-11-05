@@ -3,9 +3,10 @@
 // hard-coded text and shares the product's four locales.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = new URL("../../..", import.meta.url).pathname;
-const here = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("../../..", import.meta.url));
+const here = fileURLToPath(new URL("..", import.meta.url));
 // Polyph locale -> VS Code display language id.
 const LANGS = { en: "", th: "th", ja: "ja", "zh-Hans": "zh-cn" };
 const manifest = readFileSync(join(here, "package.json"), "utf8");

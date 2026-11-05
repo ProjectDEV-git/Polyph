@@ -10,6 +10,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runTests } from "@vscode/test-electron";
+import { fileURLToPath } from "node:url";
 
 // The test daemon gets a free port (never a stale daemon's default one) and
 // commands wait until it has written daemon.json.
@@ -21,7 +22,7 @@ async function waitForFile(file) {
   throw new Error(`${file} did not appear`);
 }
 
-const here = new URL("../..", import.meta.url).pathname;
+const here = fileURLToPath(new URL("../..", import.meta.url));
 const root = join(here, "../..");
 const bin = process.env.POLYPH_BIN ?? join(root, "target/debug/polyph");
 const home = mkdtempSync(join(tmpdir(), "polyph-e2e-vscode-"));

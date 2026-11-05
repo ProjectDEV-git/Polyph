@@ -7,8 +7,9 @@
 //   node scripts/release/version.mjs --check v0.2.0   fail unless all equal the tag
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = new URL("../..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+const root = fileURLToPath(new URL("../..", import.meta.url));
 
 const toml = (file, pattern) => ({
   file,
