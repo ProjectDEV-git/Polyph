@@ -419,9 +419,10 @@ mod seatbelt_tests {
         assert!(!p.contains("/private/var/folders\""), "shared temp must not be writable:\n{p}");
         assert!(!p.contains("/private/tmp\""), "shared temp must not be writable:\n{p}");
         for dir in [&worktree, &tmp] {
-            assert!(p.contains(&format!("(subpath \"{}\")", dir.display())), "{p}");
+            // Compared in the profile's quoted form (backslashes doubled).
+            assert!(p.contains(&format!("(subpath \"{}\")", sb_quote(dir))), "{p}");
             let real = dir.canonicalize().unwrap();
-            assert!(p.contains(&format!("(subpath \"{}\")", real.display())), "{p}");
+            assert!(p.contains(&format!("(subpath \"{}\")", sb_quote(&real))), "{p}");
         }
     }
 }
