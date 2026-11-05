@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, HANDLE, HANDLE_FLAG_INHERIT, LocalFree, SetHandleInformation,
+    CloseHandle, GetLastError, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, LocalFree, SetHandleInformation,
 };
 use windows_sys::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW, ConvertStringSidToSidW, SDDL_REVISION_1, SE_FILE_OBJECT,
@@ -260,6 +260,28 @@ pub fn run(writable: &[PathBuf], cmd: &[String]) -> Result<i32, String> {
     }
     drop(job);
     Ok(code as i32)
+}
+
+/// Stops this process's standard handles from being inherited by children
+/// it starts from now on.
+///
+/// Windows hands every inheritable handle to a child, even when its own
+/// stdio is set to null. A long-lived child (the daemon started in the
+/// background) would then keep the caller's stdout pipe open, and whoever
+/// reads `polyph`'s output until it closes would wait forever. Children
+/// that do want the console still get it: `Stdio::inherit` duplicates the
+/// handle as inheritable for that one child.
+pub fn stop_std_handle_inheritance() {
+    for id in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        // SAFETY: GetStdHandle has no preconditions; SetHandleInformation
+        // only changes a flag and fails harmlessly on a null or bad handle.
+        unsafe {
+            let h = GetStdHandle(id);
+            if !h.is_null() && h != INVALID_HANDLE_VALUE {
+                SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
