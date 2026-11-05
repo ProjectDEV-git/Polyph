@@ -1,7 +1,10 @@
-# The packaged extension holds only the bundles, media and manifest files.
+# Only the bundles, the manifest and its translations ship in the .vsix.
 **
-!dist/**
+!dist/extension.cjs
 !media/**
 !package.json
 !package.nls*.json
+!README.md
+!CHANGELOG.md
 !LICENSE
+media/**/*.map

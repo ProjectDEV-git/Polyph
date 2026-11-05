@@ -1,0 +1,11 @@
+# Example relay configuration (polyph-relay --config relay.toml).
+# Environment variables (POLYPH_RELAY_*) override these.
+bind = "127.0.0.1:8787"
+database = "/var/lib/polyph-relay/relay.db"
+public_url = "wss://relay.example.com/ws"
+metrics = false
+
+[limits]
+# Unset means unlimited, the default for self-hosted relays.
+# max_members = 10
+# retention_days = 30

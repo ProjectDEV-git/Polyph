@@ -1,0 +1,254 @@
+name: Release
+
+# Builds everything that ships and, when asked to publish, opens a *draft*
+# GitHub release that a person reviews and publishes. See docs/release.md.
+#
+# - Push a tag such as v0.2.0: build and draft that release.
+# - Run it from the Actions tab with a version: build and draft a release of
+#   the chosen commit; the tag is created when the draft is published.
+# - Run it from the Actions tab with no version: build and check every file,
+#   publish nothing (a dry run).
+#
+# Nothing is published unless the full test workflow passes.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, for example 0.2.0 (empty for a dry run)
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="$GITHUB_REF_NAME"
+          elif [[ -n "$INPUT_VERSION" ]]; then
+            tag="v${INPUT_VERSION#v}"
+          else
+            tag=""
+          fi
+          if [[ -n "$tag" ]]; then
+            node scripts/release/version.mjs --check "$tag"
+            node scripts/release/notes.mjs "$tag" > /dev/null
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Dry run: everything is built and checked, nothing is published."
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$(node -p "require('./apps/web/package.json').version")" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Test
+    uses: ./.github/workflows/test.yml
+
+  web:
+    name: Website, browser client and phone app
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          targets: wasm32-unknown-unknown
+          cache-key: web
+      - uses: ./.github/actions/wasm-bindgen
+      - uses: ./.github/actions/setup-node
+      - run: pnpm --filter @polyph/web build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web
+          path: apps/web/out
+          if-no-files-found: error
+
+  build:
+    name: ${{ matrix.target }}
+    needs: [version, web]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux builds run on the oldest supported Ubuntu for a low glibc floor.
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, bundles: "deb,rpm,appimage" }
+          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu, bundles: "deb,rpm" }
+          - { os: macos-15-intel, target: x86_64-apple-darwin, bundles: "app,dmg" }
+          - { os: macos-15, target: aarch64-apple-darwin, bundles: "app,dmg" }
+          - { os: windows-2022, target: x86_64-pc-windows-msvc, bundles: "nsis,msi" }
+    runs-on: ${{ matrix.os }}
+    env:
+      # macOS signing and notarization (Tauri reads these); unset = unsigned.
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/desktop-deps
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: ${{ matrix.target }}
+          workspaces: |
+            . -> target
+            apps/desktop/src-tauri -> target
+      - uses: actions/download-artifact@v4
+        with:
+          name: web
+          path: apps/web/out
+      - name: Build polyph and polyph-relay
+        run: cargo build --profile dist --locked -p polyph-cli -p polyph-relay
+      - name: Pack the archive
+        run: node scripts/release/package.mjs --profile dist --version ${{ needs.version.outputs.version }}
+      - name: Smoke test the archive
+        shell: bash
+        run: scripts/release/smoke.sh "$(ls dist/polyph-*-${{ matrix.target }}.tar.gz dist/polyph-*-${{ matrix.target }}.zip 2>/dev/null | head -n1)"
+      - uses: ./.github/actions/setup-node
+      - name: Desktop app with polyph inside
+        shell: bash
+        run: |
+          node scripts/release/desktop-prep.mjs --profile dist
+          cd apps/desktop
+          pnpm tauri build --config src-tauri/tauri.release.conf.json --bundles ${{ matrix.bundles }}
+      - name: Collect the desktop packages
+        shell: bash
+        run: |
+          shopt -s nullglob
+          b=apps/desktop/src-tauri/target/release/bundle
+          for f in $b/deb/*.deb $b/rpm/*.rpm $b/appimage/*.AppImage $b/dmg/*.dmg $b/msi/*.msi $b/nsis/*.exe; do
+            cp "$f" dist/
+          done
+          if [ -d "$b/macos" ]; then
+            (cd "$b/macos" && tar -czf "$GITHUB_WORKSPACE/dist/Polyph-${{ needs.version.outputs.version }}-${{ matrix.target }}.app.tar.gz" Polyph.app)
+          fi
+          ls -la dist
+      - name: Relay binary for the container image
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p image
+          arch=$([ "${{ matrix.target }}" = x86_64-unknown-linux-gnu ] && echo amd64 || echo arm64)
+          cp target/dist/polyph-relay "image/polyph-relay-$arch"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: image-${{ matrix.target }}
+          path: image/*
+
+  vscode:
+    name: VS Code extension
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node
+      - run: pnpm --filter polyph-vscode package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-vscode
+          path: dist/*.vsix
+          if-no-files-found: error
+
+  release:
+    name: Draft release, image and provenance
+    needs: [version, test, build, vscode]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      TAG: ${{ needs.version.outputs.tag }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: image-*
+          path: image
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: |
+          rm -f *.sha256
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: image
+        shell: bash
+        run: echo "name=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/polyph-relay" >> "$GITHUB_OUTPUT"
+      - id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: image
+          file: deploy/relay/Dockerfile.release
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ needs.version.outputs.version }}
+            ${{ steps.image.outputs.name }}:latest
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node scripts/release/notes.mjs "$TAG" > notes.md
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            where=(--verify-tag)
+          else
+            # Started from the Actions tab: the tag is made when the draft is published.
+            where=(--target "$GITHUB_SHA")
+          fi
+          gh release create "$TAG" dist/* --draft "${where[@]}" \
+            --title "Polyph $VERSION" --notes-file notes.md

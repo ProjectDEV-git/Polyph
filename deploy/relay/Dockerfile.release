@@ -1,0 +1,18 @@
+# The relay image the release workflow publishes: the binaries it already
+# built and smoke-tested, one per architecture, in a small runtime image.
+# Context: a directory holding polyph-relay-amd64 and polyph-relay-arm64.
+# An empty /data owned by the image's non-root user (65532); named volumes
+# start with this ownership.
+FROM busybox:1.37 AS data
+RUN mkdir -p /data && chown 65532:65532 /data
+
+FROM gcr.io/distroless/cc-debian12:nonroot
+COPY --from=data --chown=65532:65532 /data /data
+ARG TARGETARCH
+COPY --chmod=755 polyph-relay-${TARGETARCH} /usr/local/bin/polyph-relay
+ENV POLYPH_RELAY_BIND=0.0.0.0:8787 \
+    POLYPH_RELAY_DATABASE=/data/relay.db
+VOLUME /data
+EXPOSE 8787
+USER nonroot
+ENTRYPOINT ["/usr/local/bin/polyph-relay"]

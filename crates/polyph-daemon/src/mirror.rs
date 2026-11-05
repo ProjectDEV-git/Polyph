@@ -410,7 +410,7 @@ fn start_watcher(root: PathBuf, rt: Arc<RoomRuntime>, shared: Arc<Shared>) -> Op
 
 fn dir_param(dir: &Path) -> Result<PathBuf, ApiError> {
     std::fs::create_dir_all(dir)?;
-    dir.canonicalize().map_err(|e| ApiError::BadRequest(format!("{}: {e}", dir.display())))
+    polyph_git::canonical(dir).map_err(|e| ApiError::BadRequest(format!("{}: {e}", dir.display())))
 }
 
 /// Makes this device the host of the room's shared working copy at `dir`.

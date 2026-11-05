@@ -7,7 +7,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./core": "./src/core.ts",
-    "./styles.css": "./src/styles.css"
+    "./styles.css": "./src/styles.css",
+    "./voice": "./src/voice.ts",
+    "./mark": "./src/components/mark.tsx"
   },
   "scripts": {
     "gen": "node ../../scripts/bundle-locales.mjs",

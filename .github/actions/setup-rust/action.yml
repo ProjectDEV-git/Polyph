@@ -1,0 +1,26 @@
+name: Set up Rust
+description: Stable Rust with clippy and rustfmt, extra targets, and a build cache.
+inputs:
+  targets:
+    description: Extra compilation targets, comma-separated (for example wasm32-unknown-unknown).
+    required: false
+    default: ""
+  cache-key:
+    description: Extra key that separates this job's cache from others.
+    required: false
+    default: ""
+  workspaces:
+    description: Cargo workspaces to cache, in rust-cache's "path -> target" form.
+    required: false
+    default: ". -> target"
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy, rustfmt
+        targets: ${{ inputs.targets }}
+    - uses: Swatinem/rust-cache@v2
+      with:
+        key: ${{ inputs.cache-key }}
+        workspaces: ${{ inputs.workspaces }}

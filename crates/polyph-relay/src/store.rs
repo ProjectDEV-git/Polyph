@@ -183,6 +183,32 @@ impl Store {
         Ok(r.rows_affected())
     }
 
+    /// Rooms that hold snapshots, with their registered owner when known.
+    pub async fn snapshot_rooms(&self) -> anyhow::Result<Vec<(RoomId, Option<DeviceId>)>> {
+        let rows = sqlx::query(
+            "SELECT DISTINCT s.room AS room, r.owner AS owner FROM snapshots s LEFT JOIN rooms r ON r.room = s.room",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|r| {
+                let room: Vec<u8> = r.try_get("room")?;
+                let owner: Option<Vec<u8>> = r.try_get("owner")?;
+                Ok((RoomId::from_slice(&room)?, owner.map(|o| DeviceId::from_slice(&o)).transpose()?))
+            })
+            .collect()
+    }
+
+    /// Deletes one room's snapshots older than `before` and returns how many.
+    pub async fn expire_room_snapshots(&self, room: &RoomId, before: i64) -> anyhow::Result<u64> {
+        let r = sqlx::query("DELETE FROM snapshots WHERE room = ? AND stored_at < ?")
+            .bind(room.0.to_vec())
+            .bind(before)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected())
+    }
+
     pub async fn snapshot_bytes(&self) -> anyhow::Result<i64> {
         let r = sqlx::query("SELECT COALESCE(SUM(LENGTH(blob)), 0) AS n FROM snapshots").fetch_one(&self.pool).await?;
         Ok(r.try_get("n")?)

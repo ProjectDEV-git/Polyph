@@ -1,0 +1,32 @@
+# polyph-cloud configuration for deploy/cloud/compose.yaml.
+# Secrets (mail key, Stripe keys) come from the environment, never this file.
+api_bind = "0.0.0.0:8790"
+database = "/data/cloud.db"
+site_url = "https://polyph.dev"
+allowed_origins = ["https://polyph.dev"]
+
+[relay]
+bind = "0.0.0.0:8787"
+database = "/data/relay.db"
+public_url = "wss://relay.polyph.dev/ws"
+
+[mail]
+endpoint = "https://api.resend.com/emails"
+from = "Polyph <signin@polyph.dev>"
+
+# [github]
+# client_id = "Iv1.0000000000000000"   # an OAuth app with the device flow on
+
+# Prices are undecided: leave `price` unset and the site says
+# "Pricing coming soon". Without `stripe_price` a plan cannot be bought.
+[plans.free]
+retention_days = 7
+spectator_links = 1
+
+[plans.pro]
+retention_days = 365
+# stripe_price = "price_..."
+
+[plans.team]
+retention_days = 365
+# stripe_price = "price_..."

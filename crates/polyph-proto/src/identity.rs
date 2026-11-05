@@ -23,6 +23,8 @@ pub mod ctx {
     pub const ROOM_END: &str = "room-end";
     pub const USAGE: &str = "usage-summary";
     pub const SPECTATOR: &str = "spectator";
+    /// A device proving it belongs to a hosted account (the cloud service).
+    pub const ACCOUNT_LINK: &str = "account-link";
 }
 
 fn domain_message(context: &str, msg: &[u8]) -> Vec<u8> {

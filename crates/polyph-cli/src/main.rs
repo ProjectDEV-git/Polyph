@@ -2,6 +2,7 @@
 //! daemon, starting it when needed. User-facing text comes from
 //! `locales/*/cli.ftl`.
 
+mod account;
 mod client;
 mod work;
 
@@ -232,6 +233,22 @@ enum Cmd {
     Budget {
         #[command(subcommand)]
         cmd: BudgetCmd,
+    },
+    Login {
+        /// Sign in with this email address (you get a code by email).
+        #[arg(long)]
+        email: Option<String>,
+        /// Sign in with GitHub instead of email.
+        #[arg(long, conflicts_with = "email")]
+        github: bool,
+        /// Account service URL (default: the `cloud` setting).
+        #[arg(long)]
+        server: Option<String>,
+    },
+    Logout,
+    Cloud {
+        #[command(subcommand)]
+        cmd: account::CloudCmd,
     },
 }
 
@@ -952,7 +969,7 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
             }
         }
         Cmd::Plugin { cmd: PluginCmd::Add { path, replace } } => {
-            let path = path.canonicalize()?;
+            let path = polyph_git::canonical(&path)?;
             let v = call(&mut api, "plugin.add", json!({ "path": path, "replace": replace })).await?;
             if ctx.json {
                 ctx.print_json(&v);
@@ -999,7 +1016,7 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                     }
                 }
                 SkillsCmd::Add { path } => {
-                    let from = path.canonicalize()?;
+                    let from = polyph_git::canonical(&path)?;
                     let v = call(&mut api, "skills.add", json!({ "cwd": cwd, "from": from })).await?;
                     ctx.out(tr!(l, "skill-added", name = v["name"].as_str().unwrap_or_default()));
                 }
@@ -1064,7 +1081,7 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
             }
         }
         Cmd::AgentHost { cmd: HostCmd::Workdir { dir } } => {
-            let dir = dir.canonicalize()?;
+            let dir = polyph_git::canonical(&dir)?;
             call(&mut api, "config.set", json!({ "key": "host_workdir", "value": dir })).await?;
             ctx.out(l.t("config-set"));
         }
@@ -1133,6 +1150,9 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
         Cmd::Memory { path, room } => work::memory(ctx, &mut api, path, room).await?,
         Cmd::Github { cmd } => work::github(ctx, &mut api, cmd).await?,
         Cmd::Linear { cmd } => work::linear(ctx, &mut api, cmd).await?,
+        Cmd::Login { email, github, server } => account::login(ctx, &mut api, email, github, server).await?,
+        Cmd::Logout => account::logout(ctx, &mut api).await?,
+        Cmd::Cloud { cmd } => account::cloud(ctx, &mut api, cmd).await?,
         Cmd::Webhook { cmd } => work::webhook(ctx, &mut api, cmd).await?,
         Cmd::Mirror { dir, room } => {
             let room = ctx.room(&mut api, room).await?;

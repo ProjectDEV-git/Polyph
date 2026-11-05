@@ -3114,6 +3114,7 @@ dependencies = [
  "futures-util",
  "polyph-agents",
  "polyph-daemon",
+ "polyph-git",
  "polyph-i18n",
  "polyph-mcp",
  "polyph-proto",
@@ -3347,6 +3348,7 @@ dependencies = [
  "tracing",
  "which",
  "win32job",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

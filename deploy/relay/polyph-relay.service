@@ -1,0 +1,49 @@
+# The relay from a release archive, run by systemd with no fixed user.
+#   sudo install -m 755 bin/polyph-relay /usr/local/bin/
+#   sudo cp polyph-relay.service /etc/systemd/system/
+#   sudo systemctl enable --now polyph-relay
+# Put Caddy in front for TLS (deploy/relay/Caddyfile with
+# POLYPH_RELAY_UPSTREAM=127.0.0.1:8787).
+[Unit]
+Description=Polyph relay (forwards end-to-end encrypted room traffic)
+Documentation=https://github.com/ProjectDEV-git/Polyph/blob/Main/docs/self-hosting.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/polyph-relay
+Environment=POLYPH_RELAY_BIND=127.0.0.1:8787
+Environment=POLYPH_RELAY_DATABASE=/var/lib/polyph-relay/relay.db
+# Environment=POLYPH_RELAY_PUBLIC_URL=wss://relay.example.com/ws
+# EnvironmentFile=-/etc/polyph-relay.env
+DynamicUser=yes
+StateDirectory=polyph-relay
+Restart=on-failure
+RestartSec=2s
+LimitNOFILE=65536
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

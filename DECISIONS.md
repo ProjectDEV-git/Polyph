@@ -359,6 +359,69 @@ could not be followed exactly. Newest at the bottom of each section.
   actions (chat posts for now), labeled `plugin/<name>`, and hooks never run
   on plugin posts, so plugins cannot loop on each other.
 
+## Website, accounts and billing (M10)
+
+- **Accounts are about who pays, never about content.** An account links
+  device public keys; the hosted relay maps a room's owner device to that
+  account's plan. Room ids, names and contents never reach the account
+  service.
+- **Devices link by signature.** The service issues a one-time challenge and
+  the device signs `nonce\naccount` with its identity key under a new
+  `account-link` context, so a session token alone cannot claim someone
+  else's device, and no other signature can be replayed as a link.
+- **Sign-in without passwords:** an 8-digit code by email (10 minutes, five
+  tries, five codes per address per hour; stored hashed) or GitHub's device
+  flow, which works from a terminal as well as the website. The GitHub token
+  is used once to read the user id and dropped.
+- **Plans live in config, prices undecided.** The defaults hold only what the
+  brief fixes (Free: rooms 7 days, one spectator link; Pro: one year); Team
+  keeps at least what Pro keeps (inferred). Display prices and Stripe price
+  ids are optional config; without them checkout is refused and every surface
+  says "Pricing coming soon".
+- **Stripe, with the owner in subscription metadata** (`account:<id>` or
+  `team:<id>` and the plan), so webhook events can be applied in any order and
+  replays are ignored by event id. The best active plan across a person's own
+  subscription and their teams' wins.
+- **Mail through a Resend-compatible HTTP endpoint**, configured, rather than
+  SMTP: one small JSON call, no mail library. `dev = true` logs codes instead
+  and cannot be combined with a real endpoint.
+- **Signing out keeps the device linked**, so rooms it owns keep their plan;
+  unlinking is explicit on the account page.
+- **The daemon talks to the service**, not the CLI: the device key and the
+  sealed session live there, and the apps can reuse the same methods later.
+- **One static export for site, client and phone app.** English at the root,
+  other languages under a prefix, every word from `locales/*/site.ftl`. A
+  person's daemon serves the same files and sends its root to `/app/`.
+- **Website direction** from the design-taste-frontend skill ("The well-kept
+  board"), with `DESIGN.md` winning where they disagree (no voice fills,
+  three faces). Details and the checks that ran are in `docs/website.md`.
+
+## Release (M11)
+
+- **Draft releases.** A tag builds everything and opens a draft; a person
+  publishes. Nothing reaches users without someone looking at it.
+- **Archives with a fixed layout** (`bin/`, `share/polyph/web`) on every
+  platform, so the daemon finds its web files the same way everywhere and the
+  install scripts only copy two folders.
+- **Install scripts install into the user's home** (`~/.local`,
+  `%LOCALAPPDATA%\Programs\Polyph`), never system paths, so they work
+  without root and on immutable distributions, and verify `SHA256SUMS`
+  before touching anything.
+- **Provenance over per-file signatures** for the command-line archives:
+  GitHub build attestations (`gh attestation verify`) prove which workflow
+  and commit built a file, with no key to manage. Platform code signing is
+  for the desktop apps, where operating systems check it.
+- **The relay image is built from the release binaries**, not compiled
+  again in Docker: the same bytes that passed the smoke test, and arm64
+  images without emulated compiles. `deploy/relay/Dockerfile` still builds
+  from source for people who prefer that.
+- **The desktop app carries `polyph`** (a Tauri sidecar) and the web files,
+  so it works on a machine with nothing else installed; the overlay config
+  keeps day-to-day `cargo build` of the app independent of a release binary.
+- **Linux builds on Ubuntu 22.04** for a glibc 2.35 floor.
+- **One version for everything**, checked against the tag before anything
+  builds.
+
 ## Skipped work
 
 - **The Nublet provider (M8) was skipped** on 2026-11-04 at the project

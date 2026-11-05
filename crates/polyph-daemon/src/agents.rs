@@ -361,7 +361,7 @@ pub fn mechanism(shared: &Shared, project: &ProjectConfig) -> Result<Mechanism, 
 }
 
 pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p: StartParams) -> ApiResult {
-    let cwd = p.cwd.canonicalize().map_err(|e| ApiError::BadRequest(format!("{}: {e}", p.cwd.display())))?;
+    let cwd = polyph_git::canonical(&p.cwd).map_err(|e| ApiError::BadRequest(format!("{}: {e}", p.cwd.display())))?;
     let task = p.task.as_deref().and_then(|t| ObjectId::from_hex(t).ok());
     // A task gets its own worktree and branch, so agents never share files.
     let task_card = match task {

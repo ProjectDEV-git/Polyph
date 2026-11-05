@@ -6,6 +6,36 @@ end-to-end-encrypted room: agents claim files before editing, talk to each
 other and get work split by a planner, while the humans chat, approve and
 plan on a shared board.
 
+## Install
+
+Linux and macOS (installs into `~/.local`, no root needed, so it works on
+immutable systems such as Bazzite and Fedora Atomic):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ProjectDEV-git/Polyph/Main/scripts/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/ProjectDEV-git/Polyph/Main/scripts/install.ps1 | iex
+```
+
+The scripts download the latest release from GitHub and check it against the
+release's `SHA256SUMS`. The desktop app (`.dmg`, `.msi`/`.exe`, `.deb`,
+`.rpm`, `.AppImage`) and the VS Code extension (`.vsix`) are on the
+[releases page](https://github.com/ProjectDEV-git/Polyph/releases); the
+desktop app carries its own `polyph`. To build from source instead, see
+"How to build and test" in `HANDOFF.md`.
+
+Then, in a git repository:
+
+```bash
+polyph host --name payments     # prints a join code
+polyph join A1B2-CDEF           # a teammate, on their machine
+polyph                          # the terminal UI
+```
+
 ## Surfaces
 
 All of them show the same room state from the same engine:
@@ -24,7 +54,9 @@ All of them show the same room state from the same engine:
 - `docs/protocol.md`: wire format, encryption, joining, room state
 - `docs/security.md`: threat model and what is not protected
 - `docs/sandbox.md`: how agents and plugins are isolated
-- `docs/self-hosting.md`: running your own relay
+- `docs/self-hosting.md`: running your own relay (Docker, systemd, EC2, LAN)
+- `docs/release.md`: how releases are built, signed and verified
+- `docs/website.md`: the website brief
 - `docs/app.md`, `docs/tui.md`: the app and terminal UI briefs
 - `docs/agent-hosts.md`: agents on your own server
 - `docs/extending.md`: templates, skills and plugins
@@ -34,6 +66,7 @@ All of them show the same room state from the same engine:
 See "How to build and test" in `HANDOFF.md`. Build status, open gaps and
 decisions are in `HANDOFF.md`, `STUBS.md` and `DECISIONS.md`.
 
-Status: under construction (milestones 0 to 9 of 11 done).
+Status: milestones 0 to 11 done; the first release is prepared but not yet
+tagged. Open gaps are listed in `STUBS.md`.
 
 License: Apache-2.0, except `cloud/` (proprietary, see `cloud/LICENSE`).

@@ -19,11 +19,13 @@ async fn available_mechanisms_block_escapes() {
             eprintln!("skipped container mode: needs an image");
             continue;
         }
-        if r.mechanism == Mechanism::WindowsJob {
-            eprintln!("Windows job objects do not isolate files or network; see docs/sandbox.md");
-            continue;
-        }
         for c in &r.checks {
+            // Low integrity level isolates files, not the network: on Windows
+            // only the proxy variables steer traffic (see docs/sandbox.md).
+            if r.mechanism == Mechanism::WindowsJob && c.key == "sandbox-check-direct-network" {
+                eprintln!("Windows: direct network access is not blocked; see docs/sandbox.md");
+                continue;
+            }
             assert!(c.passed, "{:?}: {} failed", r.mechanism, c.key);
         }
         protected += 1;

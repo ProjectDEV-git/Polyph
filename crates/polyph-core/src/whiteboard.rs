@@ -137,7 +137,7 @@ pub fn describe(name: &str, els: &[Value]) -> String {
                     .and_then(|b| b.get("elementId"))
                     .and_then(|i| i.as_str())
                     .and_then(by_id)
-                    .map(&label)
+                    .map(label)
                     .filter(|l| !l.is_empty())
                     .unwrap_or_else(|| "(nothing)".into())
             };

@@ -128,8 +128,11 @@ impl Scrollback {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+    #[cfg(unix)]
     use std::time::Duration;
 
+    // Only the Unix tests below use a real shell.
+    #[cfg(unix)]
     async fn read_until(rx: &mut mpsc::UnboundedReceiver<Vec<u8>>, want: &str) -> String {
         let mut got = String::new();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
@@ -150,8 +153,19 @@ mod tests {
         t.write(b"echo hel''lo\n").unwrap();
         read_until(&mut rx, "hello").await;
         t.resize(100, 30).unwrap();
-        t.write(b"stty size\n").unwrap();
-        read_until(&mut rx, "30 100").await;
+        // macOS CI has shown the first query after a resize report the old
+        // size; ask again a few times, and still fail if it never changes.
+        let mut resized = false;
+        for _ in 0..5 {
+            t.write(b"stty size\n").unwrap();
+            let got = read_until(&mut rx, "\n$ ").await;
+            if got.contains("30 100") {
+                resized = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(resized, "the terminal never reported 30 rows and 100 columns");
         t.write(b"exit 3\n").unwrap();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         while t.try_exit().is_none() {

@@ -1,0 +1,10 @@
+# Container builds need only the Rust sources.
+target/
+**/node_modules/
+apps/
+packages/
+dist/
+.git/
+.taste-skill/
+**/*.db
+**/*.db-*

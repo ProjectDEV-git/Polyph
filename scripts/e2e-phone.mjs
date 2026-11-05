@@ -9,11 +9,21 @@
 // (which builds the wasm engine), and Playwright with Chromium.
 // Usage: node scripts/e2e-phone.mjs [--shots dir]
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+// The test daemon gets a free port (never a stale daemon's default one) and
+// commands wait until it has written daemon.json.
+async function waitForFile(file) {
+  for (let i = 0; i < 300; i++) {
+    if (existsSync(file)) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`${file} did not appear`);
+}
 
 const root = new URL("..", import.meta.url).pathname;
 const require = createRequire(import.meta.url);
@@ -61,7 +71,9 @@ let daemon;
 let browser;
 let page;
 try {
+  writeFileSync(join(home, "config.toml"), "api_port = 0\n");
   daemon = spawn(bin, ["daemon", "run"], { env, stdio: "ignore" });
+  await waitForFile(join(home, "daemon.json"));
   cli("config", "set", "relay", `ws://127.0.0.1:${relayPort}/ws`);
   cli("config", "set", "name", "Ann");
   cli("host", "--name", "e2e-phone");

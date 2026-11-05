@@ -1,0 +1,8 @@
+{$RELAY_DOMAIN} {
+	reverse_proxy cloud:8787
+}
+
+{$API_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy cloud:8790
+}

@@ -1,10 +1,7 @@
-"use client";
-// The website arrives in M10; until then the root sends people to the client.
-import { useEffect } from "react";
+import { meta, render } from "../src/site/routes";
 
-export default function Root() {
-  useEffect(() => {
-    window.location.replace("app/");
-  }, []);
-  return null;
+export const metadata = meta("home", "en");
+
+export default function Page() {
+  return render("home", "en");
 }

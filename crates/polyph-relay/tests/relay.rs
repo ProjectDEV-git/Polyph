@@ -386,7 +386,10 @@ async fn only_owner_can_end_a_room() {
 
 /// Runs the host side of the join handshake for one session. Returns whether
 /// the PAKE succeeded, and replies with `reply` when it did.
-async fn host_one_join(host: &mut RelayClient, code: &JoinCode, reply: Option<JoinReply>) -> bool {
+/// Host side of one join. Returns whether the PAKE succeeded, and whether the
+/// relay's "code used" notice arrived while waiting for the join request (it
+/// races the joiner's request, so it can come first).
+async fn host_one_join(host: &mut RelayClient, code: &JoinCode, reply: Option<JoinReply>) -> (bool, bool) {
     let RelayFrame::JoinerArrived { session, .. } =
         expect(host, "joiner", |f| matches!(f, RelayFrame::JoinerArrived { .. })).await
     else {
@@ -397,25 +400,31 @@ async fn host_one_join(host: &mut RelayClient, code: &JoinCode, reply: Option<Jo
     let RelayFrame::Pake { data, .. } =
         expect(host, "joiner pake", |f| matches!(f, RelayFrame::Pake { .. } | RelayFrame::PakeEnded { .. })).await
     else {
-        return false;
+        return (false, false);
     };
     let Ok(fin) = p.finish(&data) else {
         host.send(ClientFrame::PakeResult { session, ok: false }).await.unwrap();
-        return false;
+        return (false, false);
     };
     host.send(ClientFrame::Pake { session, data: fin.confirmation().to_vec() }).await.unwrap();
     let RelayFrame::Pake { data: tag, .. } =
         expect(host, "joiner confirm", |f| matches!(f, RelayFrame::Pake { .. } | RelayFrame::PakeEnded { .. })).await
     else {
-        return false;
+        return (false, false);
     };
     match fin.verify_peer(&tag) {
         Ok(mut ch) => {
             host.send(ClientFrame::PakeResult { session, ok: true }).await.unwrap();
-            let RelayFrame::Pake { data: req, .. } =
-                expect(host, "join request", |f| matches!(f, RelayFrame::Pake { .. })).await
-            else {
-                unreachable!()
+            let mut closed = false;
+            let req = loop {
+                match expect(host, "join request", |f| {
+                    matches!(f, RelayFrame::Pake { .. } | RelayFrame::CodeClosed { reason: CodeClosed::Used, .. })
+                })
+                .await
+                {
+                    RelayFrame::Pake { data, .. } => break data,
+                    _ => closed = true,
+                }
             };
             let req: JoinRequest = from_cbor(&ch.open(&req).unwrap()).unwrap();
             assert_eq!(req.display_name, "Mai");
@@ -423,11 +432,11 @@ async fn host_one_join(host: &mut RelayClient, code: &JoinCode, reply: Option<Jo
                 let ct = ch.seal(&to_cbor(&reply).unwrap()).unwrap();
                 host.send(ClientFrame::Pake { session, data: ct }).await.unwrap();
             }
-            true
+            (true, closed)
         }
         Err(_) => {
             host.send(ClientFrame::PakeResult { session, ok: false }).await.unwrap();
-            false
+            (false, false)
         }
     }
 }
@@ -511,7 +520,7 @@ async fn joining_with_the_right_code_delivers_certificate_and_key() {
     }));
 
     let mut j = client(&h, &joiner_id).await;
-    let (host_ok, joined) =
+    let ((host_ok, closed_early), joined) =
         tokio::join!(host_one_join(&mut host, &code, Some(reply)), join_with(&mut j, &joiner_id, &code));
     assert!(host_ok);
     let Some(JoinReply::Approved(a)) = joined.unwrap() else { panic!("not approved") };
@@ -519,7 +528,9 @@ async fn joining_with_the_right_code_delivers_certificate_and_key() {
     assert_eq!(open_epoch_key(&joiner_id, &a.key).unwrap().secret_bytes(), key.secret_bytes());
 
     // One-time code is gone after use.
-    expect(&mut host, "code used", |f| matches!(f, RelayFrame::CodeClosed { reason: CodeClosed::Used, .. })).await;
+    if !closed_early {
+        expect(&mut host, "code used", |f| matches!(f, RelayFrame::CodeClosed { reason: CodeClosed::Used, .. })).await;
+    }
     let mut j2 = client(&h, &DeviceIdentity::generate().unwrap()).await;
     assert_eq!(join_with(&mut j2, &joiner_id, &code).await.unwrap_err(), ErrorCode::CodeUnknown);
 
@@ -563,7 +574,7 @@ async fn one_time_code_dies_after_five_failures() {
     let mut j = client(&h, &attacker).await;
     for i in 0..5u8 {
         let bad = wrong_code(&code, i);
-        let (ok, res) = tokio::join!(host_one_join(&mut host, &code, None), join_with(&mut j, &attacker, &bad));
+        let ((ok, _), res) = tokio::join!(host_one_join(&mut host, &code, None), join_with(&mut j, &attacker, &bad));
         assert!(!ok);
         assert!(matches!(res, Ok(None)));
     }
@@ -591,7 +602,7 @@ async fn reusable_code_locks_after_five_failures_and_owner_is_told() {
     let mut j = client(&h, &attacker).await;
     for i in 0..5u8 {
         let bad = wrong_code(&code, i);
-        let (ok, _) = tokio::join!(host_one_join(&mut host, &code, None), join_with(&mut j, &attacker, &bad));
+        let ((ok, _), _) = tokio::join!(host_one_join(&mut host, &code, None), join_with(&mut j, &attacker, &bad));
         assert!(!ok);
     }
     let RelayFrame::CodeLocked { until, .. } =
@@ -722,4 +733,40 @@ async fn http_get(addr: std::net::SocketAddr, path: &str) -> String {
     let mut out = String::new();
     s.read_to_string(&mut out).await.unwrap();
     out
+}
+
+/// Keeps rooms owned by `short` for 7 days and every other room for a year.
+#[derive(Debug)]
+struct TwoPlans {
+    short: polyph_proto::ids::DeviceId,
+}
+
+impl polyph_relay::Policy for TwoPlans {
+    fn limits_for_room(&self, owner: Option<&polyph_proto::ids::DeviceId>) -> Limits {
+        let days = if owner == Some(&self.short) { 7 } else { 365 };
+        Limits { max_members: None, retention_days: Some(days) }
+    }
+}
+
+#[tokio::test]
+async fn snapshots_expire_per_room_owner_plan() {
+    use polyph_relay::store::{RoomRecord, Store};
+    let store = Store::open(":memory:").await.unwrap();
+    let free = DeviceIdentity::generate().unwrap().device_id();
+    let pro = DeviceIdentity::generate().unwrap().device_id();
+    let (room_free, room_pro) = (RoomId::random().unwrap(), RoomId::random().unwrap());
+    let t0 = 1_000_000_000;
+    store.register_room(&room_free, &RoomRecord { owner: free, quick: false }, t0).await.unwrap();
+    store.register_room(&room_pro, &RoomRecord { owner: pro, quick: false }, t0).await.unwrap();
+    store.put_snapshot(&room_free, &free, 1, b"a", t0, 10).await.unwrap();
+    store.put_snapshot(&room_pro, &pro, 1, b"b", t0, 10).await.unwrap();
+    let hub = polyph_relay::Hub::new(RelayConfig::ephemeral(), Arc::new(TwoPlans { short: free }), store.clone(), None);
+
+    hub.expire_snapshots_at(t0 + 6 * 86_400).await;
+    assert_eq!(store.snapshots(&room_free).await.unwrap().len(), 1);
+    hub.expire_snapshots_at(t0 + 8 * 86_400).await;
+    assert!(store.snapshots(&room_free).await.unwrap().is_empty());
+    assert_eq!(store.snapshots(&room_pro).await.unwrap().len(), 1);
+    hub.expire_snapshots_at(t0 + 366 * 86_400).await;
+    assert!(store.snapshots(&room_pro).await.unwrap().is_empty());
 }

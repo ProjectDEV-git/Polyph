@@ -755,10 +755,12 @@ mod tests {
 
     #[test]
     fn paths_stay_inside_the_worktree() {
-        let w = Path::new("/w/repo");
+        // An absolute worktree in this platform's own form.
+        let w = Path::new(if cfg!(windows) { r"C:\w\repo" } else { "/w/repo" });
+        let inside = format!("{}#login", w.join("src").join("a.rs").display());
         assert_eq!(rel_path(w, "src/a.rs").unwrap(), "src/a.rs");
         assert_eq!(rel_path(w, "./src//b/").unwrap(), "src/b/");
-        assert_eq!(rel_path(w, "/w/repo/src/a.rs#login").unwrap(), "src/a.rs#login");
+        assert_eq!(rel_path(w, &inside).unwrap(), "src/a.rs#login");
         assert!(rel_path(w, "../other/a.rs").is_err());
         assert!(rel_path(w, "/etc/passwd").is_err());
         assert!(rel_path(w, "src/../../x").is_err());

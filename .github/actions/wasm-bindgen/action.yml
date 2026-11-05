@@ -1,0 +1,15 @@
+name: Install wasm-bindgen
+description: wasm-bindgen-cli at the version of the wasm-bindgen crate in Cargo.lock (the phone engine needs them to match).
+runs:
+  using: composite
+  steps:
+    - name: Read the version from Cargo.lock
+      id: v
+      shell: bash
+      run: |
+        v=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p')
+        test -n "$v"
+        echo "version=$v" >> "$GITHUB_OUTPUT"
+    - uses: taiki-e/install-action@v2
+      with:
+        tool: wasm-bindgen@${{ steps.v.outputs.version }}

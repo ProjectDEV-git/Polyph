@@ -8,7 +8,7 @@ commit and an updated `HANDOFF.md`. Stubs go in `STUBS.md`.
 - [x] Cargo workspace (all crates from the layout), pnpm workspace
 - [x] Lints: clippy `-D warnings` with `unwrap_used`/`expect_used` denied outside tests, rustfmt, eslint, prettier
 - [x] i18n string check (`scripts/check-i18n.mjs`)
-- [x] CI on Linux, macOS, Windows (`.github/workflows/ci.yml`)
+- [x] CI on Linux, macOS, Windows (`.github/workflows/test.yml`, named `ci.yml` until M11)
 - [x] Design skills installed; `PRODUCT.md` and `DESIGN.md` written
 
 ## M1 — protocol and relay
@@ -123,4 +123,33 @@ accounts and billing (M10).
 - [x] tests: `m9.rs` (agent hosts, teammate refused, restart, workdir, phone with the laptop stopped), `m9_extend.rs` (templates, skills and a plugin tool through an agent, a hook answering once), crate unit tests
 - [x] docs: `docs/agent-hosts.md`, `docs/extending.md`
 ## M10 — website, accounts, billing
+
+Scope note: no M10 brief is in the repository; this scope comes from
+`PRODUCT.md` (website positioning, plans with undecided prices, open core with
+proprietary accounts and billing under `cloud/`), `cloud/LICENSE`, and what
+`STUBS.md` left for M10.
+
+- [x] relay: snapshot retention per room through the `Policy` (per plan)
+- [x] `cloud/` `polyph-cloud` (proprietary): email-code and GitHub device-flow sign-in, sessions, devices linked by an `account-link` signature, teams and invites, plans from config (no prices set), Stripe checkout, portal and signed webhooks, the hosted relay with a plan policy, `polyph-cloud serve`
+- [x] daemon `cloud` module and CLI `polyph login`, `logout`, `cloud status` (four locales)
+- [x] website (`apps/web`): home, pricing ("Pricing coming soon" until set), download (build from source), security, privacy and terms drafts, account page; four locales at `/`, `/th/`, `/ja/`, `/zh-Hans/`; GSAP, ScrollTrigger and Lenis on site pages only; `vercel.json` headers including the phone CSP
+- [x] daemon serves its root as `/app/` now that the export holds the website
+- [x] tests: `cloud/tests/cloud.rs` (API with Stripe and GitHub stand-ins), `cloud/tests/daemon_login.rs` (a real daemon signs in), relay per-room retention, daemon root redirect; website inspected at three widths (`docs/website.md`)
+- [x] docs: `docs/website.md`, `cloud/README.md`; CI job for `cloud/`
+- [ ] web push, team dashboard (opt-in usage summaries), spectator link limits, docs translation: see `STUBS.md` "Milestone 10 gaps"
 ## M11 — release
+
+Scope note: no M11 brief is in the repository; this scope comes from what
+earlier milestones left for "release" (`STUBS.md`, `HANDOFF.md`) and the
+`deploy/` directory named in the layout.
+
+- [x] release archives (`scripts/release/package.mjs`): `bin/polyph`, `bin/polyph-relay`, `share/polyph/web`; a `dist` build profile; checksums
+- [x] smoke test of an archive (`scripts/release/smoke.sh`): versions, relay `/healthz`, the daemon serving the browser client from the archive
+- [x] install scripts (`scripts/install.sh`, `scripts/install.ps1`): latest or pinned release, SHA-256 check, into the user's home with no root
+- [x] desktop app with `polyph` bundled as a Tauri sidecar and the web files as resources (`tauri.release.conf.json`, `scripts/release/desktop-prep.mjs`); the daemon finds web files inside app bundles
+- [x] VS Code `.vsix` (`pnpm --filter polyph-vscode package`): icon, Marketplace README, changelog, `.vscodeignore`; the VS Code smoke test can load the unpacked package
+- [x] `.github/workflows/release.yml`: on a `v*` tag, version check, web export with the phone engine, five targets (archive, smoke test, desktop packages), `.vsix`, `SHA256SUMS`, build provenance, relay image on GHCR (amd64, arm64), draft release with notes from `CHANGELOG.md`; macOS signing when secrets are set
+- [x] `deploy/relay` (Dockerfile, release Dockerfile, Compose with Caddy, systemd unit, example config), `deploy/cloud` (Dockerfile, Compose, config and env examples), `deploy/web` (Caddyfile with the site's headers)
+- [x] one version everywhere (`scripts/release/version.mjs`), `CHANGELOG.md`, `docs/release.md`; `docs/self-hosting.md` with Docker, systemd, EC2 and LAN mode; README install section; the website's download page
+- [x] workflows: `test.yml` (unit tests on three systems, the hosted service, TypeScript, end-to-end suites, desktop build, packaging), `release.yml` (runs `test.yml` first; tag, Actions-tab version, or dry run), `release-prepare.yml` (version bump pull request); shared setup in `.github/actions/`
+- [ ] not done: tagging and publishing the first release, Windows code signing, Marketplace publishing, deployments (see `STUBS.md` "Milestone 11 gaps")

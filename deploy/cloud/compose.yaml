@@ -1,0 +1,37 @@
+# The hosted service behind Caddy: the relay at RELAY_DOMAIN and the account
+# API at API_DOMAIN. Secrets come from .env (see cloud.env.example).
+#   cp cloud.toml.example cloud.toml && cp cloud.env.example .env   # edit both
+#   docker compose up -d
+services:
+  cloud:
+    build:
+      context: ../..
+      dockerfile: deploy/cloud/Dockerfile
+    image: polyph-cloud
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./cloud.toml:/etc/polyph/cloud.toml:ro
+      - cloud-data:/data
+    expose:
+      - "8787"
+      - "8790"
+
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    depends_on: [cloud]
+    env_file: .env
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  cloud-data:
+  caddy-data:
+  caddy-config:

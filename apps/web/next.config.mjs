@@ -1,6 +1,7 @@
-// The browser client is exported as static files that the person's own
-// daemon serves (crates/polyph-daemon/src/web.rs); the website (M10) will
-// share this app.
+// One static export holds the website (/, /pricing/, /th/... ; headers in
+// vercel.json), the browser client (/app/, /pill/) and the phone app
+// (/phone/). A person's own daemon serves the same files for the client
+// (crates/polyph-daemon/src/web.rs) and sends its root to /app/.
 /** @type {import('next').NextConfig} */
 const config = {
   output: "export",

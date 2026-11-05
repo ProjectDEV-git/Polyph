@@ -1,0 +1,39 @@
+# The relay behind Caddy, which gets and renews a TLS certificate.
+#   POLYPH_DOMAIN=relay.example.com docker compose up -d
+# Clients: polyph config set relay wss://relay.example.com/ws
+services:
+  relay:
+    build:
+      context: ../..
+      dockerfile: deploy/relay/Dockerfile
+    image: polyph-relay
+    restart: unless-stopped
+    environment:
+      POLYPH_RELAY_PUBLIC_URL: "wss://${POLYPH_DOMAIN:?set POLYPH_DOMAIN}/ws"
+      # Self-hosted relays have no limits unless you set them:
+      # POLYPH_RELAY_MAX_MEMBERS: "10"
+      # POLYPH_RELAY_RETENTION_DAYS: "30"
+    volumes:
+      - relay-data:/data
+    expose:
+      - "8787"
+
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    depends_on: [relay]
+    environment:
+      POLYPH_DOMAIN: "${POLYPH_DOMAIN}"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  relay-data:
+  caddy-data:
+  caddy-config:

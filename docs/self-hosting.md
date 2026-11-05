@@ -65,6 +65,105 @@ To run agents on your own server, so work continues with your laptop
 closed, see `docs/agent-hosts.md`. An agent host needs no relay of its own;
 it connects to the room's relay like any device.
 
-## EC2 walkthrough and LAN mode
+## Running it
 
-Written in milestone 11 together with `deploy/relay/`. See `STUBS.md`.
+Three ways, all from `deploy/relay/`. Whichever you choose, the relay listens
+on plain HTTP and something in front of it terminates TLS; clients connect
+with `wss://`. Caddy is used here because it gets and renews certificates by
+itself.
+
+### Docker Compose with Caddy
+
+```bash
+cd deploy/relay
+POLYPH_DOMAIN=relay.example.com docker compose up -d
+```
+
+`compose.yaml` builds the image from source (`deploy/relay/Dockerfile`), or
+use the published image: replace `build:` with
+`image: ghcr.io/projectdev-git/polyph-relay:<version>`. Snapshots live in the
+`relay-data` volume, certificates in `caddy-data`. Set limits with the
+commented environment variables if you want them; a self-hosted relay has
+none by default.
+
+### systemd with a release archive
+
+```bash
+tar -xzf polyph-<version>-x86_64-unknown-linux-gnu.tar.gz
+sudo install -m 755 polyph-<version>-*/bin/polyph-relay /usr/local/bin/
+sudo cp deploy/relay/polyph-relay.service /etc/systemd/system/
+sudo systemctl enable --now polyph-relay
+curl -s http://127.0.0.1:8787/healthz
+```
+
+The unit runs the relay as a throwaway user with a private state directory
+(`/var/lib/polyph-relay`) and a locked-down sandbox; it listens on
+`127.0.0.1:8787`. Put Caddy in front with `deploy/relay/Caddyfile` and
+`POLYPH_RELAY_UPSTREAM=127.0.0.1:8787`, or any TLS proxy that passes
+WebSocket upgrades on `/ws`.
+
+### EC2 walkthrough
+
+The load test above peaked at 71 MB for 50 rooms of 5 people, so the
+smallest general-purpose instances are enough for a team or several.
+
+1. Launch an instance with Ubuntu Server 24.04 LTS (arm64 or x86_64). A
+   `t4g.micro` or `t3.micro` is plenty to start.
+2. Security group: allow inbound TCP 22 from your own address, and TCP 80
+   and 443 (and UDP 443 for HTTP/3) from anywhere. Nothing else; the relay
+   port stays private.
+3. Give it an Elastic IP and point a DNS `A` record (for example
+   `relay.example.com`) at it. Caddy needs the name to resolve before it can
+   get a certificate.
+4. Install Docker and start the relay:
+
+   ```bash
+   sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2 git
+   git clone https://github.com/ProjectDEV-git/Polyph.git && cd Polyph/deploy/relay
+   sudo POLYPH_DOMAIN=relay.example.com docker compose up -d
+   curl -s https://relay.example.com/healthz
+   ```
+
+5. On every member's machine: `polyph config set relay
+   wss://relay.example.com/ws`. Existing rooms keep the relay they were
+   created with; new rooms use this one.
+
+Backups: the relay holds only encrypted snapshots, which members' devices
+can re-upload, so losing them costs catch-up for people who were offline,
+not data. To keep them anyway, back up the `relay-data` volume (one SQLite
+file plus its `-wal`). Upgrades: `git pull && sudo docker compose up -d
+--build`; clients reconnect on their own.
+
+## LAN mode (no internet)
+
+For a room on one network with no internet at all, a member's own daemon
+runs the relay:
+
+```bash
+polyph host --lan --name payments
+```
+
+The daemon starts an embedded relay on all interfaces with a self-signed
+certificate and prints the join line for this network, for example
+`polyph join A1B2-CDEF --relay wss://192.168.1.20:41871/ws`. The
+certificate's fingerprint travels inside the join handshake, so joiners pin
+it without trusting anything else. Others on the network can also find the
+room with `polyph discover` (mDNS, `_polyph._tcp`).
+
+- The port is chosen fresh each time the room is hosted; allow incoming
+  connections to `polyph` in the host's firewall rather than one port.
+- The room lives as long as the hosting daemon runs. `polyph host --lan
+  --bridge` also copies traffic to the internet relay, so members who joined
+  earlier can keep working from elsewhere (see `STUBS.md` for its limits).
+- Phones cannot join LAN rooms: a browser cannot pin a self-signed
+  certificate.
+
+## The hosted service and the website
+
+`deploy/cloud/` runs Polyph's own hosted service (proprietary, `cloud/`):
+the relay with plan limits and the account API, behind Caddy, configured by
+`cloud.toml` and secrets in `.env`. See `cloud/README.md`.
+
+The website is the static export of `apps/web` (`pnpm --filter @polyph/web
+build`, output `apps/web/out`). `apps/web/vercel.json` holds its headers for
+Vercel; `deploy/web/Caddyfile` serves it with the same headers anywhere else.

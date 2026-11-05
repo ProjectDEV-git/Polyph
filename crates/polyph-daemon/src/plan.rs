@@ -67,7 +67,7 @@ pub async fn create(daemon: Arc<Daemon>, p: PlanParams) -> Result<Value, ApiErro
     if p.goal.trim().is_empty() {
         return Err(ApiError::BadRequest("the goal is empty".into()));
     }
-    let cwd = p.cwd.canonicalize().map_err(|e| ApiError::BadRequest(format!("{}: {e}", p.cwd.display())))?;
+    let cwd = polyph_git::canonical(&p.cwd).map_err(|e| ApiError::BadRequest(format!("{}: {e}", p.cwd.display())))?;
     let project = ProjectConfig::load(&cwd).unwrap_or_default();
     let kind = p.kind.or(project.planner.agent.clone()).ok_or_else(|| {
         ApiError::BadRequest("no planner agent: pass one or set [planner] agent in polyph.toml".into())

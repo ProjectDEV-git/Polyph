@@ -1,0 +1,58 @@
+name: Prepare release
+
+# Run from the Actions tab with the next version. It sets that version in
+# every manifest, refreshes the lock files, and opens a pull request to Main.
+# Write the version's CHANGELOG.md section first (or in that pull request);
+# the release workflow refuses to publish without one. After merging, run
+# the Release workflow with the same version (or push the tag).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Next version, for example 0.2.0
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prepare:
+    name: Bump to ${{ inputs.version }}
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+      - name: Set the version everywhere
+        run: |
+          v="${VERSION#v}"
+          node scripts/release/version.mjs "$v"
+          cargo update -w
+          (cd cloud && cargo update -w)
+          (cd apps/desktop/src-tauri && cargo update -w)
+          node scripts/release/version.mjs --check "v$v"
+      - name: Open the pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          v="${VERSION#v}"
+          branch="release/v$v"
+          if node scripts/release/notes.mjs "v$v" > /dev/null 2>&1; then
+            note="CHANGELOG.md already has a section for $v."
+          else
+            note="**CHANGELOG.md has no section for $v yet.** Add one to this pull request before merging; the release workflow refuses to publish without it."
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "Release $v: set the version"
+          git push -u origin "$branch"
+          {
+            printf 'Sets version %s in every manifest and lock file.\n\n%s\n\n' "$v" "$note"
+            printf 'After merging, run the **Release** workflow with version `%s` (or push the tag `v%s`). ' "$v" "$v"
+            printf 'It runs the tests, builds every package and opens a draft release.\n'
+          } > body.md
+          gh pr create --base Main --head "$branch" --title "Release $v" --body-file body.md
