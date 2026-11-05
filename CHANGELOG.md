@@ -3,7 +3,7 @@
 All notable changes, newest first. Each release's section is copied to its
 GitHub release page.
 
-## Unreleased
+## 0.1.1
 
 - **A relay to connect through.** The default relay is now the project's
   relay on Fly.io (`wss://polyph-relay.fly.dev/ws`); 0.1.0 pointed at a
