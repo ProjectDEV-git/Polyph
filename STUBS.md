@@ -303,18 +303,13 @@ accepted but hosted mode is M4.
   (Alpine) and Windows on ARM have no prebuilt binaries.
 - **LAN relay port** is chosen fresh each time; a fixed-port option would
   make firewall rules simpler.
-- **CI is red on macOS and Windows tests** (it already was when M8/M9
-  merged; earlier test failures had hidden later ones). Fixed during M11:
-  a Clippy 1.99 lint, the shared-temp gap in the macOS sandbox profile, a
-  dead-code warning and a Unix-only path test on Windows. Linux, TypeScript
-  and the cloud job pass. Still failing, as of the last CI run:
-  - macOS: `m4_merge.rs` `the_watcher_catches_edits_outside_the_protocol`
-    (a command run in the Seatbelt sandbox does not exit 0). Once,
-    `the_planner_splits_a_goal_and_agents_work_the_tasks` also failed (the
-    planner's Polyph tools got "Operation not permitted" reaching its proxy);
-    it passed on the next run, so it may be timing-dependent.
-  - Windows: `polyph-git` `tests::conflicts_go_to_the_resolver`; test files
-    after it have not run on Windows yet.
-  These need a Mac and a Windows machine to debug.
+- **CI is green on Linux, macOS and Windows** since the end of M11. Earlier
+  failures had hidden later ones (CI now runs with `--no-fail-fast`). Fixed
+  during M11: a Clippy 1.99 lint; the macOS sandbox profile allowing writes
+  to shared temp folders; Windows file isolation (low integrity level);
+  line endings (git for Windows checks out CRLF) in symbol claims and in the
+  merge tests; Windows verbatim paths (`\\?\C:\...`) reaching git; races in
+  the relay join, terminal resize and reviewer tests; GNU-only `sed -i` in a
+  test; and test fixtures that assumed Unix paths.
 - **The `.vsix` is 22.6 MB**, mostly Excalidraw's fonts, which the webview
   bundles twice (assets and excalidraw folders).

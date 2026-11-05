@@ -339,7 +339,5 @@ target/debug/polyph --home /tmp/a room knocks     # then: polyph --home /tmp/a a
 
 ## Known issues
 
-- CI fails on macOS (`m4_merge.rs` watcher test under the Seatbelt
-  sandbox) and on Windows (`polyph-git` resolver test, and possibly later
-  files); Linux, TypeScript and the cloud job pass. These predate M10 and
-  M11; details in `STUBS.md` ("Milestone 11 gaps").
+- None known in finished work. CI passes on Linux, macOS and Windows;
+  remaining gaps are listed in `STUBS.md`.
