@@ -6,11 +6,12 @@
 use qrcode::QrCode;
 use qrcode::render::{svg, unicode};
 
-/// Website domain for links. Set at build time; the product domain is not
-/// final (see STUBS.md).
+/// Where the website lives, without the scheme: the project's GitHub Pages
+/// site, which hosts the phone app and the join page. A build can name
+/// another with `POLYPH_DOMAIN` (a host, optionally with a path).
 pub const DOMAIN: &str = match option_env!("POLYPH_DOMAIN") {
-    Some(v) => v,
-    None => "polyph.dev",
+    Some(v) if !v.is_empty() => v,
+    _ => "projectdev-git.github.io/Polyph",
 };
 
 /// Where the phone app lives unless a caller names another address.
@@ -34,6 +35,13 @@ fn enc(s: &str) -> String {
 /// send to the server that hosts the page.
 pub fn link(base: &str, code: &str, member: &str, relay: &str) -> String {
     format!("{base}#join={}&member={}&relay={}", enc(code), enc(member), enc(relay))
+}
+
+/// A join link for anyone: opens the phone app, which joins the room from
+/// the browser as a new person. As with pairing, the code and relay ride in
+/// the fragment.
+pub fn join_link(code: &str, relay: &str) -> String {
+    format!("{}#join={}&relay={}", default_base(), enc(code), enc(relay))
 }
 
 /// The link as an SVG QR code (dark modules in `currentColor`, so the page
@@ -67,5 +75,12 @@ mod tests {
         assert_eq!(l, "https://polyph.dev/phone/#join=A1B2-CDEF&member=ab12&relay=wss%3A%2F%2Frelay.example%2Fws");
         assert!(qr_svg(&l).unwrap().contains("<svg"));
         assert!(qr_text(&l).unwrap().lines().count() > 10);
+    }
+
+    #[test]
+    fn join_links_open_the_phone_app_without_a_member() {
+        let l = join_link("A1B2-CDEF", "wss://relay.example/ws");
+        assert_eq!(l, format!("{}#join=A1B2-CDEF&relay=wss%3A%2F%2Frelay.example%2Fws", default_base()));
+        assert!(!l.contains("member="));
     }
 }

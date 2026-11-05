@@ -44,6 +44,7 @@ Environment variables override the TOML file given with `--config`.
 | `POLYPH_RELAY_PUBLIC_URL` | `public_url` | none |
 | `POLYPH_RELAY_CONNECTIONS_PER_IP_PER_MIN` | `connections_per_ip_per_min` | `120` |
 | `POLYPH_RELAY_TLS_CERT`, `POLYPH_RELAY_TLS_KEY` | `tls_cert`, `tls_key` | none (use Caddy) |
+| `POLYPH_RELAY_CLIENT_IP_HEADER` | `client_ip_header` | none (trust `X-Forwarded-For` from the same machine only) |
 
 Other TOML keys: `buffer_secs` (600), `buffer_max_envelopes` (5000),
 `buffer_max_bytes` (2 MiB per room), `buffer_total_max_bytes` (64 MiB),
@@ -67,7 +68,13 @@ it connects to the room's relay like any device.
 
 ## Running it
 
-Three ways, all from `deploy/relay/`. Whichever you choose, the relay listens
+The project's own relay (the default in every client) runs on Fly.io; its
+config and steps are in `deploy/fly/`. Behind a proxy that every connection
+passes through, set `POLYPH_RELAY_CLIENT_IP_HEADER` to the header that names
+the client (`fly-client-ip` on Fly.io) so per-address limits see real
+addresses; unset, only `X-Forwarded-For` from the same machine is trusted.
+
+To run your own, there are three ways, all from `deploy/relay/`. Whichever you choose, the relay listens
 on plain HTTP and something in front of it terminates TLS; clients connect
 with `wss://`. Caddy is used here because it gets and renews certificates by
 itself.

@@ -3,6 +3,16 @@
 All notable changes, newest first. Each release's section is copied to its
 GitHub release page.
 
+## Unreleased
+
+- **A relay to connect through.** The default relay is now the project's
+  relay on Fly.io (`wss://polyph-relay.fly.dev/ws`); 0.1.0 pointed at a
+  placeholder address. On 0.1.0, switch with
+  `polyph config set relay wss://polyph-relay.fly.dev/ws`.
+- **Join from a browser.** `polyph room invite` prints a link that opens the
+  phone app on the website (now on GitHub Pages) with the code filled in, so
+  someone can join without installing anything.
+
 ## 0.1.0
 
 The first release.

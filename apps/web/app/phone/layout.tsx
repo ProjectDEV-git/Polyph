@@ -1,10 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { withBase } from "../../src/base";
 
 export const metadata: Metadata = {
-  manifest: "/phone/manifest.webmanifest",
+  manifest: withBase("/phone/manifest.webmanifest"),
   appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Polyph" }, // i18n-allow (product name)
-  icons: { icon: "/icon.svg", apple: "/phone/icon-192.png" },
+  icons: { icon: withBase("/icon.svg"), apple: withBase("/phone/icon-192.png") },
 };
 
 export const viewport: Viewport = {

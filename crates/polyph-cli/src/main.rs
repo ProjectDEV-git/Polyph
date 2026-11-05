@@ -1439,7 +1439,9 @@ fn print_invite(ctx: &Ctx, inv: &Value) {
     let l = &ctx.l;
     let code = inv["code"].as_str().unwrap_or_default();
     ctx.out(tr!(l, "invite-code", code = code));
-    ctx.out(tr!(l, "invite-link", link = format!("https://{}/j/{code}", web_domain())));
+    if let Some(relay) = inv["relay"].as_str() {
+        ctx.out(tr!(l, "invite-link", link = polyph_daemon::phone::join_link(code, relay)));
+    }
     ctx.out(tr!(l, "invite-expires", when = ctx.when(inv["expires_at"].as_i64().unwrap_or(0))));
     ctx.out(if inv["reusable"] == true { l.t("invite-reusable") } else { l.t("invite-one-time") });
     if inv["pending"] == true {
@@ -1448,12 +1450,6 @@ fn print_invite(ctx: &Ctx, inv: &Value) {
     if let Some(lan) = inv["lan"].as_str() {
         ctx.out(tr!(l, "invite-lan", code = code, url = lan.split('#').next().unwrap_or(lan)));
     }
-}
-
-/// Website domain for join links. Set at build time; the product domain is
-/// not final (see STUBS.md).
-fn web_domain() -> &'static str {
-    option_env!("POLYPH_DOMAIN").unwrap_or("polyph.dev")
 }
 
 #[allow(clippy::too_many_arguments)]

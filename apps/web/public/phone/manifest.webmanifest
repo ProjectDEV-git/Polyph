@@ -1,9 +1,9 @@
 {
   "name": "Polyph",
   "short_name": "Polyph",
-  "id": "/phone/",
-  "start_url": "/phone/",
-  "scope": "/phone/",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#15161b",

@@ -40,9 +40,12 @@ accepted but hosted mode is M4.
   daemons, because the daemon API gets claim requests with agents in M4.
 - **Windows token file ACL.** `api.token` relies on the per-user profile
   directory's inherited ACL on Windows rather than setting an explicit ACL.
-- **Domain.** The default relay (`wss://relay.polyph.dev/ws`) and join-link
-  domain (`polyph.dev`) are placeholders set at build time with
-  `POLYPH_DEFAULT_RELAY` and `POLYPH_DOMAIN`; the real domain is undecided.
+- **Domain.** The default relay is the project's relay on Fly.io
+  (`wss://polyph-relay.fly.dev/ws`, `deploy/fly/`) and links point at the
+  GitHub Pages site (`projectdev-git.github.io/Polyph`). Both can be changed
+  at build time (`POLYPH_DEFAULT_RELAY`, `POLYPH_DOMAIN`); a product domain is
+  still undecided. Pages cannot send headers, so the site there runs without
+  the Content-Security-Policy that `vercel.json` sets.
 - **Display-name changes** need a re-issued certificate and are not exposed.
 - **Windows sandbox.** Since M11 agents run at low integrity level, so
   writes are limited to the worktree, writable paths and TMPDIR; hidden paths
@@ -256,10 +259,10 @@ accepted but hosted mode is M4.
   mail endpoint were exercised against local stand-ins only. Needs a Stripe
   test-mode run, a GitHub OAuth app with the device flow enabled, and a mail
   provider account (the code speaks Resend's API shape).
-- **Not deployed.** No hosting exists yet for the website (`apps/web`,
-  `vercel.json` is ready) or `polyph-cloud`; the domains (`polyph.dev`,
-  `api.polyph.dev`) remain placeholders set at build time
-  (`POLYPH_DEFAULT_CLOUD`, `NEXT_PUBLIC_POLYPH_CLOUD`).
+- **Not deployed.** The website runs on GitHub Pages
+  (`.github/workflows/pages.yml`); `polyph-cloud` has no hosting yet, so the
+  account pages and `polyph login` point at a placeholder (`api.polyph.dev`,
+  set at build time with `POLYPH_DEFAULT_CLOUD`, `NEXT_PUBLIC_POLYPH_CLOUD`).
 - **Rate limits behind a proxy.** Sign-in starts are limited per peer IP;
   behind a reverse proxy every request has the proxy's IP, so the proxy must
   limit or the service must learn to trust a forwarded header.
