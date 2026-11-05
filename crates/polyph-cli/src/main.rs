@@ -4,7 +4,7 @@
 
 mod account;
 mod client;
-mod clients;
+mod hook;
 mod knowledge;
 mod repo;
 mod setup;
@@ -217,6 +217,10 @@ enum Cmd {
         no_connect: bool,
     },
     Doctor,
+    Hook {
+        #[command(subcommand)]
+        cmd: HookCmd,
+    },
     Repo {
         #[command(subcommand)]
         cmd: Option<repo::RepoCmd>,
@@ -551,6 +555,16 @@ enum ConfigCmd {
 }
 
 #[derive(Subcommand, Debug)]
+enum HookCmd {
+    /// Before an agent edits a file: block it when another agent holds the file.
+    PreEdit {
+        /// The editing client (claude-code, cursor...).
+        #[arg(long, default_value = "claude-code")]
+        client: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 enum RelayCmd {
     Serve {
         #[arg(long)]
@@ -757,6 +771,13 @@ async fn run(ctx: &Ctx, cmd: Option<Cmd>) -> anyhow::Result<()> {
         Cmd::Disconnect { clients, yes } => setup::disconnect(ctx, &clients, yes).await,
         Cmd::Start { name, yes, no_connect } => setup::start(ctx, name, yes, no_connect).await,
         Cmd::Doctor => setup::doctor(ctx).await,
+        Cmd::Hook { cmd: HookCmd::PreEdit { client } } => {
+            let code = hook::pre_edit(ctx, &client).await;
+            if code != 0 {
+                std::process::exit(code);
+            }
+            Ok(())
+        }
         Cmd::Sync { room, all } => repo::sync(ctx, room, all).await,
         Cmd::Brief { cmd, room } => knowledge::brief(ctx, cmd, room).await,
         Cmd::Repo { cmd, room } => repo::repo_cmd(ctx, cmd, room).await,
@@ -1387,6 +1408,7 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
         | Cmd::Disconnect { .. }
         | Cmd::Start { .. }
         | Cmd::Doctor
+        | Cmd::Hook { .. }
         | Cmd::Brief { .. }
         | Cmd::Repo { .. }
         | Cmd::Search { .. }

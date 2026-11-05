@@ -1,6 +1,7 @@
 //! Where agent clients keep their MCP settings, and the Polyph entry each
 //! one needs. Used by `polyph connect`, `polyph disconnect`, `polyph start`
-//! and `polyph doctor`.
+//! and `polyph doctor`, and by the app's first-run checklist through the
+//! daemon (`setup.status`, `clients.plan`, `clients.connect`).
 //!
 //! Every change is planned first ([`plan_add`], [`plan_remove`]) so the
 //! person sees the exact entry before anything is written, and [`apply`]
@@ -138,6 +139,24 @@ impl Client {
                 }
             }
             _ => env.config.join("opencode").join("opencode.json"),
+        }
+    }
+
+    /// The client gets Polyph without a settings entry: VS Code with the
+    /// Polyph extension (which registers Polyph for Copilot), or Claude Code
+    /// with the Polyph plugin enabled. An entry would add Polyph twice.
+    pub fn registered_by_extension(&self, env: &Env) -> bool {
+        match self.id {
+            "vscode" => std::fs::read_dir(env.home.join(".vscode").join("extensions"))
+                .map(|d| d.flatten().any(|e| e.file_name().to_string_lossy().starts_with("polyph.polyph-vscode-")))
+                .unwrap_or(false),
+            "claude-code" => std::fs::read(env.home.join(".claude").join("settings.json"))
+                .ok()
+                .and_then(|b| parse_json(Path::new("settings.json"), &String::from_utf8_lossy(&b)).ok())
+                .and_then(|(root, _)| root.get("enabledPlugins").cloned())
+                .and_then(|p| p.as_object().cloned())
+                .is_some_and(|p| p.iter().any(|(k, v)| k.starts_with("polyph@") && v == &Value::Bool(true))),
+            _ => false,
         }
     }
 
@@ -578,6 +597,25 @@ mod tests {
         assert!(plan_add(gemini, &env, &stdio()).unwrap_err().to_string().contains("not valid JSON"));
         assert_eq!(find("Claude").unwrap().id, "claude-code");
         assert!(find("emacs").is_none());
+    }
+
+    #[test]
+    fn vscode_with_the_extension() {
+        let root = tempfile::tempdir().unwrap();
+        let env = Env::at(root.path());
+        let vscode = find("vscode").unwrap();
+        assert!(!vscode.registered_by_extension(&env));
+        std::fs::create_dir_all(root.path().join(".vscode/extensions/polyph.polyph-vscode-0.1.1")).unwrap();
+        assert!(vscode.registered_by_extension(&env));
+        assert!(!find("cursor").unwrap().registered_by_extension(&env));
+        let claude = find("claude-code").unwrap();
+        std::fs::create_dir_all(root.path().join(".claude")).unwrap();
+        std::fs::write(root.path().join(".claude/settings.json"), r#"{"enabledPlugins": {"polyph@polyph": false}}"#)
+            .unwrap();
+        assert!(!claude.registered_by_extension(&env));
+        std::fs::write(root.path().join(".claude/settings.json"), r#"{"enabledPlugins": {"polyph@polyph": true}}"#)
+            .unwrap();
+        assert!(claude.registered_by_extension(&env));
     }
 
     #[test]

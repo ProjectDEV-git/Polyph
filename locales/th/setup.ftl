@@ -111,3 +111,7 @@ help-repo-set = ตั้งรีโพของห้อง ข้อมูล
 help-repo-clear = ลืมรีโพของห้อง
 repo-show = ห้องทำงานกับ { $url } (บรานช์ { $branch })
 repo-none = ห้องยังไม่มีรีโพ ตั้งได้ด้วย polyph repo set <url>
+connect-by-extension = { $client } ได้รับ Polyph จากส่วนขยายหรือปลั๊กอิน Polyph อยู่แล้ว จึงไม่ต้องแก้อะไร
+doctor-client-extension = { $client } ได้รับ Polyph จากส่วนขยายหรือปลั๊กอิน Polyph
+help-hook = ฮุกสำหรับโปรแกรมแก้ไขของเอเจนต์ (ปลั๊กอิน Claude Code เรียกใช้)
+help-hook-pre-edit = ก่อนเอเจนต์แก้ไฟล์: บล็อกการแก้ไขถ้าเอเจนต์อื่นจองไฟล์ไว้ ไม่เช่นนั้นจองไฟล์ให้

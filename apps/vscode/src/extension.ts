@@ -10,6 +10,7 @@ import type { ToHost } from "./bridge";
 import { badge, claimsFor, relative, type Claim } from "./claims";
 import { defaultHome, ensureDaemon, wsUrl } from "./daemon";
 import { Hub } from "./hub";
+import { registerMcp } from "./mcp";
 
 let hub: Hub | null = null;
 
@@ -277,6 +278,16 @@ export function activate(ctx: vscode.ExtensionContext): PolyphApi {
     const sub = w.onDidReceiveMessage((m: ToHost) => s.receive(m));
     return { dispose: () => (sub.dispose(), s.dispose()) };
   };
+  // Copilot and other agents in VS Code get Polyph's tools without a settings file.
+  const version =
+    (ctx as { extension?: { packageJSON?: { version?: string } } }).extension?.packageJSON
+      ?.version ?? "0";
+  registerMcp(
+    ctx,
+    () => cfg().get<string>("command") || "polyph",
+    () => cfg().get<string>("home") || undefined,
+    version,
+  );
   ctx.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       "polyph.room",

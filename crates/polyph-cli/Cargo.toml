@@ -31,9 +31,6 @@ futures-util = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
 serde_json = { workspace = true, features = ["preserve_order"] }
-# polyph connect: edits agent clients' MCP settings, keeping their order and comments in TOML.
-toml = { workspace = true }
-toml_edit = { version = "0.25", default-features = false, features = ["parse", "display"] }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

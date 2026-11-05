@@ -112,3 +112,7 @@ help-repo-set = Set the room's repository; any credentials in the URL are remove
 help-repo-clear = Forget the room's repository.
 repo-show = The room works on { $url } (branch { $branch }).
 repo-none = The room has no repository yet. Set one with polyph repo set <url>.
+connect-by-extension = { $client } gets Polyph from its Polyph extension or plugin, so there is nothing to change.
+doctor-client-extension = { $client } gets Polyph from its Polyph extension or plugin.
+help-hook = Hooks for agents' editors (the Claude Code plugin runs these).
+help-hook-pre-edit = Before an agent edits a file: block the edit when another agent holds the file, otherwise claim it.

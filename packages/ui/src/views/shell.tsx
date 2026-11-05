@@ -12,6 +12,7 @@ import { ActivityView } from "./activity";
 import { AgentsView } from "./agents";
 import { ApprovalStack, describeApproval } from "./approvals";
 import { BoardView } from "./board";
+import { Checklist } from "./checklist";
 import { ChatView } from "./chat";
 import { MergesView } from "./merges";
 import { Palette } from "./palette";
@@ -163,6 +164,7 @@ export function Shell() {
       </aside>
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Disconnected />
+        <Checklist />
         {!roomId ? (
           <StartView />
         ) : (

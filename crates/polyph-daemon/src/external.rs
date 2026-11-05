@@ -281,3 +281,90 @@ mod tests {
         assert!(clean_client(&"x".repeat(100)).len() <= 24);
     }
 }
+
+#[derive(Debug, Deserialize)]
+pub struct CheckParams {
+    /// Where the editing agent works.
+    pub cwd: PathBuf,
+    /// Files about to be edited, absolute or relative to `cwd`'s repository.
+    pub paths: Vec<String>,
+    /// Which client is editing; its own connections' claims never block it.
+    #[serde(default = "default_client")]
+    pub client: String,
+    /// Claim the files for that client's connection when they are free.
+    #[serde(default)]
+    pub claim: bool,
+}
+
+/// Whether an agent the person runs may edit files now: used by editor
+/// hooks (the Claude Code plugin) before every edit. A file another agent
+/// holds blocks the edit; a free file is claimed for the editing client's
+/// connection in this folder, when there is exactly one.
+pub async fn check(d: &Arc<Daemon>, p: CheckParams) -> ApiResult {
+    let cwd = polyph_git::canonical(&p.cwd).unwrap_or(p.cwd.clone());
+    let Ok(rt) = room_for(d, None, &cwd).await else {
+        return Ok(json!({ "allowed": true, "room": null }));
+    };
+    let root = crate::folders::root(&cwd);
+    let client = clean_client(&p.client);
+    let mine: Vec<Arc<Session>> = d
+        .external
+        .list()
+        .await
+        .into_iter()
+        .filter(|s| s.room == rt.id && s.client == client && s.caller.worktree == root)
+        .collect();
+    let rels: Vec<String> = p
+        .paths
+        .iter()
+        .filter_map(|x| {
+            let pb = std::path::Path::new(x);
+            let abs = if pb.is_absolute() { pb.to_path_buf() } else { cwd.join(pb) };
+            // Resolve symlinks in the folder part; the file may not exist yet.
+            let abs = match (abs.parent().and_then(|d| polyph_git::canonical(d).ok()), abs.file_name()) {
+                (Some(dir), Some(name)) => dir.join(name),
+                _ => abs,
+            };
+            crate::coord::rel_path(&root, &abs.to_string_lossy()).ok()
+        })
+        .collect();
+    let now = d.shared.clock.now();
+    let blocked: Vec<Value> = {
+        let ctx = rt.ctx.lock().await;
+        let claims = ctx.core.claims.all();
+        rels.iter()
+            .filter_map(|rel| {
+                claims
+                    .iter()
+                    .filter(|c| c.expires_at > now && !mine.iter().any(|s| s.caller.agent.id == c.owner.id))
+                    .find(|c| {
+                        let t = &c.target.path;
+                        t == rel || (t.ends_with('/') && rel.starts_with(t.as_str()))
+                    })
+                    .map(|c| json!({ "path": rel, "holder": c.owner.label, "reason": c.reason, "target": c.target.to_string() }))
+            })
+            .collect()
+    };
+    if !blocked.is_empty() || !p.claim || rels.is_empty() {
+        return Ok(json!({ "allowed": blocked.is_empty(), "blocked": blocked, "claimed": [] }));
+    }
+    let [session] = mine.as_slice() else {
+        return Ok(json!({ "allowed": true, "blocked": [], "claimed": [] }));
+    };
+    let targets: Vec<polyph_proto::messages::ClaimTarget> =
+        rels.iter().map(|r| polyph_proto::messages::ClaimTarget { path: r.clone(), symbol: None }).collect();
+    let (granted, denied) = crate::coord::request_claims(&session.caller, &rt, &d.shared, &targets, "editing")
+        .await
+        .map_err(|e| ApiError::Failed(e.text))?;
+    session.last.store(now, Ordering::Relaxed);
+    let blocked: Vec<Value> = denied
+        .iter()
+        .map(|c| json!({ "path": c.target.path, "holder": c.owner.label, "reason": c.reason, "target": c.target.to_string() }))
+        .collect();
+    Ok(json!({
+        "allowed": blocked.is_empty(),
+        "blocked": blocked,
+        "claimed": granted.iter().map(|c| c.target.to_string()).collect::<Vec<_>>(),
+        "agent": session.caller.agent.label,
+    }))
+}

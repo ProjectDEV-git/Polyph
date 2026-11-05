@@ -111,3 +111,7 @@ help-repo-set = 设置房间的仓库；URL 中的凭据会被移除。
 help-repo-clear = 忘记房间的仓库。
 repo-show = 房间使用 { $url }（分支 { $branch }）。
 repo-none = 房间还没有仓库。用 polyph repo set <url> 设置。
+connect-by-extension = { $client } 已通过 Polyph 扩展或插件使用 Polyph，无需更改。
+doctor-client-extension = { $client } 通过 Polyph 扩展或插件使用 Polyph。
+help-hook = 智能体编辑器的钩子（由 Claude Code 插件运行）。
+help-hook-pre-edit = 在智能体编辑文件之前：若其他智能体已认领该文件则阻止编辑，否则为其认领。

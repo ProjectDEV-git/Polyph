@@ -111,3 +111,7 @@ help-repo-set = ルームのリポジトリを設定します。URL に含まれ
 help-repo-clear = ルームのリポジトリを忘れます。
 repo-show = ルームは { $url }（ブランチ { $branch }）で作業しています。
 repo-none = ルームにはまだリポジトリがありません。polyph repo set <url> で設定してください。
+connect-by-extension = { $client } は Polyph 拡張機能またはプラグインから Polyph を使うため、変更は不要です。
+doctor-client-extension = { $client } は Polyph 拡張機能またはプラグインから Polyph を使います。
+help-hook = エージェントのエディター用フック（Claude Code プラグインが実行します）。
+help-hook-pre-edit = エージェントがファイルを編集する前に: 他のエージェントが確保していれば編集を止め、そうでなければ確保します。

@@ -9,8 +9,8 @@ use polyph_i18n::tr;
 use serde_json::{Value, json};
 
 use crate::client::{self as daemon_client, Api};
-use crate::clients::{self, CLIENTS, Change, Client, Env, Transport};
 use crate::{Ctx, call};
+use polyph_daemon::clients::{self, CLIENTS, Change, Client, Env, Transport};
 
 fn confirm(question: &str) -> anyhow::Result<bool> {
     use std::io::Write;
@@ -138,6 +138,14 @@ pub async fn connect(ctx: &Ctx, names: &[String], http: bool, yes: bool) -> anyh
         let known: Vec<&str> = CLIENTS.iter().map(|c| c.id).collect();
         ctx.out(tr!(l, "connect-none-found", known = known.join(", ")));
         return Ok(0);
+    }
+    // Unless named, skip VS Code when the Polyph extension registers itself.
+    let (targets, by_extension): (Vec<&'static Client>, Vec<&'static Client>) =
+        targets.into_iter().partition(|c| !names.is_empty() || !c.registered_by_extension(&env));
+    for c in &by_extension {
+        if !ctx.json {
+            ctx.out(tr!(l, "connect-by-extension", client = c.name));
+        }
     }
     let cwd = std::env::current_dir()?;
     let mut api = if http { Some(ctx.api().await?) } else { None };
@@ -381,6 +389,9 @@ pub async fn doctor(ctx: &Ctx) -> anyhow::Result<()> {
         for c in CLIENTS {
             let installed = c.installed(&env);
             match clients::current(c, &env) {
+                None if c.registered_by_extension(&env) => {
+                    checks.push(pass(tr!(l, "doctor-client-extension", client = c.name)))
+                }
                 None if installed => checks.push(fail(
                     tr!(l, "doctor-client-unconnected", client = c.name),
                     format!("polyph connect {}", c.id),

@@ -3130,8 +3130,6 @@ dependencies = [
  "time",
  "tokio",
  "tokio-tungstenite 0.30.0",
- "toml",
- "toml_edit",
  "tracing",
  "tracing-subscriber",
 ]
@@ -3191,6 +3189,7 @@ dependencies = [
  "time",
  "tokio",
  "toml",
+ "toml_edit",
  "tracing",
  "yrs",
  "zbus",

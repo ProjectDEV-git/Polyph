@@ -1,0 +1,17 @@
+{
+  "description": "Stops an edit when another agent in the Polyph room has claimed the file, and claims free files for this session.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "polyph hook pre-edit --client claude-code",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

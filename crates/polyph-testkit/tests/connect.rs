@@ -216,3 +216,81 @@ async fn agents_over_the_web_address() {
     assert_eq!(st, 401);
     api.abort();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn edit_hook_checks_and_claims() {
+    let (h, rid, _) = room_of_two().await;
+    let ra = repo();
+    h.nodes[0].call("folder.link", json!({ "room": rid, "dir": ra.path() })).await.unwrap();
+    let file = ra.path().join("src/lib.rs");
+    // Nobody connected yet: allowed, nothing to claim for.
+    let r = h.nodes[0]
+        .call("claims.check", json!({ "cwd": ra.path(), "paths": [file], "client": "claude-code", "claim": true }))
+        .await
+        .unwrap();
+    assert_eq!(r["allowed"], true);
+    assert_eq!(r["claimed"], json!([]));
+    let cc = h.nodes[0].call("mcp.connect", json!({ "cwd": ra.path(), "client": "claude-code" })).await.unwrap();
+    let codex = h.nodes[0].call("mcp.connect", json!({ "cwd": ra.path(), "client": "codex" })).await.unwrap();
+    // A free file is claimed for the Claude Code connection as it edits.
+    let r = h.nodes[0]
+        .call(
+            "claims.check",
+            json!({ "cwd": ra.path().join("src"), "paths": ["lib.rs"], "client": "claude-code", "claim": true }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r["allowed"], true, "{r}");
+    assert_eq!(r["claimed"], json!(["src/lib.rs"]));
+    assert_eq!(r["agent"], cc["label"]);
+    // Its own claim never blocks it; another agent's edit is stopped.
+    let r = h.nodes[0]
+        .call("claims.check", json!({ "cwd": ra.path(), "paths": [file], "client": "claude-code", "claim": true }))
+        .await
+        .unwrap();
+    assert_eq!(r["allowed"], true);
+    let r = h.nodes[0]
+        .call("claims.check", json!({ "cwd": ra.path(), "paths": [file], "client": "codex", "claim": true }))
+        .await
+        .unwrap();
+    assert_eq!(r["allowed"], false, "{r}");
+    assert_eq!(r["blocked"][0]["holder"], "Ann/claude-code");
+    // A directory claim covers the files in it.
+    tool(&h, 0, codex["session"].as_str().unwrap(), "claim_files", json!({ "paths": ["docs/"], "reason": "rewrite" }))
+        .await;
+    let r = h.nodes[0]
+        .call(
+            "claims.check",
+            json!({ "cwd": ra.path(), "paths": [ra.path().join("docs/new.md")], "client": "claude-code" }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r["allowed"], false);
+    assert_eq!(r["blocked"][0]["reason"], "rewrite");
+    // Outside any room: allowed.
+    let elsewhere = tempfile::tempdir().unwrap();
+    h.nodes[0].call("room.close", json!({ "room": rid })).await.unwrap();
+    let r = h.nodes[0]
+        .call("claims.check", json!({ "cwd": elsewhere.path(), "paths": ["x"], "client": "codex" }))
+        .await
+        .unwrap();
+    assert_eq!(r["allowed"], true);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn setup_status_for_the_checklist() {
+    let (h, rid, _) = room_of_two().await;
+    let ra = repo();
+    let s = h.nodes[0].call("setup.status", json!({})).await.unwrap();
+    assert_eq!(s["name"], "Ann");
+    assert_eq!(s["rooms"], 1);
+    assert_eq!(s["members"], 2);
+    assert_eq!(s["agents"], 0);
+    assert_eq!(s["folders"], json!([]));
+    assert!(s["clients"].as_array().unwrap().iter().any(|c| c["id"] == "claude-code"));
+    h.nodes[0].call("folder.link", json!({ "room": rid, "dir": ra.path() })).await.unwrap();
+    h.nodes[0].call("mcp.connect", json!({ "cwd": ra.path(), "client": "zed" })).await.unwrap();
+    let s = h.nodes[0].call("setup.status", json!({})).await.unwrap();
+    assert_eq!(s["folders"][0]["room"], rid.as_str());
+    assert_eq!(s["agents"], 1);
+}

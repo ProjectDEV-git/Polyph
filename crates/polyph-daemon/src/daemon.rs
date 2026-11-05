@@ -1833,6 +1833,11 @@ impl Daemon {
                 crate::external::disconnect(self, &p.session, "disconnected").await
             }
             "mcp.sessions" => ok(crate::external::list(self).await),
+            "setup.status" | "clients.plan" | "clients.connect" => crate::setup::call(self, method, params).await,
+            "claims.check" => {
+                let p: crate::external::CheckParams = param(&params)?;
+                crate::external::check(self, p).await
+            }
             "repo.get" | "repo.set" | "sync.run" => crate::sync::call(self, method, params).await,
             "brief.get" => {
                 let p: RoomParam = param(&params)?;

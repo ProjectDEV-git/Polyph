@@ -277,6 +277,10 @@ async fn dispatch(st: &ApiState, auth: Auth, req: Value) -> Value {
     let Some(method) = req.get("method").and_then(|m| m.as_str()) else {
         return json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32600, "message": "missing method" } });
     };
+    if method == "clients.connect" && auth != Auth::Token {
+        // Writes agents' settings files: only the CLI and the desktop app may.
+        return json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32001, "message": "not allowed from a browser session; run `polyph connect` instead" } });
+    }
     if method == "web.link" {
         // Only the API token's holder (the CLI, the desktop app) can sign in a browser.
         if auth != Auth::Token || st.web_dir.is_none() {

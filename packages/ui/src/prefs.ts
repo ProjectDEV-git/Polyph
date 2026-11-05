@@ -5,6 +5,8 @@ export interface Prefs {
   theme: "system" | "dark" | "light";
   /** "" follows the browser's languages. */
   lang: string;
+  /** The person hid the first-run checklist. */
+  setupHidden?: boolean;
 }
 
 const KEY = "polyph.prefs";
