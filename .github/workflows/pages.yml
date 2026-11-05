@@ -1,0 +1,56 @@
+name: Website
+
+# Publishes the website, the phone app (people join rooms from a browser at
+# /phone/) and the browser client to GitHub Pages:
+# https://projectdev-git.github.io/Polyph/
+#
+# One-time setup: Settings > Pages > Build and deployment > Source:
+# "GitHub Actions".
+
+on:
+  push:
+    branches: [Main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          targets: wasm32-unknown-unknown
+          cache-key: web
+      - uses: ./.github/actions/wasm-bindgen
+      - uses: ./.github/actions/setup-node
+      - name: Build the site under /<repository>
+        run: pnpm --filter @polyph/web build
+        env:
+          POLYPH_BASE_PATH: /${{ github.event.repository.name }}
+      # Pages must serve _next/ as is.
+      - run: touch apps/web/out/.nojekyll
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/out
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

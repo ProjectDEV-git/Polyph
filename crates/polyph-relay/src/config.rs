@@ -52,6 +52,10 @@ pub struct RelayConfig {
     /// TLS certificate and key (PEM). Usually Caddy terminates TLS instead.
     pub tls_cert: Option<PathBuf>,
     pub tls_key: Option<PathBuf>,
+    /// A header that holds the client's address, set by a proxy every
+    /// connection must pass through (`fly-client-ip` on Fly.io). Unset, only
+    /// `X-Forwarded-For` from a proxy on the same machine is trusted.
+    pub client_ip_header: Option<String>,
 }
 
 impl Default for RelayConfig {
@@ -75,6 +79,7 @@ impl Default for RelayConfig {
             public_url: None,
             tls_cert: None,
             tls_key: None,
+            client_ip_header: None,
         }
     }
 }
@@ -128,6 +133,9 @@ impl RelayConfig {
         }
         if let Some(v) = var("TLS_KEY") {
             cfg.tls_key = Some(v.into());
+        }
+        if let Some(v) = var("CLIENT_IP_HEADER").filter(|v| !v.is_empty()) {
+            cfg.client_ip_header = Some(v);
         }
         Ok(cfg)
     }

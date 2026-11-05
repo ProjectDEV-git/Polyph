@@ -51,17 +51,22 @@ async fn metrics(State(hub): State<Arc<Hub>>) -> Response {
     ([("content-type", "text/plain; version=0.0.4")], hub.metrics.render(rooms, bytes, codes)).into_response()
 }
 
-fn client_ip(peer: SocketAddr, headers: &HeaderMap) -> IpAddr {
-    // Only trust X-Forwarded-For from a proxy on the same machine (Caddy).
-    let forwarded = || {
+fn client_ip(peer: SocketAddr, headers: &HeaderMap, trusted: Option<&str>) -> IpAddr {
+    let first = |name: &str| -> Option<IpAddr> {
         headers
-            .get("x-forwarded-for")
+            .get(name)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.split(',').next())
             .and_then(|v| v.trim().parse().ok())
     };
+    // A proxy every connection passes through (Fly.io) names the client in
+    // its own header; trust it only when configured.
+    if let Some(ip) = trusted.and_then(first) {
+        return ip;
+    }
+    // Otherwise only trust X-Forwarded-For from a proxy on the same machine (Caddy).
     match peer.ip().is_loopback() {
-        true => forwarded().unwrap_or(peer.ip()),
+        true => first("x-forwarded-for").unwrap_or(peer.ip()),
         false => peer.ip(),
     }
 }
@@ -72,7 +77,7 @@ async fn ws_handler(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
-    let ip = client_ip(peer, &headers);
+    let ip = client_ip(peer, &headers, hub.cfg.client_ip_header.as_deref());
     let Some((conn, rx)) = hub.connect(ip) else {
         return (StatusCode::TOO_MANY_REQUESTS, "too many connections from this address").into_response();
     };
@@ -215,4 +220,32 @@ where
         return None;
     }
     Some(device)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.insert(*k, v.parse().unwrap());
+        }
+        h
+    }
+
+    #[test]
+    fn client_ip_trusts_only_what_it_should() {
+        let local: SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        let remote: SocketAddr = "[fdaa::3]:5000".parse().unwrap();
+        let h = headers(&[("x-forwarded-for", "203.0.113.7, 10.0.0.1"), ("fly-client-ip", "198.51.100.9")]);
+        // Caddy on the same machine: X-Forwarded-For.
+        assert_eq!(client_ip(local, &h, None).to_string(), "203.0.113.7");
+        // A remote peer cannot claim an address.
+        assert_eq!(client_ip(remote, &h, None).to_string(), "fdaa::3");
+        // Behind Fly's proxy: its header, from any peer.
+        assert_eq!(client_ip(remote, &h, Some("fly-client-ip")).to_string(), "198.51.100.9");
+        // The configured header missing: back to the usual rules.
+        assert_eq!(client_ip(remote, &headers(&[]), Some("fly-client-ip")).to_string(), "fdaa::3");
+    }
 }

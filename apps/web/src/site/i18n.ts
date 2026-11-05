@@ -1,6 +1,7 @@
 // Strings and links for the website. Pages render at build time, one copy
 // per language: English at the root, the others under /th/, /ja/, /zh-Hans/.
 import { LANGS, Localizer } from "@polyph/ui/core";
+import { withBase } from "../base";
 
 export type Lang = (typeof LANGS)[number];
 export const SITE_LANGS: readonly Lang[] = LANGS;
@@ -25,9 +26,10 @@ export function strings(lang: Lang): Localizer {
   return l;
 }
 
-/** A site path in a language: href("th", "/pricing/") is "/th/pricing/". */
+/** A site path in a language: href("th", "/pricing/") is "/th/pricing/"
+ * (after the base path, when the site has one). */
 export function href(lang: Lang, path: string): string {
-  return lang === "en" ? path : `/${lang}${path}`;
+  return withBase(lang === "en" ? path : `/${lang}${path}`);
 }
 
 export function asLang(s: string): Lang {

@@ -669,7 +669,7 @@ impl Daemon {
                     }
                 }
                 for _ in 0..4 {
-                    let (code, waiter, lan) = {
+                    let (code, waiter, lan, relay) = {
                         let mut c = rt.ctx.lock().await;
                         if c.core.quick && p.reusable {
                             return Err(ApiError::BadRequest("quick sessions only have one-time codes".into()));
@@ -678,7 +678,9 @@ impl Daemon {
                             return Err(ApiError::Forbidden("viewers cannot invite people".into()));
                         }
                         let (code, waiter) = host_code(&mut c, kind.clone(), now + ttl).await?;
-                        (code, waiter, c.lan.as_ref().map(|l| l.addr.to_string_with_pin()))
+                        // Browsers reach internet relays only, not a LAN relay with its own certificate.
+                        let relay = c.relay.pin.is_none().then(|| c.relay.url.clone());
+                        (code, waiter, c.lan.as_ref().map(|l| l.addr.to_string_with_pin()), relay)
                     };
                     // Wait (without holding the room lock) until the relay hosts it,
                     // so a joiner who types the code immediately finds it.
@@ -690,7 +692,7 @@ impl Daemon {
                         Some(true) => {
                             let pending = !rt.ctx.lock().await.connected;
                             return ok(
-                                json!({ "code": code.to_string(), "expires_at": now + ttl, "reusable": p.reusable, "lan": lan, "pending": pending }),
+                                json!({ "code": code.to_string(), "expires_at": now + ttl, "reusable": p.reusable, "lan": lan, "pending": pending, "relay": relay }),
                             );
                         }
                         Some(false) => continue,

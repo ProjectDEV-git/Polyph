@@ -15,11 +15,13 @@ import {
   type Platform,
 } from "@polyph/ui";
 import { useEffect, useMemo, useState } from "react";
+import { setAssetBase } from "../base";
 import { loadEngine, supported } from "./engine";
 import { Vault } from "./storage";
 
-/** The relay a phone uses when no pairing link names one. */
-const DEFAULT_RELAY = process.env.NEXT_PUBLIC_POLYPH_RELAY ?? "wss://relay.polyph.dev/ws";
+/** The relay a phone uses when no pairing link names one: the project's
+ * relay on Fly.io (deploy/fly), unless the build names another. */
+const DEFAULT_RELAY = process.env.NEXT_PUBLIC_POLYPH_RELAY || "wss://polyph-relay.fly.dev/ws";
 
 /** Views that work without a daemon. */
 const VIEWS = ["chat", "board", "agents", "activity", "whiteboards"] as const;
@@ -57,6 +59,7 @@ async function showNotification(title: string, body: string) {
 
 async function start(l: Localizer): Promise<Phase> {
   if (!supported()) return { t: "unsupported" };
+  setAssetBase();
   const link = parseLink(window.location.hash);
   // Drop the code and member id from the address bar and history. Keep the
   // router's own history state, or Next.js reloads the page.

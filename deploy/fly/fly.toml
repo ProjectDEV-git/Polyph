@@ -1,0 +1,44 @@
+# The Polyph relay on Fly.io: wss://polyph-relay.fly.dev/ws, the default
+# relay built into polyph, the desktop app and the phone app.
+# First deploy and updates: deploy/fly/README.md.
+
+app = "polyph-relay"
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  POLYPH_RELAY_PUBLIC_URL = "wss://polyph-relay.fly.dev/ws"
+  # Every connection arrives through Fly's proxy, which names the client here.
+  POLYPH_RELAY_CLIENT_IP_HEADER = "fly-client-ip"
+
+# Encrypted room snapshots, so rooms survive restarts and deploys.
+[[mounts]]
+  source = "relay_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  # Rooms are open WebSockets: keep one machine running at all times.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    # Count open connections, not requests; Fly's default of 25 is too low.
+    type = "connections"
+    soft_limit = 800
+    hard_limit = 1000
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/healthz"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

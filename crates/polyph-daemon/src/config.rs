@@ -4,18 +4,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::paths::Paths;
 
-/// Hosted relay used when the user has not chosen one. Set at build time with
-/// `POLYPH_DEFAULT_RELAY`; the product domain is not final (see STUBS.md).
+/// Relay used when the user has not chosen one: the project's relay on
+/// Fly.io (deploy/fly). A build can name another with `POLYPH_DEFAULT_RELAY`.
 pub const DEFAULT_RELAY: &str = match option_env!("POLYPH_DEFAULT_RELAY") {
-    Some(v) => v,
-    None => "wss://relay.polyph.dev/ws",
+    Some(v) if !v.is_empty() => v,
+    _ => "wss://polyph-relay.fly.dev/ws",
 };
 
 /// Polyph's hosted account service (`polyph login`). Set at build time with
 /// `POLYPH_DEFAULT_CLOUD`; the product domain is not final (see STUBS.md).
 pub const DEFAULT_CLOUD: &str = match option_env!("POLYPH_DEFAULT_CLOUD") {
-    Some(v) => v,
-    None => "https://api.polyph.dev",
+    Some(v) if !v.is_empty() => v,
+    _ => "https://api.polyph.dev",
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
