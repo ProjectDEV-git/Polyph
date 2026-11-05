@@ -197,6 +197,7 @@ async fn thirty_agents_on_a_large_repository() {
     // Who holds each file right now, as the agents see their own claims.
     let holding: Arc<Mutex<HashMap<String, String>>> = Arc::default();
     let overlaps = Arc::new(Mutex::new(0usize));
+    let errors: Arc<Mutex<Vec<String>>> = Arc::default();
     let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     // The merge queue's stand-in: finished cards (review) move to done.
@@ -224,8 +225,8 @@ async fn thirty_agents_on_a_large_repository() {
     let started = Instant::now();
     let mut workers = vec![];
     for (node, session, label) in sessions {
-        let (h, stats, taken, holding, overlaps) =
-            (h.clone(), stats.clone(), taken.clone(), holding.clone(), overlaps.clone());
+        let (h, stats, taken, holding, overlaps, errors) =
+            (h.clone(), stats.clone(), taken.clone(), holding.clone(), overlaps.clone(), errors.clone());
         let total = cards;
         workers.push(tokio::spawn(async move {
             let mut idle = 0;
@@ -248,6 +249,12 @@ async fn thirty_agents_on_a_large_repository() {
                 // Claim the files, waiting while another agent holds one.
                 for attempt in 0.. {
                     let r = call(&h, node, &session, &stats, "claim_files", json!({ "paths": fs, "reason": id })).await;
+                    if r["error"] == true {
+                        // The arbiter did not answer in time: count it, try again.
+                        errors.lock().push(r["text"].as_str().unwrap_or_default().to_string());
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        continue;
+                    }
                     if r["data"]["denied"].as_array().unwrap().is_empty() {
                         break;
                     }
@@ -304,7 +311,7 @@ async fn thirty_agents_on_a_large_repository() {
     let report = format!(
         "files {files}, agents {agents} on 3 devices, cards {cards} ({} depend on others)\n\
          repository written and committed in {:.1} s; git ls-files {} ms; area lookups for every file {} ms ({in_areas} in areas)\n\
-         all cards done in {:.1} s by {} agents; {} claim(s) had to wait for another agent; search {} ms\n{}",
+         all cards done in {:.1} s by {} agents; {} claim(s) had to wait for another agent; {} claim call(s) failed and were retried; search {} ms\n{}",
         cards - dependent,
         setup_repo.as_secs_f64(),
         ls_files.as_millis(),
@@ -312,8 +319,12 @@ async fn thirty_agents_on_a_large_repository() {
         work.as_secs_f64(),
         by_agent.len(),
         overlaps.lock(),
+        errors.lock().len(),
         search.as_millis(),
         stats.lock().report()
     );
     println!("{report}");
+    if let Some(e) = errors.lock().first() {
+        println!("first failed claim: {e}");
+    }
 }
