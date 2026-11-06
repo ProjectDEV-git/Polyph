@@ -81,6 +81,23 @@ fn b64(d: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(d)
 }
 
+/// The unfinished last word of a batch is held back (up to this many bytes)
+/// and redacted together with what follows, so a secret the program writes
+/// in pieces (a shell echoing typed keys) is still recognised.
+const HOLD_MAX: usize = 512;
+/// How long held-back output waits for more before it is sent anyway.
+const HOLD: Duration = Duration::from_millis(150);
+
+/// Splits off the unfinished last word of `data` (everything after the last
+/// whitespace), unless it is longer than [`HOLD_MAX`].
+fn take_tail(data: &mut Vec<u8>) -> Vec<u8> {
+    let start = data.iter().rposition(|b| b.is_ascii_whitespace()).map_or(0, |i| i + 1);
+    if data.len() - start > HOLD_MAX {
+        return vec![];
+    }
+    data.split_off(start)
+}
+
 /// Output as sent: secrets redacted where the chunk is text.
 fn clean(data: Vec<u8>) -> Vec<u8> {
     match String::from_utf8(data) {
@@ -288,14 +305,36 @@ async fn pump(
     term: Arc<Term>,
     mut out: mpsc::UnboundedReceiver<Vec<u8>>,
 ) {
-    while let Some(first) = out.recv().await {
-        let mut data = first;
-        let deadline = tokio::time::Instant::now() + BATCH;
-        while data.len() < MAX_CHUNK {
-            match tokio::time::timeout_at(deadline, out.recv()).await {
-                Ok(Some(more)) => data.extend(more),
-                _ => break,
+    let mut held: Vec<u8> = vec![];
+    loop {
+        // `None`: the program ended. `Some(None)`: held output waited long
+        // enough and goes out as it is.
+        let next = if held.is_empty() {
+            out.recv().await.map(Some)
+        } else {
+            match tokio::time::timeout(HOLD, out.recv()).await {
+                Ok(next) => next.map(Some),
+                Err(_) => Some(None),
             }
+        };
+        let mut data = std::mem::take(&mut held);
+        let ended = next.is_none();
+        if let Some(Some(first)) = next {
+            data.extend(first);
+            let deadline = tokio::time::Instant::now() + BATCH;
+            while data.len() < MAX_CHUNK {
+                match tokio::time::timeout_at(deadline, out.recv()).await {
+                    Ok(Some(more)) => data.extend(more),
+                    _ => break,
+                }
+            }
+            held = take_tail(&mut data);
+        }
+        if data.is_empty() {
+            if ended {
+                break;
+            }
+            continue;
         }
         let data = clean(data);
         let mut ctx = rt.ctx.lock().await;
@@ -452,4 +491,38 @@ pub async fn read(d: &Arc<Daemon>, room: &str, term: &str) -> Result<Value, ApiE
     let t = find(&mut ctx, term)?;
     let data = t.scrollback.contents();
     Ok(json!({ "terminal": t.info, "seq": t.seq, "data": b64(&data), "text": String::from_utf8_lossy(&data) }))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    #[test]
+    fn holds_the_unfinished_last_word() {
+        let mut d = b"$ echo hi ghp_aBc".to_vec();
+        assert_eq!(take_tail(&mut d), b"ghp_aBc");
+        assert_eq!(d, b"$ echo hi ");
+        let mut d = b"done\n".to_vec();
+        assert!(take_tail(&mut d).is_empty());
+        let mut d = vec![b'x'; HOLD_MAX + 1];
+        assert!(take_tail(&mut d).is_empty(), "too long to hold");
+        assert_eq!(d.len(), HOLD_MAX + 1);
+    }
+
+    /// A token echoed in two pieces is redacted once the pieces are joined.
+    #[test]
+    fn a_token_split_across_batches_is_redacted() {
+        let key = ["gh", "p_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"].concat();
+        let (one, two) = key.split_at(12);
+        let mut first = format!("$ echo {one}").into_bytes();
+        let held = take_tail(&mut first);
+        let sent_first = String::from_utf8(clean(first)).unwrap();
+        let mut second = held;
+        second.extend(format!("{two}\n").into_bytes());
+        let sent_second = String::from_utf8(clean(second)).unwrap();
+        let all = format!("{sent_first}{sent_second}");
+        assert!(!all.contains(one) || !all.contains(two), "{all}");
+        assert!(all.contains("[REDACTED:github-token]"), "{all}");
+    }
 }
