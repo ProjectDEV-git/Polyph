@@ -100,7 +100,9 @@ pub struct RoomCtx {
     pub codes: HashMap<RendezvousId, HostedCode>,
     joins: HashMap<u64, HostJoin>,
     outbox: VecDeque<Vec<u8>>,
-    pub claim_waiters: HashMap<ObjectId, ClaimWaiter>,
+    /// Claim requests an agent is waiting on, by request id: the agent and
+    /// where to send the answer.
+    pub claim_waiters: HashMap<ObjectId, (ObjectId, ClaimWaiter)>,
     /// Agent tasks waiting for a human to answer an approval.
     pub approval_waiters: HashMap<ObjectId, oneshot::Sender<polyph_proto::messages::Decision>>,
     /// Recent transcript events per agent (ours and teammates'), for follow mode.
@@ -219,8 +221,23 @@ pub async fn apply(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, effects
                         finish_knocked_join(ctx, *knock, &reply).await;
                     }
                     RoomEvent::ClaimDecision { request, granted, denied } => {
-                        if let Some(tx) = ctx.claim_waiters.remove(request) {
-                            let _ = tx.send((granted.clone(), denied.clone()));
+                        if let Some((agent, tx)) = ctx.claim_waiters.remove(request)
+                            && tx.send((granted.clone(), denied.clone())).is_err()
+                            && !granted.is_empty()
+                            // A retry by the same agent renews these same
+                            // claims; leave them to it.
+                            && !ctx.claim_waiters.values().any(|(a, _)| *a == agent)
+                        {
+                            // The asker stopped waiting (it timed out and was
+                            // told the claim failed). Give the grant back so
+                            // nobody is blocked by a lease no one uses.
+                            let ids: Vec<ObjectId> = granted.iter().map(|c| c.id).collect();
+                            for fx in ctx.core.release_claims(&ids) {
+                                match fx {
+                                    Effect::Send(m) => send_msg(ctx, &m).await,
+                                    Effect::Event(e) => shared.emit(ApiEvent::room(&rt.id, &e)),
+                                }
+                            }
                         }
                     }
                     RoomEvent::ApprovalResolved { id, decision, .. } => {
@@ -419,7 +436,11 @@ async fn tick_loop(rt: Arc<RoomRuntime>, shared: Arc<Shared>) {
         }
         if ctx.dirty {
             ctx.dirty = false;
-            if let Err(e) = shared.save_room(&mut ctx.core) {
+            // Encrypting and writing a large room is slow; do it after
+            // letting go of the room so agents and peers are not held up.
+            let snapshot = shared.room_snapshot(&mut ctx.core);
+            drop(ctx);
+            if let Err(e) = snapshot.and_then(|s| shared.write_room(&s)) {
                 warn!(error = %e, "saving room failed");
             }
         }

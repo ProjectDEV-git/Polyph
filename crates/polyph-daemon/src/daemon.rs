@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, broadcast};
 use tracing::info;
+use zeroize::Zeroizing;
 
 use crate::clock::Clock;
 use crate::config::UserConfig;
@@ -130,6 +131,21 @@ impl DaemonOptions {
     }
 }
 
+/// A room's saved form, ready to encrypt and write (holds plaintext, wiped
+/// when dropped).
+pub struct RoomSnapshot {
+    hexid: String,
+    /// Taken in order under the room's lock, so a higher number is newer.
+    seq: u64,
+    bytes: Zeroizing<Vec<u8>>,
+}
+
+impl std::fmt::Debug for RoomSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RoomSnapshot({} #{}, {} bytes)", self.hexid, self.seq, self.bytes.len())
+    }
+}
+
 pub struct Shared {
     pub paths: Paths,
     pub key: StorageKey,
@@ -144,6 +160,10 @@ pub struct Shared {
     pub daemon: std::sync::OnceLock<std::sync::Weak<Daemon>>,
     /// Runs `finish_task` calls from agents (see `coord::FinishJob`).
     pub finisher: std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<crate::coord::FinishJob>>,
+    save_seq: std::sync::atomic::AtomicU64,
+    /// The newest snapshot written per room; held while writing, so writes
+    /// never overlap and an older snapshot never replaces a newer one.
+    room_writes: parking_lot::Mutex<HashMap<String, u64>>,
 }
 
 impl std::fmt::Debug for Shared {
@@ -165,11 +185,25 @@ impl Shared {
     }
 
     pub fn save_room(&self, core: &mut RoomCore) -> anyhow::Result<()> {
-        let saved = core.save();
-        let hexid = core.id.to_hex();
-        let bytes = to_cbor(&saved)?;
-        let sealed = self.key.seal(hexid.as_bytes(), &bytes)?;
-        write_private(&self.paths.room_file(&hexid), &sealed)?;
+        let snapshot = self.room_snapshot(core)?;
+        self.write_room(&snapshot)
+    }
+
+    /// The room's saved form, taken while the room is locked. Encrypting and
+    /// writing it ([`Self::write_room`]) can happen after the lock is let go.
+    pub fn room_snapshot(&self, core: &mut RoomCore) -> anyhow::Result<RoomSnapshot> {
+        let seq = self.save_seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(RoomSnapshot { hexid: core.id.to_hex(), seq, bytes: Zeroizing::new(to_cbor(&core.save())?) })
+    }
+
+    pub fn write_room(&self, s: &RoomSnapshot) -> anyhow::Result<()> {
+        let mut written = self.room_writes.lock();
+        if written.get(&s.hexid).is_some_and(|&w| w > s.seq) {
+            return Ok(());
+        }
+        let sealed = self.key.seal(s.hexid.as_bytes(), &s.bytes)?;
+        write_private(&self.paths.room_file(&s.hexid), &sealed)?;
+        written.insert(s.hexid.clone(), s.seq);
         Ok(())
     }
 
@@ -294,6 +328,8 @@ impl Daemon {
             events,
             daemon: std::sync::OnceLock::new(),
             finisher: std::sync::OnceLock::new(),
+            save_seq: std::sync::atomic::AtomicU64::new(0),
+            room_writes: parking_lot::Mutex::new(HashMap::new()),
         });
         let d = Arc::new(Self {
             shared: shared.clone(),

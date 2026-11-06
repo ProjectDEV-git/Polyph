@@ -323,7 +323,12 @@ pub(crate) fn rel_path(worktree: &Path, p: &str) -> Result<String, String> {
     let rel = if pb.is_absolute() {
         match pb.strip_prefix(worktree) {
             Ok(r) => r.to_path_buf(),
-            Err(_) => return Err(format!("{p} is outside your worktree")),
+            // The same folder can be spelled two ways through a symlink
+            // (macOS /var is /private/var), so compare resolved paths too.
+            Err(_) => match resolved(pb).strip_prefix(resolved(worktree)) {
+                Ok(r) => r.to_path_buf(),
+                Err(_) => return Err(format!("{p} is outside your worktree")),
+            },
         }
     } else {
         pb.to_path_buf()
@@ -342,6 +347,25 @@ pub(crate) fn rel_path(worktree: &Path, p: &str) -> Result<String, String> {
         s = format!("{s}#{sym}");
     }
     Ok(s)
+}
+
+/// `p` with symlinks resolved in its longest existing part; the rest (files
+/// not created yet) is kept as written.
+fn resolved(p: &Path) -> std::path::PathBuf {
+    let mut base = p;
+    let mut rest = Vec::new();
+    loop {
+        if let Ok(c) = polyph_git::canonical(base) {
+            return rest.iter().rev().fold(c, |acc, n| acc.join(n));
+        }
+        match (base.parent(), base.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_os_string());
+                base = parent;
+            }
+            _ => return p.to_path_buf(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -528,7 +552,7 @@ pub(crate) async fn request_claims(
             .request_claims(&h.agent, targets, reason, h.task, polyph_core::room::DEFAULT_LEASE, now)
             .map_err(|e| ToolOutput::err(e.to_string()))?;
         let (tx, rx) = oneshot::channel();
-        ctx.claim_waiters.insert(req, tx);
+        ctx.claim_waiters.insert(req, (h.agent.id, tx));
         apply(rt, &mut ctx, shared, fx).await;
         rx
     };
@@ -923,6 +947,25 @@ mod tests {
         assert!(rel_path(w, "../other/a.rs").is_err());
         assert!(rel_path(w, "/etc/passwd").is_err());
         assert!(rel_path(w, "src/../../x").is_err());
+    }
+
+    /// A worktree reached through a symlink (macOS /var is /private/var)
+    /// still contains its files, including ones not created yet.
+    #[cfg(unix)]
+    #[test]
+    fn paths_through_a_symlink() {
+        #![allow(clippy::unwrap_used)]
+        let t = tempfile::tempdir().unwrap();
+        let real = t.path().join("real");
+        std::fs::create_dir_all(real.join("src")).unwrap();
+        let link = t.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let w = polyph_git::canonical(&real).unwrap();
+        let via = |rest: &str| link.join(rest).to_string_lossy().into_owned();
+        assert_eq!(rel_path(&w, &via("src/a.rs")).unwrap(), "src/a.rs");
+        assert_eq!(rel_path(&w, &via("docs/new.md")).unwrap(), "docs/new.md");
+        assert_eq!(rel_path(&link, &w.join("src/a.rs").to_string_lossy()).unwrap(), "src/a.rs");
+        assert!(rel_path(&w, &t.path().join("other/a.rs").to_string_lossy()).is_err());
     }
 
     fn msg(hops: u8, from_agent: bool, reply_to: Option<ObjectId>) -> InboxMessage {

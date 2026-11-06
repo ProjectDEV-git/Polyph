@@ -923,11 +923,10 @@ pub async fn handoff(
         let next = daemon.agent(started["id"].as_str().unwrap_or_default()).await?;
         let mut ctx = rt.ctx.lock().await;
         let now = daemon.shared.clock.now();
-        if let Ok((req, fx)) =
+        // Nobody waits for the answer: the grant simply stands.
+        if let Ok((_, fx)) =
             ctx.core.request_claims(&next.agent, &held, "taken over", next.task, polyph_core::room::DEFAULT_LEASE, now)
         {
-            let (tx, _rx) = tokio::sync::oneshot::channel();
-            ctx.claim_waiters.insert(req, tx);
             apply(&rt, &mut ctx, &daemon.shared, fx).await;
         }
     }
