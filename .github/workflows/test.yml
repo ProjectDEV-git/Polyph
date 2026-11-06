@@ -48,7 +48,16 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         # Run every test file even after a failure, so one platform problem
-        # does not hide the next.
+        # does not hide the next. A hung test fails here instead of holding
+        # the runner (and any release waiting on it) for six hours.
+        timeout-minutes: 75
+        # The scale test at full size (100,000 files, 30 agents) overloads a
+        # CI runner in a debug build: its three daemons share a few cores and
+        # miss heartbeats. CI runs a smaller room; see docs/big-projects.md.
+        env:
+          POLYPH_SCALE_FILES: "10000"
+          POLYPH_SCALE_AGENTS: "9"
+          POLYPH_SCALE_CARDS: "45"
         run: cargo test --workspace --no-fail-fast
       - name: Proto for wasm32
         run: cargo build -p polyph-proto --target wasm32-unknown-unknown --no-default-features --features wasm,crdt

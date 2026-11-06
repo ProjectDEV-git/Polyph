@@ -175,7 +175,7 @@ async fn claim_and_allow(
         match ctx.core.request_claims(&h.agent, targets, reason, h.task, polyph_core::room::DEFAULT_LEASE, now) {
             Ok((req, fx)) => {
                 let (tx, rx) = oneshot::channel();
-                ctx.claim_waiters.insert(req, tx);
+                ctx.claim_waiters.insert(req, (h.agent.id, tx));
                 apply(rt, &mut ctx, shared, fx).await;
                 rx
             }

@@ -252,6 +252,7 @@ async fn thirty_agents_on_a_large_repository() {
                     if r["error"] == true {
                         // The arbiter did not answer in time: count it, try again.
                         errors.lock().push(r["text"].as_str().unwrap_or_default().to_string());
+                        assert!(attempt < 40, "{label}: the arbiter never answered for {fs:?}: {r}");
                         tokio::time::sleep(Duration::from_millis(200)).await;
                         continue;
                     }

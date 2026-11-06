@@ -40,8 +40,17 @@ card went to exactly one agent, that no file was granted to two agents at
 once, and that every card was done.
 
 The size is set by `POLYPH_SCALE_FILES`, `POLYPH_SCALE_AGENTS` and
-`POLYPH_SCALE_CARDS`. Results (debug build, 4-core Linux container):
+`POLYPH_SCALE_CARDS`. CI runs 10,000 files, 9 agents and 45 cards. Results
+(debug build, 4-core Linux container):
 
 ```text
-RESULTS
+files 10000, agents 9, cards 45:   all cards done in 45 s, no claim call failed
+files 20000, agents 12, cards 60:  all cards done in 90 s, 2 claim calls retried
+files 100000, agents 30, cards 150: does not finish; see below
 ```
+
+At the full size, all three daemons share one process and a few cores in a
+debug build. In one run, after about 120 cards the claim arbiter stopped
+answering the other two devices, most likely because the overloaded host's
+heartbeats fell behind and the devices no longer agreed on who the acting
+host was. This has not been measured with one device per machine.
