@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash",
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "NotebookEdit",
+      "Agent",
+      "Skill",
+      "WebFetch",
+      "WebSearch",
+      "mcp__Linear",
+      "mcp__github",
+      "mcp__claude-code-remote",
+      "mcp__Firecrawl"
+    ]
+  }
+}
