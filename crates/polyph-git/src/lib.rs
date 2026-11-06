@@ -718,7 +718,10 @@ mod tests {
         let out = tempfile::tempdir().unwrap();
         let mine = clone_from(&url, &out.path().join("mine"), Some("main"), true).unwrap();
         assert_eq!(mine.git(&["config", "remote.origin.promisor"]).unwrap().trim(), "true", "blobless clone");
-        assert_eq!(std::fs::read_to_string(mine.root().join("lib.rs")).unwrap(), "fn a() {}\n");
+        // The clone follows the machine's git settings, which on Windows
+        // runners check files out with CRLF line endings.
+        let text = std::fs::read_to_string(mine.root().join("lib.rs")).unwrap();
+        assert_eq!(text.replace("\r\n", "\n"), "fn a() {}\n");
         assert_eq!(mine.file_count().unwrap(), 1);
         // Up to date.
         let rep = mine.sync("origin").unwrap();
