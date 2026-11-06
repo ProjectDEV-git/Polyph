@@ -268,7 +268,7 @@ async fn handle(d: Arc<Daemon>, rt: Arc<RoomRuntime>, h: HostEvent) {
 
 /// An enrollment for a new agent host: the command to run on the server.
 pub async fn invite(d: &Arc<Daemon>, rt: &RoomRuntime) -> ApiResult {
-    let inv = Box::pin(d.call("room.invite", json!({ "room": rt.id.to_hex() }))).await?;
+    let inv = d.call_nested("room.invite", json!({ "room": rt.id.to_hex() })).await?;
     let code = inv["code"].as_str().unwrap_or_default().to_string();
     let member = d.shared.member_id()?.to_hex();
     let relay = rt.ctx.lock().await.relay.to_string_with_pin();
@@ -317,7 +317,7 @@ pub async fn join(d: &Arc<Daemon>, p: Value) -> ApiResult {
     if let Some(n) = p.name {
         params["name"] = json!(n);
     }
-    let v = Box::pin(d.call("join", params)).await?;
+    let v = d.call_nested("join", params).await?;
     if let Some(id) = v["id"].as_str() {
         {
             let mut cfg = d.shared.config.lock();

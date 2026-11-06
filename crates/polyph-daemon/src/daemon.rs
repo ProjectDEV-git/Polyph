@@ -511,6 +511,26 @@ impl Daemon {
         rt
     }
 
+    /// Runs an API call from inside another one as its own task. `call` is one
+    /// large state machine; awaiting it inside itself nests two of its poll
+    /// frames on one thread stack, which overflowed tokio's 2 MiB workers in
+    /// debug builds. A separate task starts again at the top of a stack.
+    /// The boxed `dyn Future + Send` return type also breaks the `Send`
+    /// inference cycle between `call` and this method.
+    pub(crate) fn call_nested(
+        self: &Arc<Self>,
+        method: &'static str,
+        params: Value,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ApiResult> + Send>> {
+        let d = self.clone();
+        Box::pin(async move {
+            match tokio::spawn(async move { d.call(method, params).await }).await {
+                Ok(r) => r,
+                Err(e) => Err(ApiError::Failed(format!("{method} did not finish: {e}"))),
+            }
+        })
+    }
+
     /// Dispatches one local API call.
     pub async fn call(self: &Arc<Self>, method: &str, params: Value) -> ApiResult {
         let now = self.shared.clock.now();
@@ -784,7 +804,7 @@ impl Daemon {
                         "this room uses a LAN relay with its own certificate, which phone browsers cannot reach; host it on an internet relay to pair a phone".into(),
                     ));
                 }
-                let inv = Box::pin(self.call("room.invite", json!({ "room": rt.id.to_hex() }))).await?;
+                let inv = self.call_nested("room.invite", json!({ "room": rt.id.to_hex() })).await?;
                 let code = inv["code"].as_str().unwrap_or_default().to_string();
                 let member = self.shared.member_id()?.to_hex();
                 let base = p.base.unwrap_or_else(crate::phone::default_base);

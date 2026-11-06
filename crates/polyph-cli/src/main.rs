@@ -682,7 +682,9 @@ fn main() {
         },
     };
     let ctx = Ctx { l: Localizer::new(&lang), json: cli.json, paths };
-    let rt = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+    // The daemon's API dispatcher is a large future; 8 MiB worker stacks
+    // (tokio's default is 2 MiB) leave room for it in every build profile.
+    let rt = match tokio::runtime::Builder::new_multi_thread().thread_stack_size(8 << 20).enable_all().build() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{e}");
