@@ -159,12 +159,12 @@ daemon API (`inbox.send`), the TUI and the apps, but not yet from the CLI.
 
 ## Milestone 8 gaps
 
-- **Nublet provider: skipped** (2026-11-04, the project owner's decision).
-  The brief names a Nublet provider, but Nublet's provider interface is not
-  in the repository and could not be found, so the work moved on to M9
-  without it. When it is picked up, the status feed (`polyph status
-  --watch`, NDJSON, versioned in `polyph-proto::status`) is what it would
-  read. Nothing else depends on it.
+- **Nublet provider** is built on Nublet's side (kaorii-ako/nublet#7, a
+  small provider contract plus a Polyph provider that reads the D-Bus status
+  service; see `docs/nublet.md`). Not yet run inside GNOME Shell (no desktop
+  in the build environment) and not merged into Nublet. Clicking an approval
+  opens `polyph web`, not the single approval: Polyph has no link to one
+  approval yet.
 - **One room per phone.** The phone engine holds one room; joining another
   means leaving the first on that phone (Settings > Leave this room).
 - **No push when the phone app is closed.** Approval alerts show while the

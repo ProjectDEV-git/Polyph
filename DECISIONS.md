@@ -425,9 +425,14 @@ could not be followed exactly. Newest at the bottom of each section.
 ## Skipped work
 
 - **The Nublet provider (M8) was skipped** on 2026-11-04 at the project
-  owner's request: Nublet's provider interface was not available, and an
-  integration guessed without it would have been wrong. The status feed it
-  would read already exists. Tracked in `STUBS.md` and `PLAN.md`.
+  owner's request: Nublet's provider interface was not available. It was
+  picked up in the beta (2026-11-06): Nublet had no provider interface, so
+  the beta team proposed a minimal one in Nublet (kaorii-ako/nublet#7: id,
+  title, icon, a pure parse function, `start(host)` and `stop()`) and built
+  the Polyph provider on it. It reads the existing read-only D-Bus service
+  `org.polyph.Status1` instead of a new channel, and it does not approve or
+  deny from the pill: the D-Bus service stays read-only, and the person
+  decides with the request's full context in Polyph. See `docs/nublet.md`.
 
 ## Process
 
