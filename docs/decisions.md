@@ -70,3 +70,9 @@ architecture decisions stay in `DECISIONS.md` at the root.
   network commands and refuses nested repositories. Landlock and Windows
   stay open for SEC-13 with a warning at agent start. Not a hard stop: no
   wire change, and it narrows what agents can do.
+- **5-hour token limit is about 62M tokens** (Kao, 2026-11-07). ccusage
+  counts cache reads in that total, and so does the 75% rule.
+  `.claude/scripts/usage-check.sh` takes it as `POLYPH_TOKEN_LIMIT`. Cloud
+  sessions do not run the status line, so `statusline-capture.sh` is only
+  useful in a local terminal session. Kao's reset time wins over ccusage's
+  block end when they differ (09:40 vs 10:00 UTC on 2026-11-07).

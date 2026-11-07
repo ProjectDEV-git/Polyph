@@ -68,8 +68,9 @@ can run, so pause before it.
 - At most 3 workers at once. Give each worker the exact files to read. Do not
   re-read large files already summarized. Use Haiku for logs and CI output.
 - At the start of every loop iteration run
-  `npx ccusage@latest blocks --active --token-limit max` and record tokens,
-  percent of limit and reset time in `docs/progress.md`. If it gives no
+  `POLYPH_TOKEN_LIMIT=62000000 .claude/scripts/usage-check.sh` (ccusage with
+  Kao's 5-hour limit of about 62M tokens) and record tokens, percent and
+  reset time in `docs/progress.md`. If it gives no
   percentage, count worker dispatches and checkpoint after every 6 (see
   `docs/decisions.md`, "Usage measurement in cloud sessions").
 - At 75% of the block: stop dispatching, let running workers finish, commit
