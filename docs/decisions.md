@@ -70,6 +70,13 @@ architecture decisions stay in `DECISIONS.md` at the root.
   network commands and refuses nested repositories. Landlock and Windows
   stay open for SEC-13 with a warning at agent start. Not a hard stop: no
   wire change, and it narrows what agents can do.
+- **PR #15 upgrade gap: re-issue on load, not a documented limit.** The
+  architect found that members let in on 0.1.2 by a Maintainer whose role
+  later changed would be dropped silently by devices that join after the
+  upgrade. Accepting that would break existing rooms (a hard stop). Lead's
+  call: when an Owner or Maintainer daemon loads a room, it re-issues held
+  peers whose chain runs through a superseded issuer, as `change_role`
+  does. No wire change, so it stays out of Kao's queue.
 - **5-hour token limit is about 62M tokens** (Kao, 2026-11-07). ccusage
   counts cache reads in that total, and so does the 75% rule.
   `.claude/scripts/usage-check.sh` takes it as `POLYPH_TOKEN_LIMIT`. Cloud
