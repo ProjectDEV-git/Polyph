@@ -147,9 +147,15 @@ pass. Sent to the architect reviewer and the security auditor.
 Linear: DF items filed as KAO-91 (DF-1), KAO-92 (DF-2), KAO-93 (DF-3),
 KAO-94 (DF-4, DF-5). 12:54 UTC reading: new ccusage block, 0%.
 
+Lead's check run passed for #14 (0bd1d69), #16 (e1e00ef) and DF-1/2
+(4c8a9d6): tests, i18n, clippy and fmt all clean. #15 architect: CHANGES
+REQUESTED (upgrade gap, decided as re-issue on load; see decisions). #16
+security re-audit and #14 architect re-review dispatched. DF-1/2 opened as
+PR #17.
+
 ### Next
 
-1. Read the lead's check run for #14, #16 and DF-1/2
+1. (done) Read the lead's check run for #14, #16 and DF-1/2
    (`verify-3.txt` in the session scratchpad); send back any failure.
 2. #15 reviews: merge only with APPROVE and SIGN-OFF.
 3. #14 and #16 to the architect reviewer and the security auditor.
