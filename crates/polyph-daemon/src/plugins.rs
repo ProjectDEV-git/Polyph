@@ -121,6 +121,8 @@ async fn run_in(
         writable: vec![],
         tmp: Some(scratch.join("tmp")),
         hidden: Policy::default_hidden(&shared.paths.home),
+        read_only: vec![],
+        git_writable: vec![],
         proxy_tcp: Some(proxy.tcp),
         proxy_unix: proxy.unix.clone(),
         helper: shared.opts.sandbox_helper.clone(),

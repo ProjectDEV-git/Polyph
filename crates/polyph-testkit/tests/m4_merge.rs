@@ -71,15 +71,22 @@ async fn entry(h: &Harness, i: usize, rid: &str, branch: &str) -> Option<Value> 
     q.as_array().unwrap().iter().rev().find(|e| e["branch"] == branch).cloned()
 }
 
-/// Approves the next merge approval as `who`, once it shows up.
+/// Approves the next merge approval as `who`, once it shows up. The
+/// approval names the branch and the commit queued from it (SEC-13).
 async fn approve_merge(h: &Harness, who: usize, rid: &str, branch: &str) {
     let id = h
         .until_value("merge approval", || async {
+            let head = entry(h, who, rid, branch).await?["head"].as_str()?.chars().take(12).collect::<String>();
             let l = h.nodes[who].call("approvals.list", json!({ "room": rid })).await.unwrap();
             l.as_array()
                 .unwrap()
                 .iter()
-                .find(|a| a["kind"]["t"] == "merge" && a["kind"]["c"]["branch"] == branch)
+                .find(|a| {
+                    a["kind"]["t"] == "merge"
+                        && a["kind"]["c"]["branch"]
+                            .as_str()
+                            .is_some_and(|b| b.starts_with(&format!("{branch} at {head} (")))
+                })
                 .map(|a| a["id"].as_str().unwrap().to_string())
         })
         .await
@@ -197,7 +204,8 @@ async fn two_tasks_merge_keeping_both_intents() {
         .unwrap();
     let (aid, bid) = (sa["id"].as_str().unwrap().to_string(), sb["id"].as_str().unwrap().to_string());
     let (abr, bbr) = (sa["branch"].as_str().unwrap().to_string(), sb["branch"].as_str().unwrap().to_string());
-    assert!(abr.starts_with("polyph/add-refunds-") && bbr.starts_with("polyph/add-invoices-"), "{abr} {bbr}");
+    assert!(abr.starts_with("polyph/") && abr.ends_with("/add-refunds"), "{abr}");
+    assert!(bbr.starts_with("polyph/") && bbr.ends_with("/add-invoices"), "{bbr}");
     assert_ne!(sa["worktree"], sb["worktree"]);
 
     // Ann's agent edits lib.rs; Bo's agent is stopped by the claim.
@@ -655,4 +663,40 @@ async fn the_watcher_catches_edits_outside_the_protocol() {
     tokio::time::sleep(std::time::Duration::from_millis(600)).await;
     let cl = h.nodes[0].call("claims.list", json!({ "room": rid })).await.unwrap();
     assert!(!cl.as_array().unwrap().iter().any(|c| c["target"]["path"] == "src/person.rs"), "{cl}");
+}
+
+/// SEC-13, defense in depth: `main` written without git (as an agent that
+/// could write `refs/` would) is not merged into; the entry fails and says
+/// why, and the merge queue leaves `main` where it found it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_base_changed_without_git_is_not_merged_into() {
+    let (h, rid, repo, _s) = setup(
+        vec![("fake-a", json!({ "turns": [[ { "write": { "path": "src/lib.rs", "content": with(REFUND) } } ]] }))],
+        "[merge]\napproval = false\n",
+    )
+    .await;
+    let r = repo.path();
+    let c = add_card(&h, &rid, "Add refunds", "").await;
+    let (aid, abr) = start_task(&h, 0, &rid, "fake-a", r, &c).await;
+    h.nodes[0].call("agent.prompt", json!({ "agent": aid, "text": "refunds" })).await.unwrap();
+    // An unreviewed commit put on main by writing the ref file.
+    let tree = git(r, &["rev-parse", "main^{tree}"]);
+    let evil = git(r, &["commit-tree", tree.trim(), "-p", "main", "-m", "unreviewed"]);
+    std::fs::write(r.join(".git/refs/heads/main"), &evil).unwrap();
+    h.nodes[0].call("task.finish", json!({ "agent": aid })).await.unwrap();
+    let mut last = Value::Null;
+    for _ in 0..400 {
+        if let Some(e) = entry(&h, 0, &rid, &abr).await
+            && (e["state"] == "failed" || e["state"] == "merged")
+        {
+            last = e;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(last["state"], "failed", "{last}");
+    let detail = last["detail"].as_str().unwrap_or_default();
+    assert!(detail.contains("refusing to merge into main") && detail.contains("reflog"), "{detail}");
+    assert_eq!(git(r, &["rev-parse", "main"]), evil, "the merge queue moved main");
+    assert_eq!(std::fs::read_to_string(r.join("src/lib.rs")).unwrap(), LIB);
 }

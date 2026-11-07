@@ -1552,6 +1552,9 @@ async fn agent_cmd(ctx: &Ctx, api: &mut Api, cmd: AgentCmd) -> anyhow::Result<()
                     label = v["label"].as_str().unwrap_or_default(),
                     sandbox = v["sandbox"].as_str().unwrap_or_default()
                 ));
+                for key in v["warnings"].as_array().into_iter().flatten().filter_map(|k| k.as_str()) {
+                    eprintln!("{}", tr!(l, key, sandbox = v["sandbox"].as_str().unwrap_or_default()));
+                }
             }
         }
         AgentCmd::List { room } => {

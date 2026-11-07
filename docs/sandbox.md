@@ -7,7 +7,27 @@ agents doctor` shows the mechanism in use.
 
 ## What each agent gets
 
-- Its **worktree**: readable and writable.
+- Its **worktree**: readable and writable. Under bubblewrap and Seatbelt,
+  the checkout's `.git` stays read-only and cannot be renamed or removed.
+  An agent in your own checkout (no task) can run read-only git commands
+  but not commit. A task agent works on `polyph/<task id>/<name>` and can
+  also write its task's folder in `refs/heads/polyph/` and in
+  `logs/refs/heads/polyph/`, and its own `.git/worktrees/<name>/` folder,
+  which holds its own object store, so it can commit on its task branch.
+  Its commits go into that store (`GIT_OBJECT_DIRECTORY`, set by Polyph,
+  with the shared store as a read-only alternate); the shared `objects/`
+  stays read-only, and Polyph copies the task's commits into it at the end
+  of each turn and when the task finishes or is handed over, checking
+  every object's hash. Other entries in its task folders when it starts,
+  and the `commondir`, `gitdir` and `config.worktree` files and
+  `objects/info/` in its own folder, stay read-only. Every other ref,
+  `main` included, and every other reflog are read-only. A branch outside
+  its own task's folder gets no commits from the agent; the daemon commits
+  the work when the task finishes. Landlock, Windows and container mode do
+  not do this (see `docs/security.md`).
+- Polyph's own git writes in a task's folders (its commits for the agent,
+  moving branches) run in a sandbox too, bubblewrap or Seatbelt, where
+  only those folders and the worktree are writable.
 - Its own **config/cache directory** (for example `~/.claude` for Claude Code),
   so it can keep its login and session files.
 - A **private temp directory**, exported as `TMPDIR`. The shared `/tmp` is

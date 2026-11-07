@@ -50,10 +50,28 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> 
 }
 
 /// Creates (or reuses) the worktree for a task in the repository at `cwd`.
-pub async fn prepare_worktree(cwd: PathBuf, branch: String, base: Option<String>) -> Result<TaskWorktree, ApiError> {
+/// An existing branch is given to an agent only if this daemon created it
+/// for a task (recorded in `home`): a card's branch is shared room data,
+/// and naming `main` or another task's branch there must not hand that
+/// branch to an agent (SEC-13).
+pub async fn prepare_worktree(
+    home: PathBuf,
+    cwd: PathBuf,
+    branch: String,
+    base: Option<String>,
+) -> Result<TaskWorktree, ApiError> {
     blocking(move || -> Result<TaskWorktree, ApiError> {
         let repo = Repo::open(&cwd).map_err(git_err)?;
         let main = Repo::open(&repo.main_root().map_err(git_err)?).map_err(git_err)?;
+        polyph_git::check_branch_name(&branch).map_err(git_err)?;
+        let existed = main.branch_exists(&branch);
+        if existed && !crate::folders::created_task_branch(&home, main.root(), &branch) {
+            return Err(ApiError::BadRequest(format!(
+                "refusing to give branch {branch} to an agent: Polyph did not create it for a task in {}. \
+                 Clear the card's branch so the task gets a new one, or rename that branch",
+                main.root().display()
+            )));
+        }
         let base = match base {
             Some(b) => b,
             None => repo.current_branch().ok_or_else(|| {
@@ -64,7 +82,7 @@ pub async fn prepare_worktree(cwd: PathBuf, branch: String, base: Option<String>
         };
         let path = main.root().join(WORKTREES).join(branch.replace('/', "-"));
         if path.exists()
-            && let Ok(wt) = Repo::open(&path)
+            && let Ok(wt) = main.open_worktree(&path)
             && wt.current_branch().as_deref() == Some(branch.as_str())
         {
             return Ok(TaskWorktree { repo: main.root().to_path_buf(), path, branch, base });
@@ -72,6 +90,9 @@ pub async fn prepare_worktree(cwd: PathBuf, branch: String, base: Option<String>
         main.exclude("/.polyph/").map_err(git_err)?;
         std::fs::create_dir_all(main.root().join(WORKTREES))?;
         main.add_worktree(&path, &branch, &base).map_err(git_err)?;
+        if !existed {
+            crate::folders::record_task_branch(&home, main.root(), &branch)?;
+        }
         Ok(TaskWorktree { repo: main.root().to_path_buf(), path, branch, base })
     })
     .await?
@@ -175,10 +196,10 @@ pub async fn finish(daemon: Arc<Daemon>, h: Arc<AgentHandle>, message: Option<St
     let project = ProjectConfig::load(&wt.repo).unwrap_or_default();
     let into = project.merge.into.clone().unwrap_or(base);
     let (head, ahead) = {
-        let (into, branch) = (into.clone(), branch.clone());
+        let (into, branch, repo) = (into.clone(), branch.clone(), wt.repo.clone());
         blocking(move || -> Result<(String, usize), ApiError> {
-            let r = Repo::open(&path).map_err(git_err)?;
-            r.commit_all(&msg, &sig).map_err(git_err)?;
+            let r = Repo::open(&repo).and_then(|m| m.open_worktree(&path)).map_err(git_err)?;
+            r.commit_task(&branch, &msg, &sig).map_err(git_err)?;
             let head = r.rev_parse(&branch).map_err(git_err)?;
             let ahead = r.log_subjects(&into, &head).map_err(git_err)?.len();
             Ok((head, ahead))
@@ -305,10 +326,12 @@ async fn process(
         e.detail = Some(notes);
     }
 
-    // 2. A person approves the merge.
+    // 2. A person approves the merge: of the commit queued, which they see.
     if project.merge.approval.unwrap_or(true) {
         set_state(rt, &shared, e, MergeState::AwaitingApproval, None).await;
-        let kind = ApprovalKind::Merge { branch: e.branch.clone(), into: e.into.clone() };
+        let (r2, into, head) = (repo_root.to_path_buf(), e.into.clone(), e.head.clone());
+        let stat = blocking(move || Repo::open(&r2).and_then(|r| r.diff_stat(&into, &head))).await?.map_err(git_err)?;
+        let kind = merge_approval(&e.branch, &e.head, &e.into, &stat);
         let task = e.card.as_deref().and_then(|c| ObjectId::from_hex(c).ok());
         if let Decision::Deny { note } = agents::request_approval(rt, &shared, agent, kind, task).await {
             let why = note.map(|n| format!(": {n}")).unwrap_or_default();
@@ -332,6 +355,8 @@ async fn process(
         let (msg, who2) = (message.clone(), who.clone());
         let (old, outcome, how) = blocking(move || -> Result<_, ApiError> {
             let r = Repo::open(&root).map_err(git_err)?;
+            // A branch that changed without git is not merged into (SEC-13).
+            r.check_branch_logged(&into).map_err(git_err)?;
             let old = r.rev_parse(&into).map_err(git_err)?;
             let mut how: Vec<(String, Strategy)> = vec![];
             let out = r
@@ -457,11 +482,25 @@ async fn process(
     Ok(())
 }
 
+/// The approval for merging `head` (queued from `branch`) into `into`. The
+/// wire format has only a branch and a target, so the commit and its diff
+/// stat go in the branch text every client shows: "polyph/1a2b3c4d/login at
+/// 0123456789ab (2 files changed, 5 insertions(+))". The merge queue merges
+/// that commit, whatever the branch points at by then.
+pub(crate) fn merge_approval(branch: &str, head: &str, into: &str, stat: &str) -> ApprovalKind {
+    let short: String = head.chars().take(12).collect();
+    let stat = if stat.trim().is_empty() { "no changes" } else { stat.trim() };
+    ApprovalKind::Merge { branch: format!("{branch} at {short} ({stat})"), into: into.to_string() }
+}
+
 async fn push(rt: &RoomRuntime, shared: &Shared, agent: &AgentRef, root: &Path, remote: &str, branch: &str) {
     let kind = ApprovalKind::Push { remote: remote.to_string(), branch: branch.to_string() };
     if let Decision::Approve { .. } = agents::request_approval(rt, shared, agent, kind, None).await {
         let (root, remote2, branch2) = (root.to_path_buf(), remote.to_string(), branch.to_string());
-        let r = blocking(move || Repo::open(&root).and_then(|r| r.push(&remote2, &branch2))).await;
+        let home = shared.paths.home.clone();
+        let r =
+            blocking(move || crate::folders::open_for_network(&home, &root).and_then(|r| r.push(&remote2, &branch2)))
+                .await;
         let ok = matches!(r, Ok(Ok(())));
         shared.emit(crate::events::ApiEvent::room_kind(
             &rt.id,
@@ -690,7 +729,7 @@ async fn resolve_with_agent(
     let mut out = HashMap::new();
     let mut bad = vec![];
     for f in files {
-        match std::fs::read_to_string(wt.join(f)) {
+        match polyph_plugins::read_text_under(&wt, Path::new(f)) {
             Ok(t) if !polyph_merge::has_markers(&t) => {
                 out.insert(f.clone(), t);
             }
@@ -730,11 +769,18 @@ async fn run_checks_in(shared: &Arc<Shared>, project: &ProjectConfig, wt: &Path)
     let run_dir = std::env::temp_dir()
         .join(format!("polyph-check-{}", ObjectId::random().map(|o| o.short()).unwrap_or_default()));
     let proxy = polyph_sandbox::proxy::start(allow, deny, Some(run_dir.clone())).await.map_err(|e| e.to_string())?;
+    // Checks read the repository; they commit nothing.
+    let git = {
+        let wt = wt.to_path_buf();
+        tokio::task::spawn_blocking(move || polyph_git::sandbox_git(&wt, None)).await.unwrap_or_default()
+    };
     let policy = Policy {
         worktree: wt.to_path_buf(),
         writable: vec![],
         tmp: Some(tmp.clone()),
         hidden: Policy::default_hidden(&shared.paths.home),
+        read_only: git.read_only,
+        git_writable: vec![],
         proxy_tcp: Some(proxy.tcp),
         proxy_unix: proxy.unix.clone(),
         helper: shared.opts.sandbox_helper.clone(),
@@ -876,8 +922,8 @@ pub async fn handoff(
         let sig = Signature::agent(&h.agent.label, &h.agent.id.short());
         let msg = format!("Work in progress, handed over by {}", h.agent.label);
         commits = blocking(move || -> Result<Vec<String>, ApiError> {
-            let r = Repo::open(&wt.path).map_err(git_err)?;
-            r.commit_all(&msg, &sig).map_err(git_err)?;
+            let r = Repo::open(&wt.repo).and_then(|m| m.open_worktree(&wt.path)).map_err(git_err)?;
+            r.commit_task(&wt.branch, &msg, &sig).map_err(git_err)?;
             r.log_subjects(&wt.base, &wt.branch).map_err(git_err)
         })
         .await??;
@@ -931,4 +977,76 @@ pub async fn handoff(
         }
     }
     Ok(json!({ "brief": brief, "next": started }))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    fn git(dir: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=a", "-c", "user.email=a@b", "-c", "commit.gpgSign=false"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    }
+
+    /// SEC-13: a card's branch is shared room data. The daemon gives an
+    /// agent a branch that exists only if it created it for a task; a new
+    /// one it creates and records, and a later agent on the task gets it.
+    #[tokio::test]
+    async fn only_branches_the_daemon_created_are_reused() {
+        let home = tempfile::tempdir().unwrap();
+        let d = tempfile::tempdir().unwrap();
+        git(d.path(), &["init", "-q", "-b", "main"]);
+        git(d.path(), &["commit", "-q", "--allow-empty", "-m", "first"]);
+        git(d.path(), &["branch", "polyph/ab12cd34/planted"]);
+        let (h, r) = (home.path().to_path_buf(), d.path().to_path_buf());
+        let main = Some("main".to_string());
+        for b in ["main", "polyph/ab12cd34/planted"] {
+            let e = prepare_worktree(h.clone(), r.clone(), b.into(), main.clone()).await.unwrap_err().to_string();
+            assert!(e.contains(&format!("refusing to give branch {b} to an agent")), "{e}");
+        }
+        assert!(!d.path().join(WORKTREES).join("main").exists());
+
+        let b = polyph_git::task_branch("Add login", "ab12cd34");
+        let wt = prepare_worktree(h.clone(), r.clone(), b.clone(), main.clone()).await.unwrap();
+        assert_eq!(wt.branch, "polyph/ab12cd34/add-login");
+        assert!(crate::folders::created_task_branch(&h, &r, &b));
+        // The next agent on the task, with the worktree there or gone.
+        prepare_worktree(h.clone(), r.clone(), b.clone(), main.clone()).await.unwrap();
+        let m = Repo::open(&r).unwrap();
+        m.remove_worktree(&wt.path).unwrap();
+        let again = prepare_worktree(h.clone(), r.clone(), b.clone(), main.clone()).await.unwrap();
+        assert_eq!(Repo::open(&r).unwrap().open_worktree(&again.path).unwrap().current_branch(), Some(b));
+        // Another daemon home never created it.
+        let other = tempfile::tempdir().unwrap();
+        let e = prepare_worktree(other.path().to_path_buf(), r, wt.branch, main).await.unwrap_err();
+        assert!(e.to_string().contains("did not create it"), "{e}");
+    }
+
+    /// SEC-13: the merge approval names the commit the queue merges and
+    /// what it changes, not only the branch, which its agent can still move.
+    #[test]
+    fn merge_approval_shows_the_commit_and_its_stat() {
+        let head = "0123456789abcdef0123456789abcdef01234567";
+        let k = merge_approval("polyph/ab12cd34/login", head, "main", " 2 files changed, 5 insertions(+)\n");
+        assert_eq!(
+            k,
+            ApprovalKind::Merge {
+                branch: "polyph/ab12cd34/login at 0123456789ab (2 files changed, 5 insertions(+))".into(),
+                into: "main".into()
+            }
+        );
+        assert_eq!(
+            polyph_core::room::approval_title(&k),
+            "Merge polyph/ab12cd34/login at 0123456789ab (2 files changed, 5 insertions(+)) into main"
+        );
+        let ApprovalKind::Merge { branch, .. } = merge_approval("b", head, "main", "") else { panic!() };
+        assert_eq!(branch, "b at 0123456789ab (no changes)");
+    }
 }

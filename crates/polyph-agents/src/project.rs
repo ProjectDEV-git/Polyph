@@ -111,13 +111,28 @@ pub struct ProjectConfig {
 
 impl ProjectConfig {
     /// Reads `polyph.toml` from `dir` or its nearest parent that has one.
+    /// The file may be an agent's (in its worktree), so it is read without
+    /// following links (SEC-16), and an error names the place in it but
+    /// never quotes it: errors reach agents (a task's handoff, for one).
     pub fn load(dir: &Path) -> anyhow::Result<Self> {
         let mut d = Some(dir);
         while let Some(cur) = d {
             let p = cur.join("polyph.toml");
-            if p.exists() {
-                let s = std::fs::read_to_string(&p)?;
-                return toml::from_str(&s).map_err(|e| anyhow::anyhow!("{} is not valid: {e}", p.display()));
+            if std::fs::symlink_metadata(&p).is_ok() {
+                let s = polyph_plugins::read_text_under(cur, Path::new("polyph.toml"))
+                    .map_err(|e| anyhow::anyhow!("cannot read {}: {}", p.display(), describe(&e)))?;
+                return toml::from_str(&s).map_err(|e| {
+                    let at = match e.span() {
+                        Some(span) => {
+                            let before = &s[..span.start.min(s.len())];
+                            let line = before.matches('\n').count() + 1;
+                            let column = before.rsplit('\n').next().map(|l| l.chars().count()).unwrap_or(0) + 1;
+                            format!(" at line {line}, column {column}")
+                        }
+                        None => String::new(),
+                    };
+                    anyhow::anyhow!("{} is not valid TOML or has a setting of the wrong type{at}", p.display())
+                });
             }
             d = cur.parent();
         }
@@ -134,6 +149,18 @@ impl ProjectConfig {
 
     pub fn watch(&self) -> bool {
         self.claims.watch.unwrap_or(true)
+    }
+}
+
+/// Why a file could not be read, without the operating system's wording
+/// for odd cases (which may name other paths).
+fn describe(e: &std::io::Error) -> &'static str {
+    match e.kind() {
+        std::io::ErrorKind::InvalidInput => "it is a link, a hard link or not a regular file",
+        std::io::ErrorKind::FileTooLarge => "it is too large",
+        std::io::ErrorKind::InvalidData => "it is not UTF-8 text",
+        std::io::ErrorKind::PermissionDenied => "permission denied",
+        _ => "it could not be read",
     }
 }
 
@@ -167,5 +194,39 @@ small = "haiku"
         assert_eq!(c.prices.0["model-a"].output, 15.0);
         assert_eq!(c.router.tiers["claude"]["small"], "haiku");
         assert!(c.auto_claim());
+    }
+
+    /// SEC-16: a `polyph.toml` linked to a secret is not read, and a parse
+    /// error never quotes the file.
+    #[test]
+    fn project_file_errors_quote_nothing() {
+        let d = tempfile::tempdir().unwrap();
+        let wt = d.path().join("wt");
+        std::fs::create_dir_all(&wt).unwrap();
+        let secret = d.path().join("secret");
+        std::fs::write(&secret, "token = \"SECRET-TOKEN-123\"\nnot toml SECRET-LINE\n").unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&secret, wt.join("polyph.toml")).unwrap();
+            let e = ProjectConfig::load(&wt).unwrap_err().to_string();
+            assert!(!e.contains("SECRET"), "{e}");
+            assert!(e.contains("is a link"), "{e}");
+            std::fs::remove_file(wt.join("polyph.toml")).unwrap();
+            std::fs::hard_link(&secret, wt.join("polyph.toml")).unwrap();
+            let e = ProjectConfig::load(&wt).unwrap_err().to_string();
+            assert!(!e.contains("SECRET"), "{e}");
+            std::fs::remove_file(wt.join("polyph.toml")).unwrap();
+        }
+        // The agent's own file, invalid: where, never what.
+        std::fs::write(wt.join("polyph.toml"), "checks = [\"ok\"]\nnot toml SECRET-LINE\n").unwrap();
+        let e = ProjectConfig::load(&wt).unwrap_err().to_string();
+        assert!(!e.contains("SECRET"), "{e}");
+        assert!(e.contains("at line 2, column"), "{e}");
+        // A value of the wrong type is not echoed either.
+        std::fs::write(wt.join("polyph.toml"), "checks = \"SECRET-VALUE\"\n").unwrap();
+        let e = ProjectConfig::load(&wt).unwrap_err().to_string();
+        assert!(!e.contains("SECRET") && e.contains("line 1"), "{e}");
+        std::fs::write(wt.join("polyph.toml"), "checks = [\"cargo test\"]\n").unwrap();
+        assert_eq!(ProjectConfig::load(&wt).unwrap().checks, ["cargo test"]);
     }
 }

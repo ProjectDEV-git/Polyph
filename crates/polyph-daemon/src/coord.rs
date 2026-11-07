@@ -795,7 +795,7 @@ async fn read_inbox(h: &Caller, rt: &RoomRuntime, shared: &Shared) -> ToolOutput
 }
 
 fn read_text(worktree: &Path, rel: &str) -> Option<String> {
-    std::fs::read_to_string(worktree.join(rel)).ok()
+    polyph_plugins::read_text_under(worktree, Path::new(rel)).ok()
 }
 
 async fn remember(h: &Caller, rt: &RoomRuntime, shared: &Shared, args: &Value) -> ToolResult {

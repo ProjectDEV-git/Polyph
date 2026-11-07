@@ -53,7 +53,7 @@ pub fn brief_or_file(ctx: &mut RoomCtx, worktree: Option<&Path>) -> Option<(Stri
     if let Some(b) = brief(ctx) {
         return Some((b.text, format!("room brief, last edited by {}", b.by)));
     }
-    let text = std::fs::read_to_string(worktree?.join(BRIEF_FILE)).ok()?;
+    let text = polyph_plugins::read_text_under(worktree?, Path::new(BRIEF_FILE)).ok()?;
     (!text.trim().is_empty()).then(|| (text, BRIEF_FILE.to_string()))
 }
 

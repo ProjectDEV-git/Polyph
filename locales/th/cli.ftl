@@ -141,6 +141,7 @@ help-budget = จัดการงบประมาณ
 help-budget-set = ตั้งงบประมาณให้ห้องหรือสมาชิกคนหนึ่ง
 
 agent-started = เริ่ม { $label } แล้ว (แซนด์บ็อกซ์: { $sandbox })
+agent-warning-git-unprotected = คำเตือน: แซนด์บ็อกซ์ { $sandbox } ไม่ได้ปกป้องการตั้งค่า git ของเช็กเอาต์นี้จากเอเจนต์ เอเจนต์เปลี่ยน config และ hook ที่ git รันที่นี่ได้ Polyph จะไม่ใช้การตั้งค่า git ของเช็กเอาต์นี้เองสำหรับการ fetch และ push อีกต่อไป หากไม่ต้องการเช่นนี้ ให้มอบงานแก่เอเจนต์ (`polyph agent start --task ...`) หรือใช้ bubblewrap
 agent-stopped = หยุดแล้ว
 agents-empty = ไม่มีเอเจนต์ทำงานอยู่ในห้องนี้
 agent-line = { $label }  { $state }

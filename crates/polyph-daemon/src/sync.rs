@@ -103,8 +103,8 @@ pub async fn call(d: &Arc<Daemon>, method: &str, params: Value) -> ApiResult {
             let mut out = vec![];
             for (room, dir) in dirs {
                 let r = tokio::task::spawn_blocking({
-                    let dir = dir.clone();
-                    move || polyph_git::Repo::open(&dir).and_then(|r| r.sync("origin"))
+                    let (dir, home) = (dir.clone(), d.shared.paths.home.clone());
+                    move || crate::folders::open_for_network(&home, &dir).and_then(|r| r.sync("origin"))
                 })
                 .await
                 .map_err(|e| ApiError::Failed(e.to_string()))?;
@@ -135,8 +135,9 @@ async fn folders_for(d: &Daemon, room: Option<&str>, dir: Option<&Path>) -> Resu
 /// Fetches every linked folder that has an `origin`, quietly.
 async fn fetch_all(d: &Daemon) {
     for l in crate::folders::load(&d.shared.paths.home) {
+        let home = d.shared.paths.home.clone();
         let _ = tokio::task::spawn_blocking(move || {
-            let r = polyph_git::Repo::open(&l.path)?;
+            let r = crate::folders::open_for_network(&home, &l.path)?;
             if r.remote_url("origin").is_some() { r.fetch("origin") } else { Ok(()) }
         })
         .await;
