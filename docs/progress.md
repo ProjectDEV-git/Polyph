@@ -126,22 +126,37 @@ Resumed 09:41 UTC. get_session showed a new five-hour window (`five_hour`,
 10:00. The #14 and #16 Opus workers had stopped at about 05:46 UTC with no
 report: #14 left 14 uncommitted files, #16 left nothing. Both dispatched
 again (#14 resumes the uncommitted work). #15 checks running locally.
+DF-1/DF-2 dispatched to a Sonnet rust-engineer.
 
-### Next after the pause
+The container restarted between about 10:00 and 12:54 UTC. All three
+workers had finished and pushed before it:
+- #14 at 0bd1d69: all nine items done, the one approved assertion change in
+  `project.rs`, new m4_merge trust test. Needs architect and security
+  review (data-dir refusal is sandbox policy).
+- #16 at e1e00ef: all eight auditor findings addressed. Three tests changed
+  to match decisions 1a and 1c (lead checked the diff: the no-task agent
+  can no longer commit, the main checkout gets `--git-dir`). Open risk for
+  the auditor: writable `refs/` lets a task agent move the base branch.
+- DF-1/DF-2 on `beta/df-1-2-relay-tls` at 4c8a9d6: OS trust store plus
+  `SSL_CERT_FILE` plus webpki fallback; relay errors logged and shown in
+  `status`/`doctor`. Live check in this container connected to the relay.
 
-1. Run the usage check. Continue only if the new block is under 75%.
-2. Verify #15 (b07f76e): `cargo test -p polyph-proto -p polyph-core
-   -p polyph-relay` and `cargo test -p polyph-testkit --test m2 --test m8
-   --test m9` in `.claude/worktrees/agent-ac594e0f3ced295c1` with
-   `CARGO_TARGET_DIR=/root/targets/pr15`. The m9 setup switched to
-   `phone.pair` (accepted, same as m8). Then send it to the architect
-   reviewer and the security auditor (it now touches `cert.rs`).
-3. Verify the #14 and #16 reworks the same way when they report, then
-   architect re-review and security sign-off.
-4. DF-1 and DF-2 (relay client trust store, silent relay failure) to a
-   rust-engineer.
-5. Linear tools are now available (`mcp__Linear__*`): copy DF-1..DF-5 and
-   the review findings into project "Polyph public beta".
+#15 (b07f76e) verified by the lead: proto/core/relay and m2/m8/m9 all
+pass. Sent to the architect reviewer and the security auditor.
+
+Linear: DF items filed as KAO-91 (DF-1), KAO-92 (DF-2), KAO-93 (DF-3),
+KAO-94 (DF-4, DF-5). 12:54 UTC reading: new ccusage block, 0%.
+
+### Next
+
+1. Read the lead's check run for #14, #16 and DF-1/2
+   (`verify-3.txt` in the session scratchpad); send back any failure.
+2. #15 reviews: merge only with APPROVE and SIGN-OFF.
+3. #14 and #16 to the architect reviewer and the security auditor.
+4. DF-1/2: open a PR (the brief authorizes PRs for the beta work); the
+   security auditor looks at the trust store change.
+5. KAO-93 and KAO-94 to a builder or Sonnet engineer.
+6. Dogfood room: retry `polyph start` with the DF-1 build.
 
 ## Proposed edits (awaiting Kao)
 
