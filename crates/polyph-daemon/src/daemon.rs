@@ -243,6 +243,9 @@ pub struct RoomInfo {
     pub role: Role,
     pub relay: String,
     pub connected: bool,
+    /// Why the relay is unreachable, when it is. Absent while connected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay_error: Option<crate::runtime::RelayErrorInfo>,
     pub open: bool,
     pub members_online: usize,
     pub members: usize,
@@ -470,6 +473,7 @@ impl Daemon {
             role: ctx.core.role(),
             relay: ctx.relay.url.clone(),
             connected: ctx.connected,
+            relay_error: ctx.relay_error.clone(),
             open,
             members_online: ctx
                 .core

@@ -1069,6 +1069,16 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                             .unwrap_or_else(|| l.t("quick-session-name"))
                     ));
                     ctx.out(if s["connected"] == true { l.t("status-connected") } else { l.t("status-disconnected") });
+                    if s["connected"] != true
+                        && let Ok(info) = call(&mut api, "room.get", json!({ "room": s["room"] })).await
+                        && let Some(m) = info["relay_error"]["message"].as_str()
+                    {
+                        ctx.out(format!("  {}", tr!(l, "relay-error-last", message = m)));
+                        ctx.out(format!(
+                            "  {}",
+                            setup::relay_fix(l, info["relay_error"]["kind"].as_str().unwrap_or_default())
+                        ));
+                    }
                     ctx.out(tr!(l, "status-members", count = s["members_online"].as_u64().unwrap_or(0)));
                     ctx.out(tr!(
                         l,

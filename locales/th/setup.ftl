@@ -115,3 +115,13 @@ connect-by-extension = { $client } ได้รับ Polyph จากส่ว�
 doctor-client-extension = { $client } ได้รับ Polyph จากส่วนขยายหรือปลั๊กอิน Polyph
 help-hook = ฮุกสำหรับโปรแกรมแก้ไขของเอเจนต์ (ปลั๊กอิน Claude Code เรียกใช้)
 help-hook-pre-edit = ก่อนเอเจนต์แก้ไฟล์: บล็อกการแก้ไขถ้าเอเจนต์อื่นจองไฟล์ไว้ ไม่เช่นนั้นจองไฟล์ให้
+
+# ติดต่อรีเลย์ไม่ได้เพราะอะไร (polyph status และ polyph doctor)
+relay-error-last = ข้อผิดพลาดล่าสุดของรีเลย์: { $message }
+relay-fix-certificate = ใบรับรองของรีเลย์ไม่ได้รับความเชื่อถือ หากพร็อกซีของบริษัทตรวจสอบ TLS ต้องใส่ CA ของพร็อกซีนั้นในที่เก็บความเชื่อถือของระบบ หรือในไฟล์ที่ระบุด้วย SSL_CERT_FILE
+relay-fix-dns = หาที่อยู่ของรีเลย์ไม่พบ ตรวจสอบเครือข่ายและที่อยู่ด้วย polyph config get relay
+relay-fix-refused = รีเลย์ปฏิเสธการเชื่อมต่อ ตรวจสอบที่อยู่ด้วย polyph config get relay และตรวจว่าไฟร์วอลล์อนุญาตพอร์ตขาออก 443
+relay-fix-timeout = รีเลย์ไม่ตอบภายในเวลาที่กำหนด ตรวจสอบเครือข่าย หรือพร็อกซีที่บล็อกการเชื่อมต่อ WebSocket
+relay-fix-http = รีเลย์ตอบกลับด้วยข้อผิดพลาด HTTP (อาจเป็นพร็อกซีหรือที่อยู่ผิด) ตรวจสอบ polyph config get relay
+relay-fix-rejected = รีเลย์ปฏิเสธอุปกรณ์เครื่องนี้ ตรวจสอบ polyph config get relay และบันทึกของรีเลย์
+relay-fix-other = ตรวจสอบที่อยู่ด้วย polyph config get relay แล้วดูข้อผิดพลาดเต็มในบันทึกของ daemon
