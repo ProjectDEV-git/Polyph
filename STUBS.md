@@ -6,8 +6,9 @@ here should be described as done anywhere else.
 ## Not started (later milestones)
 
 CLI commands not implemented yet: `spectate-link *` (spectator links are
-not in the beta; see `docs/beta.md`). People can message agents through the
-daemon API (`inbox.send`), the TUI and the apps, but not yet from the CLI.
+not in the beta; see `docs/beta.md`). Memory notes cannot be added or
+removed from the CLI: the daemon has `memory.list` only, so `polyph memory`
+lists notes and agents write them.
 
 ## Partial work in finished milestones
 
