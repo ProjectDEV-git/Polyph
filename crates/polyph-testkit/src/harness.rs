@@ -26,7 +26,8 @@ impl std::fmt::Debug for Node {
 impl Node {
     /// Records this node's trust in the `polyph.toml` found from `dir`, the way
     /// a person does with `polyph trust`. Without it the daemon drops the
-    /// file's `checks`, `[sandbox]`, `[agents.*]` and `[policy] preset`.
+    /// file's `checks`, `[sandbox]`, `[agents.*]`, `[policy] preset`, `[prices]`
+    /// and the `[merge]` approval, checks, push and pull request settings.
     pub fn trust_project(&self, dir: &std::path::Path) -> anyhow::Result<()> {
         use polyph_agents::project::{ProjectFile, TrustStore};
         let file =

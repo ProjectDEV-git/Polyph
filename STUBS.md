@@ -79,7 +79,10 @@ lists notes and agents write them.
   data directory and relies on the sandbox keeping that directory read-only
   to agents. The merge queue is tested end to end with an untrusted file;
   for `agent.start` no test checks end to end that an untrusted sandbox or
-  agent section is ignored, only the loader the daemon uses.
+  agent section is ignored, only the loader the daemon uses. The check that
+  keeps agent worktrees off the data directory compares resolved paths
+  only; it does not detect bind mounts or Linux casefold directories. The
+  `untrusted` field `usage.get` returns is not shown by any client yet.
 
 ## Milestone 4 gaps
 
