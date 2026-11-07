@@ -346,9 +346,81 @@ pub fn trusted_project(shared: &Shared, dir: &Path) -> anyhow::Result<Loaded> {
     Ok(loaded)
 }
 
-fn load_from_main_checkout(store: &TrustStore, dir: &Path) -> anyhow::Result<Loaded> {
+/// The project file from the main checkout of `dir`, with untrusted sections
+/// dropped, without telling anyone. For settings read in passing.
+pub fn main_checkout_project(shared: &Shared, dir: &Path) -> anyhow::Result<Loaded> {
+    load_from_main_checkout(&TrustStore::at(shared.paths.trusted_projects()), dir)
+}
+
+pub(crate) fn load_from_main_checkout(store: &TrustStore, dir: &Path) -> anyhow::Result<Loaded> {
     let root = polyph_git::Repo::open(dir).ok().and_then(|r| r.main_root().ok()).unwrap_or_else(|| dir.to_path_buf());
     ProjectConfig::load_trusted(&root, store)
+}
+
+/// The daemon's localizer, in the language this person chose.
+pub fn localizer(shared: &Shared) -> polyph_i18n::Localizer {
+    let lang = shared.config.lock().lang.clone();
+    polyph_i18n::Localizer::new(&polyph_i18n::detect(lang.as_deref()))
+}
+
+/// `key` with the untrusted file's path, folder and ignored sections; None
+/// when the file is trusted or sets nothing that needs trust.
+pub fn untrusted_text(l: &polyph_i18n::Localizer, key: &str, loaded: &Loaded) -> Option<String> {
+    use polyph_i18n::FluentValue;
+    let file = loaded.file.as_ref().filter(|_| !loaded.ignored.is_empty())?;
+    let dir = file.parent().unwrap_or(file);
+    Some(l.t_args(
+        key,
+        &[
+            ("file", FluentValue::from(file.display().to_string())),
+            ("dir", FluentValue::from(dir.display().to_string())),
+            ("ignored", FluentValue::from(loaded.ignored.join(", "))),
+        ],
+    ))
+}
+
+/// Adds the "run `polyph trust`" hint to an agent start error when the
+/// project file had settings that were ignored, since they may be the cause.
+fn with_untrusted_hint(l: &polyph_i18n::Localizer, loaded: &Loaded, e: ApiError) -> ApiError {
+    let Some(hint) = untrusted_text(l, "project-untrusted-hint", loaded) else {
+        return e;
+    };
+    match e {
+        ApiError::BadRequest(m) => ApiError::BadRequest(format!("{m} {hint}")),
+        ApiError::NotFound(m) => ApiError::NotFound(format!("{m} {hint}")),
+        ApiError::Forbidden(m) => ApiError::Forbidden(format!("{m} {hint}")),
+        ApiError::Failed(m) => ApiError::Failed(format!("{m} {hint}")),
+    }
+}
+
+/// Refuses a worktree that contains Polyph's data directory or lies inside
+/// it, and a writable path that contains it: the sandbox would then make the
+/// device keys and the trust record visible or writable to the agent.
+fn check_data_dir(
+    l: &polyph_i18n::Localizer,
+    home: &Path,
+    worktree: &Path,
+    writable: &[PathBuf],
+) -> Result<(), ApiError> {
+    use polyph_i18n::FluentValue;
+    let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let home = canon(home);
+    let wt = canon(worktree);
+    let bad = if home.starts_with(&wt) || wt.starts_with(&home) {
+        Some(wt)
+    } else {
+        writable.iter().map(|w| canon(w)).find(|w| home.starts_with(w))
+    };
+    match bad {
+        None => Ok(()),
+        Some(p) => Err(ApiError::BadRequest(l.t_args(
+            "agent-data-dir-exposed",
+            &[
+                ("path", FluentValue::from(p.display().to_string())),
+                ("home", FluentValue::from(home.display().to_string())),
+            ],
+        ))),
+    }
 }
 
 /// What an untrusted project file had ignored, for the person to act on.
@@ -414,7 +486,11 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
     let project = loaded.config.clone();
     let worktree = task_wt.as_ref().map(|w| w.path.clone()).unwrap_or(cwd);
     let defs = registry::all(&custom_agents(&shared, &project));
-    let def = find_def(&defs, &p.kind)?;
+    let l = localizer(&shared);
+    let def = find_def(&defs, &p.kind).map_err(|e| with_untrusted_hint(&l, &loaded, e))?;
+    let writable: Vec<PathBuf> =
+        def.config.writable.iter().map(|w| registry::expand(w)).filter(|p| p.exists()).collect();
+    check_data_dir(&l, &shared.paths.home, &worktree, &writable)?;
     let preset: Preset = match &p.preset {
         Some(s) => s.parse().map_err(ApiError::BadRequest)?,
         None => project.policy.preset,
@@ -432,7 +508,7 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
         if same_kind == 0 { format!("{my_name}/{}", p.kind) } else { format!("{my_name}/{}{}", p.kind, same_kind + 1) };
     let agent = AgentRef { id, member, device, kind: p.kind.clone(), label };
 
-    let mech = mechanism(&shared, &project)?;
+    let mech = mechanism(&shared, &project).map_err(|e| with_untrusted_hint(&l, &loaded, e))?;
     let tmp = std::env::temp_dir().join(format!("polyph-agent-{}", id.short()));
     std::fs::create_dir_all(&tmp)?;
     let once: Arc<tokio::sync::OnceCell<Arc<AgentHandle>>> = Arc::new(tokio::sync::OnceCell::new());
@@ -467,8 +543,6 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
         })
     };
     let proxy = polyph_sandbox::proxy::start_with(allow, decider, Some(internal), Some(tmp.join("run"))).await?;
-    let writable: Vec<PathBuf> =
-        def.config.writable.iter().map(|w| registry::expand(w)).filter(|p| p.exists()).collect();
     let policy = Policy {
         worktree: worktree.clone(),
         writable,
@@ -793,5 +867,46 @@ mod tests {
         assert_eq!(l.config.sandbox.mode.as_deref(), Some("off"));
         // The worktree's own agent definition never applies.
         assert!(l.config.agents.is_empty());
+    }
+
+    #[test]
+    fn start_errors_point_at_polyph_trust_when_settings_were_ignored() {
+        let en = polyph_i18n::Localizer::new("en");
+        let loaded = Loaded {
+            config: ProjectConfig::default(),
+            file: Some(PathBuf::from("/repo/polyph.toml")),
+            ignored: vec!["agents", "sandbox"],
+        };
+        let e = with_untrusted_hint(&en, &loaded, ApiError::NotFound("unknown agent \"mine\"".into()));
+        let ApiError::NotFound(m) = e else { panic!("variant changed") };
+        assert!(m.starts_with("unknown agent \"mine\" "), "{m}");
+        assert!(m.contains("agents, sandbox") && m.contains("`polyph trust` in /repo"), "{m}");
+        let e = with_untrusted_hint(&en, &loaded, ApiError::Failed("no sandbox is available".into()));
+        assert!(e.to_string().contains("polyph trust"));
+        // A trusted file, or one that sets nothing needing trust: no hint.
+        let quiet = Loaded { ignored: vec![], ..loaded };
+        assert_eq!(with_untrusted_hint(&en, &quiet, ApiError::Failed("x".into())).to_string(), "x");
+    }
+
+    #[test]
+    fn agents_never_get_a_worktree_that_overlaps_the_data_dir() {
+        let en = polyph_i18n::Localizer::new("en");
+        let t = tempfile::tempdir().unwrap();
+        let home = t.path().join("user/.local/share/polyph");
+        let repo = t.path().join("user/code/app");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&repo).unwrap();
+        assert!(check_data_dir(&en, &home, &repo, &[]).is_ok());
+        // A worktree that holds the data directory.
+        let e = check_data_dir(&en, &home, &t.path().join("user"), &[]).unwrap_err();
+        assert!(e.to_string().contains("data directory"), "{e}");
+        assert!(check_data_dir(&en, &home, &home, &[]).is_err());
+        // A worktree inside it.
+        let inside = home.join("rooms");
+        std::fs::create_dir_all(&inside).unwrap();
+        assert!(check_data_dir(&en, &home, &inside, &[]).is_err());
+        // A writable path that holds it.
+        assert!(check_data_dir(&en, &home, &repo, &[t.path().join("user/.local")]).is_err());
+        assert!(check_data_dir(&en, &home, &repo, &[t.path().join("user/.claude")]).is_ok());
     }
 }

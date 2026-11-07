@@ -172,7 +172,7 @@ pub async fn finish(daemon: Arc<Daemon>, h: Arc<AgentHandle>, message: Option<St
     let summary = msg.clone();
     let sig = Signature::agent(&h.agent.label, &h.agent.id.short());
     let (path, branch, base) = (wt.path.clone(), wt.branch.clone(), wt.base.clone());
-    let project = ProjectConfig::load(&wt.repo).unwrap_or_default();
+    let project = agents::main_checkout_project(&daemon.shared, &wt.repo).unwrap_or_default().config;
     let into = project.merge.into.clone().unwrap_or(base);
     let (head, ahead) = {
         let (into, branch) = (into.clone(), branch.clone());
@@ -270,7 +270,8 @@ async fn process(
 ) -> Result<(), ApiError> {
     let shared = daemon.shared.clone();
     // The target branch's own polyph.toml, which people control and trust.
-    let project = agents::trusted_project(&shared, repo_root).unwrap_or_default().config;
+    let loaded = agents::trusted_project(&shared, repo_root).unwrap_or_default();
+    let project = loaded.config.clone();
     let card = match &e.card {
         Some(c) => card(&mut *rt.ctx.lock().await, c),
         None => None,
@@ -412,6 +413,18 @@ async fn process(
             }
         };
         e.resolved = resolved;
+        // Checks the untrusted file asked for were dropped; merging without
+        // them would skip them silently, so stop and say how to fix it.
+        if project.merge.run_checks.unwrap_or(true)
+            && loaded.ignored.contains(&"checks")
+            && let Some(why) = agents::untrusted_text(&agents::localizer(&shared), "merge-checks-untrusted", &loaded)
+        {
+            set_state(rt, &shared, e, MergeState::Failed, Some(why)).await;
+            if let Some(c) = &e.card {
+                update_card(rt, &shared, c, Some("in_progress"), &[]).await;
+            }
+            return Ok(());
+        }
         // Checks on the merged result, in the sandbox.
         if project.merge.run_checks.unwrap_or(true) && !project.checks.is_empty() {
             set_state(rt, &shared, e, MergeState::Checking, None).await;

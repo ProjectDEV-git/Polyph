@@ -52,16 +52,25 @@ anyway (for example inside a disposable VM), set `[sandbox] mode = "off"` in
 
 `polyph.toml` is read from your own checkout, not from an agent's task
 worktree. Its security-relevant sections (`[sandbox]`, `[agents.*]`,
-`checks` and `[policy] preset`) only apply after you run `polyph trust` in
-the repository. That records the file's folder and the SHA-256 of its
+`checks`, `[policy] preset`, `[merge] approval` and `run_checks`, and
+`[prices]`) only apply after you run `polyph trust` in the repository.
+`polyph trust` shows those sections and asks before it records anything;
+`--yes` skips the question for scripts. That records the file's folder and the SHA-256 of its
 content in `trusted-projects.json` in Polyph's data directory, outside any
 repository, like `direnv allow`. Any edit to the file, including one made by
 an agent or a pulled commit, needs another `polyph trust`. Until then those
 sections are ignored: agents run in the default sandbox with the built-in
-agent definitions, no checks run, and the daemon log, the `project_untrusted`
-event and `polyph agent start` say what was ignored. `polyph trust --revoke`
-removes the record. Other sections, such as `[merge]`, `[planner]` and
-`[prices]`, apply without trust.
+agent definitions, merges wait for a person's approval, the price table is
+empty, and the daemon log, the `project_untrusted` event and
+`polyph agent start` say what was ignored. A merge whose checks were ignored
+fails at the checks step and says to run `polyph trust`, rather than merging
+unchecked. `polyph trust --revoke` removes the record. Other sections, such
+as `[planner]` and the rest of `[merge]`, apply without trust.
+
+The daemon refuses to start an agent whose worktree, or one of whose
+writable paths, contains Polyph's data directory, or whose worktree lies
+inside it, since the agent could then read the device keys or change the
+trust record.
 
 ## Autonomy
 
