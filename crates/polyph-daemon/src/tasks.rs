@@ -64,7 +64,7 @@ pub async fn prepare_worktree(cwd: PathBuf, branch: String, base: Option<String>
         };
         let path = main.root().join(WORKTREES).join(branch.replace('/', "-"));
         if path.exists()
-            && let Ok(wt) = Repo::open(&path)
+            && let Ok(wt) = main.open_worktree(&path)
             && wt.current_branch().as_deref() == Some(branch.as_str())
         {
             return Ok(TaskWorktree { repo: main.root().to_path_buf(), path, branch, base });
@@ -175,9 +175,9 @@ pub async fn finish(daemon: Arc<Daemon>, h: Arc<AgentHandle>, message: Option<St
     let project = ProjectConfig::load(&wt.repo).unwrap_or_default();
     let into = project.merge.into.clone().unwrap_or(base);
     let (head, ahead) = {
-        let (into, branch) = (into.clone(), branch.clone());
+        let (into, branch, repo) = (into.clone(), branch.clone(), wt.repo.clone());
         blocking(move || -> Result<(String, usize), ApiError> {
-            let r = Repo::open(&path).map_err(git_err)?;
+            let r = Repo::open(&repo).and_then(|m| m.open_worktree(&path)).map_err(git_err)?;
             r.commit_all(&msg, &sig).map_err(git_err)?;
             let head = r.rev_parse(&branch).map_err(git_err)?;
             let ahead = r.log_subjects(&into, &head).map_err(git_err)?.len();
@@ -876,7 +876,7 @@ pub async fn handoff(
         let sig = Signature::agent(&h.agent.label, &h.agent.id.short());
         let msg = format!("Work in progress, handed over by {}", h.agent.label);
         commits = blocking(move || -> Result<Vec<String>, ApiError> {
-            let r = Repo::open(&wt.path).map_err(git_err)?;
+            let r = Repo::open(&wt.repo).and_then(|m| m.open_worktree(&wt.path)).map_err(git_err)?;
             r.commit_all(&msg, &sig).map_err(git_err)?;
             r.log_subjects(&wt.base, &wt.branch).map_err(git_err)
         })

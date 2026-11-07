@@ -319,7 +319,8 @@ impl Repo {
 
     /// Files changed on `head` since it forked from `base`.
     pub fn changed_files(&self, base: &str, head: &str) -> Result<Vec<String>> {
-        let out = self.git(&["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", &format!("{base}...{head}")])?;
+        let out =
+            self.git(&["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", &format!("{base}...{head}")])?;
         Ok(out.split('\0').filter(|s| !s.is_empty()).map(str::to_string).collect())
     }
 

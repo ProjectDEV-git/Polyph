@@ -112,6 +112,20 @@ network goes through the daemon's allowlisting proxy; anything else becomes an
 approval request. `polyph sandbox test` reports which protections work on a
 given machine. See `docs/sandbox.md` (M3).
 
+The daemon treats an agent's worktree as hostile input:
+
+- Every git command it runs overrides the settings a repository could use to
+  run programs (`core.fsmonitor`, `core.hooksPath`, `core.sshCommand`,
+  `core.askPass`, `core.pager`, `protocol.ext.allow`, `commit.gpgSign`), and
+  diffs pass `--no-ext-diff --no-textconv`. Before each command in a task
+  worktree it checks that the worktree's `.git` file points into the main
+  repository's `.git/worktrees/`, and refuses otherwise. Filter and merge
+  drivers, `credential.helper` and `remote.*.uploadpack` cannot be overridden
+  this way; they rely on `.git` being read-only inside the sandbox.
+- Files it reads from a worktree (the brief, areas, skills, mirrored files,
+  merge resolutions) must not be symbolic links on any part of their path and
+  are capped in size (1 MiB unless the caller sets less).
+
 ### A lost phone
 
 The phone app keeps its device key and room state in the browser's IndexedDB,
