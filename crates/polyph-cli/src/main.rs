@@ -4,6 +4,7 @@
 
 mod account;
 mod client;
+mod feedback;
 mod hook;
 mod knowledge;
 mod repo;
@@ -44,6 +45,14 @@ enum Cmd {
         cmd: DaemonCmd,
     },
     Whoami,
+    Feedback {
+        /// Where the problem happened.
+        #[arg(long, default_value = "cli", value_parser = clap::builder::PossibleValuesParser::new(feedback::SURFACES))]
+        surface: String,
+        /// Print the link instead of opening the browser.
+        #[arg(long)]
+        print: bool,
+    },
     Web {
         /// Print the link instead of opening the browser.
         #[arg(long)]
@@ -455,6 +464,13 @@ enum AgentCmd {
         id: String,
         text: String,
     },
+    /// Leave a message in an agent's inbox; it reads it at its next turn.
+    Message {
+        agent: String,
+        text: String,
+        #[arg(long)]
+        room: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -786,6 +802,7 @@ async fn run(ctx: &Ctx, cmd: Option<Cmd>) -> anyhow::Result<()> {
         Cmd::Search { query, room } => knowledge::search(ctx, &query, room).await,
         Cmd::Catchup { room } => knowledge::catchup(ctx, room).await,
         Cmd::Areas { path } => knowledge::areas(ctx, path).await,
+        Cmd::Feedback { surface, print } => feedback::run(ctx, surface, print).await,
         Cmd::Update { check, version, force } => update::run(ctx, check, version, force).await,
         Cmd::Uninstall { purge, yes } => update::uninstall(ctx, purge, yes).await,
         Cmd::Completions { shell } => {
@@ -1410,6 +1427,7 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
         | Cmd::Disconnect { .. }
         | Cmd::Start { .. }
         | Cmd::Doctor
+        | Cmd::Feedback { .. }
         | Cmd::Hook { .. }
         | Cmd::Brief { .. }
         | Cmd::Repo { .. }
@@ -1564,6 +1582,15 @@ async fn agent_cmd(ctx: &Ctx, api: &mut Api, cmd: AgentCmd) -> anyhow::Result<()
                 ctx.print_json(&v);
             } else {
                 ctx.out(tr!(l, "agent-prompted", label = id, reason = v["stop_reason"].as_str().unwrap_or_default()));
+            }
+        }
+        AgentCmd::Message { agent, text, room } => {
+            let room = ctx.room(api, room).await?;
+            let v = call(api, "inbox.send", json!({ "room": room, "agent": agent, "text": text })).await?;
+            if ctx.json {
+                ctx.print_json(&v);
+            } else {
+                ctx.out(tr!(l, "agent-messaged", label = agent));
             }
         }
         AgentCmd::Follow { id, room } => {

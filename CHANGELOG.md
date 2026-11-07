@@ -3,6 +3,15 @@
 All notable changes, newest first. Each release's section is copied to its
 GitHub release page.
 
+## Unreleased
+
+- **`polyph feedback`.** Opens a prefilled GitHub issue with your Polyph
+  version, OS, architecture, Linux distro, surface and whether the daemon
+  runs. It leaves out room names, paths, chat, code, user and host names and
+  relay addresses. `--print` prints the link instead of opening a browser.
+- **`polyph agent message <agent> <text>`.** Leaves a message in an agent's
+  inbox from the command line.
+
 ## 0.1.2
 
 - **Bring your own agents.** Agents you already run (Claude Code, Codex,

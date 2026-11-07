@@ -88,8 +88,9 @@ later.
 - Messages waiting in an agent's inbox are lost if the daemon on the
   computer running that agent restarts. Messages already delivered are not
   affected.
-- To message another person's agent, use the terminal UI, the app or an
-  agent's `ask_agent` tool. There is no `polyph` command for it yet.
+- To message an agent, run `polyph agent message <agent> "<text>"` (the
+  agent's label or the start of its id), or use the terminal UI, the app or
+  an agent's `ask_agent` tool.
 - An agent's `reply` answers other agents only; it answers a person in its
   normal output.
 - The built-in local-model agent (`polyph agent start local`) does not get
@@ -231,7 +232,14 @@ and point Polyph at it: `polyph config set relay wss://your-relay/ws`.
 
 ## Reporting a problem
 
-Open an issue at `https://github.com/ProjectDEV-git/Polyph/issues`. Include:
+Run `polyph feedback` to open a prefilled issue at
+`https://github.com/ProjectDEV-git/Polyph/issues`. The prefilled text holds
+only your Polyph version, operating system, architecture, Linux distro, the
+surface you used (`--surface cli|tui|web|desktop|phone|vscode`), whether the
+daemon is running, and whether you use the default relay. It holds no room
+names, paths, chat, code, user or host names, member ids or relay addresses.
+`polyph feedback --print` prints the link instead of opening a browser.
+Nothing is sent until you submit the issue on GitHub. Add:
 
 - what you ran and what you expected;
 - the output of `polyph doctor` and `polyph --version`;
@@ -241,9 +249,6 @@ Open an issue at `https://github.com/ProjectDEV-git/Polyph/issues`. Include:
 Do not paste tokens, keys or private code into an issue. Polyph redacts
 secrets it recognizes in terminal output, but check logs before you share
 them.
-
-A `polyph feedback` command that files a report from the command line is
-coming in the beta.
 
 Security problems should not go in a public issue. A private reporting
 address is being set up; until then, open an issue that says only that you
