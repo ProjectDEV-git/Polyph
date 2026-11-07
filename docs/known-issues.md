@@ -40,6 +40,10 @@ bugs belong in Linear (or `STUBS.md` for unfinished work), not here.
 - A container restart wipes ccusage's logs, so after one it undercounts the
   window (66% shown at a real 96%). Read `rate_limit_info.status` from
   get_session: `allowed_warning` means stop.
+- ccusage's block can be misaligned with the plan's window: after the
+  12:54 restart its block ran 12:54 to 17:00 while the plan's window reset at
+  14:40, so at 14:46 it showed 75% of mostly old-window tokens. When the plan
+  shows no `five_hour` flag right after a reset, the plan wins.
 - After a reset, ccusage keeps showing its own block until that block's end
   time. `get_session` `rate_limit_info` (`five_hour`, `allowed`, `resetsAt`)
   shows the new window first.

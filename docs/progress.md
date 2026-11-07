@@ -204,6 +204,9 @@ Resumed 14:44 UTC: five-hour flag cleared (only `seven_day`
 `allowed_warning` left). #14 CI: Windows Rust job failed (triage reading
 the log); #15 cf4b47e verification running; one security auditor on #16
 and #17.
+#15 cf4b47e verified by the lead (all pass); architect re-review
+dispatched. 14:46 UTC: ccusage 75% (misaligned block), plan shows no
+five-hour flag.
 
 ### Next after the pause
 
