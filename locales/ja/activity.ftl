@@ -20,3 +20,4 @@ activity-agent-connected = { $client } を接続しました
 activity-task-finished = タスクを終えました: { $summary }
 activity-brief-updated = プロジェクト概要を更新しました
 activity-task-taken = タスク { $title } を引き受けました
+activity-certificates-reissued = { $names } の証明書を再発行しました (ロールは最大でメンバー)

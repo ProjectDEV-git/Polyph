@@ -887,7 +887,8 @@ fn an_owner_reissues_members_of_a_room_saved_by_0_1_2_on_load() {
     let p = net.nodes[0].core.peers.get_mut(&md).unwrap();
     p.chain = chain.clone();
     p.verified = Some(chain.verify(now, &|_| false).unwrap());
-    let saved = net.nodes[0].core.save();
+    let mut saved = net.nodes[0].core.save();
+    saved.format = 0; // as 0.1.2 saved it: no format marker
     let bytes = polyph_proto::codec::to_cbor(&saved).unwrap();
     let back: polyph_core::SavedRoom = polyph_proto::codec::from_cbor(&bytes).unwrap();
     let id = Arc::new(DeviceIdentity::from_secret_bytes(&net.nodes[0].core.identity().to_secret_bytes()));
@@ -945,4 +946,225 @@ fn an_own_device_mark_goes_when_its_knock_expires() {
     net.nodes[0].core.allow_own_device(k2.id);
     net.nodes[0].core.drop_knock(&k2.id);
     assert!(!net.nodes[0].core.is_own_device_knock(&k2.id));
+}
+
+/// Saves node `i` and loads it again, as an upgrade would; `format` 0 is a
+/// room saved by 0.1.2.
+fn reload(net: &mut Net, i: usize, format: Option<u32>) {
+    let mut saved = net.nodes[i].core.save();
+    if let Some(f) = format {
+        saved.format = f;
+    }
+    let bytes = polyph_proto::codec::to_cbor(&saved).unwrap();
+    let back: polyph_core::SavedRoom = polyph_proto::codec::from_cbor(&bytes).unwrap();
+    let id = Arc::new(DeviceIdentity::from_secret_bytes(&net.nodes[i].core.identity().to_secret_bytes()));
+    net.nodes[i].core = RoomCore::load(id, back, net.now).unwrap();
+}
+
+#[test]
+fn a_room_saved_by_0_1_2_where_the_owner_was_re_issued_keeps_working() {
+    let mut net = Net::new("Ann");
+    net.connect(0);
+    let m = net.join("Mai", 0, 0, Role::Maintainer);
+    let c = net.join("Chai", 0, 0, Role::Member);
+    let (ad, md, cd) = (net.nodes[0].core.me, net.nodes[m].core.me, net.nodes[c].core.me);
+    let genesis = net.nodes[0].core.my_chain.clone();
+    // 0.1.2 state: Mai changed the owner's role, and every device, the owner's
+    // included, took that certificate (a chain of length 2, newer than the
+    // genesis self-certificate).
+    net.now += 1;
+    let owner = net.nodes[0].core.my_verified.clone();
+    let forged = forge(&net, m, &owner, Role::Maintainer, net.now);
+    let fv = forged.verify(net.now, &|_| false).unwrap();
+    net.nodes[0].core.my_chain = forged.clone();
+    net.nodes[0].core.my_verified = fv.clone();
+    for i in [m, c] {
+        let p = net.nodes[i].core.peers.get_mut(&ad).unwrap();
+        p.chain = forged.clone();
+        p.verified = Some(fv.clone());
+    }
+    for i in [0, m, c] {
+        reload(&mut net, i, Some(0));
+    }
+    for i in [0, m, c] {
+        net.connect(i);
+    }
+    // The owner's device is back on its genesis chain everywhere.
+    assert_eq!(net.nodes[0].core.role(), Role::Owner);
+    assert_eq!(net.nodes[0].core.my_chain, genesis);
+    for i in [m, c] {
+        assert_eq!(net.nodes[i].core.peers[&ad].chain, genesis, "node {i}");
+    }
+    // Peers survive a replacement, which checks every chain again.
+    net.now += 1;
+    let mm = net.nodes[m].core.my_member;
+    let out = net.nodes[0].core.change_role(mm, Role::Member, net.now).unwrap();
+    net.run(0, out);
+    assert_eq!(net.nodes[c].core.peers[&md].role(), Role::Member);
+    assert!(net.nodes[m].core.peers.contains_key(&cd));
+    assert!(net.nodes[0].core.peers.contains_key(&cd) && net.nodes[0].core.peers.contains_key(&md));
+    // A device that joins after the upgrade accepts the owner and the others.
+    let l = net.join("Lek", 0, 0, Role::Member);
+    for i in [0, m, c] {
+        let hello = net.nodes[i].core.hello(net.now);
+        net.run(i, vec![Effect::Send(hello)]);
+    }
+    assert_eq!(net.nodes[l].core.peers[&ad].role(), Role::Owner);
+    assert!(net.nodes[l].core.peers.contains_key(&md) && net.nodes[l].core.peers.contains_key(&cd));
+
+    // With no chain left that starts with its self-certificate, the owner's
+    // device signs the same genesis certificate again.
+    let mut solo = Net::new("Ann");
+    let genesis = solo.nodes[0].core.my_chain.clone();
+    let owner = solo.nodes[0].core.my_verified.clone();
+    let m = solo.join("Mai", 0, 0, Role::Maintainer);
+    solo.now += 1;
+    let forged = forge(&solo, m, &owner, Role::Maintainer, solo.now);
+    solo.nodes[0].core.my_verified = forged.verify(solo.now, &|_| false).unwrap();
+    solo.nodes[0].core.my_chain = forged;
+    solo.nodes[0].core.peers.clear();
+    reload(&mut solo, 0, Some(0));
+    assert_eq!(solo.nodes[0].core.my_chain, genesis);
+    assert_eq!(solo.nodes[0].core.role(), Role::Owner);
+}
+
+/// A snapshot (or a hello) that brings a device not held before checks every
+/// chain again, whatever the order: a chain issued through a Maintainer's
+/// old certificate is dropped once the demotion is seen.
+#[test]
+fn a_demotion_learnt_from_a_new_device_drops_chains_through_the_old_certificate() {
+    let mut net = Net::new("Ann");
+    net.connect(0);
+    let m = net.join("Mai", 0, 0, Role::Maintainer);
+    let l = net.join("Lek", 0, 0, Role::Member);
+    let md = net.nodes[m].core.me;
+    let held = net.nodes[0].core.peers[&md].verified.clone().unwrap();
+    net.now += 10;
+    let now = net.now;
+    let out = net.nodes[0].core.change_role(held.member, Role::Member, now).unwrap();
+    net.run(0, out);
+    // Demoted Mai issues Eve from its old chain; Eve's id sorts before Mai's,
+    // so a snapshot lists Eve first.
+    let eve = loop {
+        let e = DeviceIdentity::generate().unwrap();
+        if e.device_id() < md {
+            break e;
+        }
+    };
+    let cert = MembershipCert {
+        room: held.room,
+        member: MemberId::random().unwrap(),
+        device: eve.public(),
+        name_commit: held.name_commit,
+        role: Role::Maintainer,
+        issued_at: now,
+        expires_at: None,
+        capabilities: vec![],
+    };
+    let old_mai = MembershipCert {
+        room: held.room,
+        member: held.member,
+        device: held.device,
+        name_commit: held.name_commit,
+        role: Role::Maintainer,
+        issued_at: held.issued_at,
+        expires_at: None,
+        capabilities: vec![],
+    };
+    let old_mai = net.nodes[0].core.my_chain.issue(net.nodes[0].core.identity(), &old_mai).unwrap();
+    let evechain = old_mai.issue(net.nodes[m].core.identity(), &cert).unwrap();
+    let ev = evechain.verify(now, &|_| false).unwrap();
+    let ed = eve.device_id();
+    let eve_peer = || polyph_core::room::Peer {
+        chain: evechain.clone(),
+        verified: Some(ev.clone()),
+        profile: None,
+        presence: None,
+        last_seen: 0,
+    };
+    // A modified uploader (here Ann's core with Eve added) lists Eve before Mai.
+    net.nodes[0].core.peers.insert(ed, eve_peer());
+    let (_, snap) = net.nodes[0].core.relay_snapshot().unwrap();
+    net.nodes[0].core.peers.remove(&ed);
+    // Lek has not seen Mai's demotion.
+    net.nodes[l].core.peers.remove(&md);
+    assert!(net.nodes[l].core.apply_relay_snapshot(&snap, now));
+    assert_eq!(net.nodes[l].core.peers[&md].role(), Role::Member);
+    assert!(!net.nodes[l].core.peers.contains_key(&ed), "snapshot");
+    // The same through Mai's hello, with Eve held before.
+    net.nodes[l].core.peers.remove(&md);
+    net.nodes[l].core.peers.insert(ed, eve_peer());
+    let hello = net.nodes[m].core.hello(net.now);
+    net.run(m, vec![Effect::Send(hello)]);
+    assert_eq!(net.nodes[l].core.peers[&md].role(), Role::Member);
+    assert!(!net.nodes[l].core.peers.contains_key(&ed), "hello");
+}
+
+#[test]
+fn re_issue_on_load_runs_once_for_0_1_2_rooms_at_most_at_member_and_is_logged() {
+    let mut net = Net::new("Ann");
+    net.connect(0);
+    let m = net.join("Mai", 0, 0, Role::Maintainer);
+    let dee = net.join("Dee", m, m, Role::Maintainer);
+    let (md, dd) = (net.nodes[m].core.me, net.nodes[dee].core.me);
+    // 0.1.2 state: the Owner demoted Mai and re-issued Mai alone.
+    net.now += 1;
+    let now = net.now;
+    let held = net.nodes[0].core.peers[&md].verified.clone().unwrap();
+    let chain = forge(&net, 0, &held, Role::Member, now);
+    let p = net.nodes[0].core.peers.get_mut(&md).unwrap();
+    p.chain = chain.clone();
+    p.verified = Some(chain.verify(now, &|_| false).unwrap());
+    // Saved by this version: no re-issue on load.
+    reload(&mut net, 0, None);
+    net.connect(0);
+    assert_eq!(net.nodes[0].core.peers[&dd].chain.certs.len(), 3, "not re-issued");
+    // Saved by 0.1.2: re-issued once, as a Member, and logged.
+    reload(&mut net, 0, Some(0));
+    assert_eq!(net.nodes[0].core.save().format, 0, "still due until it ran");
+    net.connect(0);
+    assert_eq!(net.nodes[0].core.peers[&dd].chain.certs.len(), 2);
+    assert_eq!(net.nodes[0].core.peers[&dd].role(), Role::Member, "capped at Member");
+    assert_eq!(net.nodes[dee].core.role(), Role::Member);
+    let log = |net: &mut Net, i: usize| {
+        let doc = net.nodes[i].core.doc(&polyph_proto::messages::DocName::Activity);
+        polyph_proto::crdt::Activity::new(doc)
+            .entries()
+            .into_iter()
+            .filter(|e| e.kind == "certificates_reissued")
+            .collect::<Vec<_>>()
+    };
+    let entries = log(&mut net, 0);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].summary_key, "activity-certificates-reissued");
+    assert_eq!(entries[0].args["names"], "Dee");
+    assert_eq!(log(&mut net, m).len(), 1, "the room sees it");
+    assert_eq!(net.nodes[0].core.save().format, polyph_core::room::SAVE_FORMAT);
+}
+
+#[test]
+fn a_removed_device_is_told_it_was_removed_when_re_invited() {
+    let mut net = Net::new("Ann");
+    net.connect(0);
+    let c = net.join("Chai", 0, 0, Role::Member);
+    let (cm, cd) = (net.nodes[c].core.my_member, net.nodes[c].core.me);
+    let out = net.nodes[0].core.remove_member(cm, net.now).unwrap();
+    net.run(0, out);
+    let k = Knock {
+        id: ObjectId::random().unwrap(),
+        display_name: "Chai".into(),
+        member: MemberId::random().unwrap(),
+        device: cd,
+        requested_role: Role::Member,
+        via: net.nodes[0].core.me,
+        at: net.now,
+        kx: net.nodes[c].core.identity().public().kx.to_vec(),
+        name_salt: vec![7; 16],
+        surface: None,
+        capabilities: vec![],
+    };
+    let out = net.nodes[0].core.post_knock(k.clone());
+    net.run(0, out);
+    let err = net.nodes[0].core.approve_knock(k.id, Role::Member, net.now).unwrap_err().to_string();
+    assert!(err.contains("this device was removed from the room"), "{err}");
 }
