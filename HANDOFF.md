@@ -1,10 +1,9 @@
 # Handoff
 
-> **Paused for the 5-hour usage limit (2026-11-07 13:45 UTC).** Kao reported
-> the window at 96%; it resets at 14:40 UTC (9:40 PM Thailand time). No
-> workers are running. Resume from `docs/progress.md` ("Next after the
-> pause"). The weekly limit was at warning level earlier (resets 2026-11-13
-> 05:00 UTC).
+> **Resumed 2026-11-07 14:44 UTC after a 5-hour pause** (Kao reported 96%
+> at 13:45 UTC; the window reset at 14:40 UTC). The weekly limit is at
+> warning level (resets 2026-11-13 05:00 UTC). Current state and next steps
+> are in `docs/progress.md`.
 
 Read this first when continuing the build. Then `PLAN.md` (checklist),
 `STUBS.md` (what is not done), `DECISIONS.md` (why things are the way they

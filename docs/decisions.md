@@ -101,6 +101,11 @@ architecture decisions stay in `DECISIONS.md` at the root.
   RATE_RESETS_AT. Any five-hour status other than `allowed` pauses, and so
   does a figure from Kao at or over 75%. ccusage alone is never enough
   after a restart. Checks run before each dispatch, not only each hour.
+- **Weekly warning does not stop the loop by itself.** `seven_day`
+  `allowed_warning` has shown since the start of 2026-11-07 and Kao asked
+  the loop to watch the 5-hour window. The loop stops for the week only
+  when the weekly status is `rejected` or Kao says so. A `five_hour` status
+  other than `allowed` always pauses.
 - **5-hour token limit is about 62M tokens** (Kao, 2026-11-07). ccusage
   counts cache reads in that total, and so does the 75% rule.
   `.claude/scripts/usage-check.sh` takes it as `POLYPH_TOKEN_LIMIT`. Cloud

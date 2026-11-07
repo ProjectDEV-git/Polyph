@@ -200,6 +200,11 @@ State at the pause:
 - Linear: KAO-91..98 filed this session (KAO-95 is Kao's wire-change
   question).
 
+Resumed 14:44 UTC: five-hour flag cleared (only `seven_day`
+`allowed_warning` left). #14 CI: Windows Rust job failed (triage reading
+the log); #15 cf4b47e verification running; one security auditor on #16
+and #17.
+
 ### Next after the pause
 
 1. Usage check with the plan signal: run get_session, then
