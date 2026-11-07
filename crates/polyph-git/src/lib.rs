@@ -1,9 +1,13 @@
 //! Git for Polyph, by running the `git` command (2.38 or newer).
 //!
 //! - Each agent task gets its own worktree and branch ([`Repo::add_worktree`]).
-//! - The daemon commits an agent's work for it ([`Repo::commit_all`]). A
-//!   task agent may also commit in its own worktree; the sandbox keeps the
-//!   rest of `.git` read-only ([`sandbox_git`]).
+//! - The daemon commits an agent's work for it ([`Repo::commit_task`]). A
+//!   task agent may also commit in its own worktree, into an object store of
+//!   its own; the sandbox keeps the rest of `.git` read-only
+//!   ([`sandbox_git`]), and the daemon copies the task's commits into the
+//!   shared store with git checking every object ([`Repo::import_branch`]).
+//! - The daemon's own git writes run in a sandbox where only the folders
+//!   they write are writable ([`confine`]).
 //! - Merges are computed with `git merge-tree --write-tree` and committed with
 //!   plumbing ([`Repo::merge`]), so no working copy is touched; conflicted
 //!   files are handed to a resolver (see `polyph-merge`).
@@ -13,6 +17,8 @@ use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
 use serde::Serialize;
+
+pub mod confine;
 
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
@@ -358,12 +364,13 @@ fn check_links(gitdir: &Path, common: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Refuses `objects/info/alternates` (and `http-alternates`): they make git
-/// read objects from another repository, and the daemon never creates them
-/// (SEC-13). Checked before every command.
-fn check_alternates(common: &Path) -> Result<()> {
+/// Refuses `info/alternates` (and `http-alternates`) in the object store
+/// `objects` of the repository at `common`: they make git read objects from
+/// another repository, and the daemon never creates them (SEC-13). Checked
+/// before every command, in the shared store and a task's own.
+fn check_alternates(objects: &Path, common: &Path) -> Result<()> {
     for f in ["alternates", "http-alternates"] {
-        let p = common.join("objects").join("info").join(f);
+        let p = objects.join("info").join(f);
         if std::fs::symlink_metadata(&p).is_ok() {
             return Err(GitError::Invalid(format!(
                 "refusing to run git in {}: {} makes git read objects from another repository, and Polyph did \
@@ -374,6 +381,24 @@ fn check_alternates(common: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Subcommands that reach the network with the person's credentials: they
+/// run outside the daemon's git sandbox ([`confine`]). Their writes go to
+/// `refs/remotes/`, `FETCH_HEAD` and `objects/`, none of which an agent
+/// writes.
+const NETWORK: &[&str] = &["fetch", "pull", "push"];
+
+/// `GIT_ALTERNATE_OBJECT_DIRECTORIES` naming `dir` alone, quoted when it
+/// holds the list separator or starts with a quote.
+fn alternates_value(dir: &Path) -> std::ffi::OsString {
+    let s = dir.to_string_lossy();
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    if s.contains(sep) || s.starts_with('"') {
+        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")).into()
+    } else {
+        dir.as_os_str().to_os_string()
+    }
 }
 
 /// The git subcommand in `args`, past any `-c key=value`.
@@ -463,10 +488,25 @@ impl Repo {
     /// command line and the shared one in `GIT_COMMON_DIR`, so git never
     /// takes either from a file an agent could write.
     fn command(&self, trust: Trust, args: &[&str]) -> Result<Command> {
+        self.command_in(trust, args, &[])
+    }
+
+    /// [`Repo::command`]; a command that writes runs in the daemon's git
+    /// sandbox ([`confine`]) with [`Repo::write_scope`] and `extra` writable.
+    /// In a task worktree with an object store of its own, git reads and
+    /// writes objects there, with the shared store as an alternate it only
+    /// reads (SEC-13).
+    fn command_in(&self, trust: Trust, args: &[&str], extra: &[PathBuf]) -> Result<Command> {
         let mut c = git_command(&self.root, trust);
         let (dir, common) = self.dirs()?;
-        check_alternates(&common)?;
-        if WRITES.contains(&subcommand(args)) {
+        check_alternates(&common.join("objects"), &common)?;
+        let own = self.own_objects(&dir, &common);
+        if let Some(o) = &own {
+            check_alternates(o, &common)?;
+        }
+        let sub = subcommand(args);
+        let writes = WRITES.contains(&sub);
+        if writes {
             check_links(&dir, &common)?;
         }
         let mut g = std::ffi::OsString::from("--git-dir=");
@@ -474,8 +514,68 @@ impl Repo {
         let mut t = std::ffi::OsString::from("--work-tree=");
         t.push(&self.root);
         c.arg(g).arg(t).env("GIT_COMMON_DIR", &common);
+        if let Some(o) = &own {
+            c.env("GIT_OBJECT_DIRECTORY", o)
+                .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", alternates_value(&common.join("objects")));
+        }
         c.args(args);
+        if writes && !NETWORK.contains(&sub) {
+            let (mut w, ro) = self.write_scope(&dir, &common);
+            w.extend(extra.iter().cloned());
+            c = confine::confine(c, &w, &ro);
+        }
         Ok(c)
+    }
+
+    /// A task worktree's own object store, `<its git directory>/objects`,
+    /// when the daemon made one ([`Repo::add_worktree`]) and it is a folder,
+    /// not a link.
+    fn own_objects(&self, dir: &Path, common: &Path) -> Option<PathBuf> {
+        let o = dir.join("objects");
+        (self.worktrees.is_some() && dir != common && std::fs::symlink_metadata(&o).is_ok_and(|m| m.is_dir()))
+            .then_some(o)
+    }
+
+    /// What the daemon's git writes may write (SEC-13): in a task worktree,
+    /// the worktree and its own git directory (the folders its agent writes
+    /// anyway), but not the files there that name the repository; in a
+    /// person's checkout, the checkout and the shared git directory, but not
+    /// its settings, hooks and `info/`. Returns (writable, read-only inside).
+    fn write_scope(&self, dir: &Path, common: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
+        if self.worktrees.is_some() {
+            let ro = ["commondir", "gitdir", "config.worktree", "objects/info"].iter().map(|f| dir.join(f)).collect();
+            (vec![self.root.clone(), dir.to_path_buf()], ro)
+        } else {
+            let ro = ["config", "config.worktree", "hooks", "info", "objects/info", "commondir"]
+                .iter()
+                .map(|f| common.join(f))
+                .collect();
+            (vec![self.root.clone(), common.to_path_buf(), dir.to_path_buf()], ro)
+        }
+    }
+
+    /// The folders of `branch` in `refs/heads/` and `logs/refs/heads/`, made
+    /// if missing: what an `update-ref` of it writes besides the worktree's
+    /// own git directory.
+    fn branch_scope(&self, branch: &str) -> Result<Vec<PathBuf>> {
+        let common = self.common_dir()?;
+        let parent = Path::new(branch).parent().unwrap_or(Path::new(""));
+        let v = vec![
+            common.join("refs").join("heads").join(parent),
+            common.join("logs").join("refs").join("heads").join(parent),
+        ];
+        for d in &v {
+            std::fs::create_dir_all(d).map_err(GitError::Spawn)?;
+        }
+        Ok(v)
+    }
+
+    /// The folder a worktree at `path` goes in, made if missing: `git
+    /// worktree add` and `remove` write there.
+    fn worktree_scope(path: &Path) -> Result<Vec<PathBuf>> {
+        let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        std::fs::create_dir_all(parent).map_err(GitError::Spawn)?;
+        Ok(vec![canonical(parent).map_err(GitError::Spawn)?])
     }
 
     /// Before a fetch or push with the repository's own settings: git,
@@ -526,6 +626,16 @@ impl Repo {
         }
     }
 
+    /// [`Repo::git`] with `extra` writable in the daemon's git sandbox.
+    fn git_in(&self, args: &[&str], extra: &[PathBuf]) -> Result<String> {
+        let (ok, out, err) = output(self.command_in(Trust::Agent, args, extra)?, &[], None)?;
+        if ok {
+            Ok(out)
+        } else {
+            Err(GitError::Failed { cmd: subcommand(args).to_string(), stderr: err.trim().into() })
+        }
+    }
+
     /// The shared `.git` directory (the same for every worktree), verified
     /// and with links resolved.
     pub fn common_dir(&self) -> Result<PathBuf> {
@@ -546,26 +656,34 @@ impl Repo {
     }
 
     /// Creates `branch` from `base` and checks it out in a new worktree at `path`.
-    /// If the branch exists already, checks it out as it is.
+    /// If the branch exists already, checks it out as it is (the daemon
+    /// decides whether it may: it hands an agent only branches it created).
+    /// The worktree gets an object store of its own, `<its git
+    /// directory>/objects`, where its agent's commits go (SEC-13).
     pub fn add_worktree(&self, path: &Path, branch: &str, base: &str) -> Result<Repo> {
         check_branch_name(branch)?;
         let p = path.to_string_lossy();
+        let scope = Self::worktree_scope(path)?;
         if self.branch_exists(branch) {
-            self.git(&["worktree", "add", &p, branch])?;
+            self.git_in(&["worktree", "add", &p, branch], &scope)?;
         } else {
-            self.git(&["worktree", "add", "-b", branch, &p, base])?;
+            self.git_in(&["worktree", "add", "-b", branch, &p, base], &scope)?;
         }
-        self.open_worktree(path)
+        let wt = self.open_worktree(path)?;
+        let (dir, _) = wt.dirs()?;
+        std::fs::create_dir_all(dir.join("objects").join("info")).map_err(GitError::Spawn)?;
+        Ok(wt)
     }
 
     /// Adds a detached worktree at `rev` (for running checks on a merge).
     pub fn add_detached(&self, path: &Path, rev: &str) -> Result<Repo> {
-        self.git(&["worktree", "add", "--detach", &path.to_string_lossy(), rev])?;
+        self.git_in(&["worktree", "add", "--detach", &path.to_string_lossy(), rev], &Self::worktree_scope(path)?)?;
         self.open_worktree(path)
     }
 
     pub fn remove_worktree(&self, path: &Path) -> Result<()> {
-        self.git(&["worktree", "remove", "--force", &path.to_string_lossy()]).map(|_| ())
+        self.git_in(&["worktree", "remove", "--force", &path.to_string_lossy()], &Self::worktree_scope(path)?)
+            .map(|_| ())
     }
 
     pub fn delete_branch(&self, branch: &str) -> Result<()> {
@@ -693,7 +811,17 @@ impl Repo {
     /// Commits every change in the working copy. Returns the new commit, or
     /// None when there was nothing to commit. Submodules are never looked
     /// into (see [`Repo::dirty_files`]).
+    /// In a task worktree with an object store of its own, this is
+    /// [`Repo::commit_task`] on the branch HEAD names.
     pub fn commit_all(&self, message: &str, who: &Signature) -> Result<Option<String>> {
+        if let Ok((dir, common)) = self.dirs()
+            && self.own_objects(&dir, &common).is_some()
+        {
+            let branch = self.current_branch().ok_or_else(|| {
+                GitError::Invalid(format!("refusing to commit in {}: HEAD names no branch", self.root.display()))
+            })?;
+            return self.commit_task(&branch, message, who);
+        }
         if self.dirty_files()?.is_empty() {
             return Ok(None);
         }
@@ -725,8 +853,10 @@ impl Repo {
     /// must name. The commit goes onto the branch itself (`commit-tree` on
     /// its tip, then `update-ref` from that tip), never through HEAD: a task
     /// agent writes its worktree's HEAD, and pointing it at `main` must not
-    /// make the daemon commit there (SEC-13). Returns the new commit, or
-    /// None when there was nothing to commit.
+    /// make the daemon commit there (SEC-13). Then the branch's commits,
+    /// the agent's own included, go into the shared object store
+    /// ([`Repo::import_branch`]). Returns the new commit, or None when there
+    /// was nothing to commit.
     pub fn commit_task(&self, branch: &str, message: &str, who: &Signature) -> Result<Option<String>> {
         check_branch_name(branch)?;
         let full = format!("refs/heads/{branch}");
@@ -738,6 +868,12 @@ impl Repo {
                 self.root.display()
             )));
         }
+        let made = self.commit_on(branch, &full, message, who)?;
+        self.import_branch(branch)?;
+        Ok(made)
+    }
+
+    fn commit_on(&self, branch: &str, full: &str, message: &str, who: &Signature) -> Result<Option<String>> {
         if self.dirty_files()?.is_empty() {
             return Ok(None);
         }
@@ -753,7 +889,7 @@ impl Repo {
         let mut add = vec!["add", "-A", "--", "."];
         add.extend(links.iter().map(String::as_str));
         self.git(&[&no_sub[..], &add].concat())?;
-        let parent = self.rev_parse(&full)?;
+        let parent = self.rev_parse(full)?;
         let tree = self.git(&["write-tree"])?.trim().to_string();
         if self.git(&["rev-parse", &format!("{parent}^{{tree}}")])?.trim() == tree {
             return Ok(None);
@@ -766,8 +902,104 @@ impl Repo {
             .trim()
             .to_string();
         let subject = text.lines().next().unwrap_or_default();
-        self.git(&["update-ref", "-m", &format!("commit: {subject}"), &full, &commit, &parent])?;
+        self.git_in(
+            &["update-ref", "-m", &format!("commit: {subject}"), full, &commit, &parent],
+            &self.branch_scope(branch)?,
+        )?;
         Ok(Some(commit))
+    }
+
+    /// Copies the commits on `branch` from this task worktree's own object
+    /// store into the shared one (SEC-13). Git packs them from the task's
+    /// store and `index-pack --strict` takes them into the shared one: it
+    /// names every object by hashing its content and checks that every
+    /// object they name is there, so a loose object or pack the agent made
+    /// under another object's name never enters the shared store, and the
+    /// copy fails rather than take a commit whose objects are not what
+    /// their names say. Nothing to do when the worktree has no store of its
+    /// own or the shared store has the tip already.
+    pub fn import_branch(&self, branch: &str) -> Result<()> {
+        check_branch_name(branch)?;
+        let (dir, common) = self.dirs()?;
+        if self.own_objects(&dir, &common).is_none() {
+            return Ok(());
+        }
+        check_links(&dir, &common)?;
+        let tip = self.rev_parse(&format!("refs/heads/{branch}"))?;
+        let shared = |args: &[&str]| {
+            let mut c = git_command(&self.root, Trust::Agent);
+            let mut g = std::ffi::OsString::from("--git-dir=");
+            g.push(&common);
+            c.arg(g).args(args);
+            c
+        };
+        let failed = |stderr: String| GitError::Failed {
+            cmd: "index-pack".into(),
+            stderr: format!("could not take the commits of {branch} into the shared object store: {}", stderr.trim()),
+        };
+        // Commits the shared store has, of the branches no agent writes.
+        let has = |oids: &str| -> Result<Vec<String>> {
+            let (_, out, _) =
+                output(shared(&["cat-file", "--batch-check=%(objectname) %(objecttype)"]), &[], Some(oids.as_bytes()))?;
+            Ok(out.lines().filter_map(|l| l.strip_suffix(" commit")).map(str::to_string).collect())
+        };
+        if !has(&format!("{tip}\n"))?.is_empty() {
+            return Ok(());
+        }
+        let (ok, refs, err) = output(
+            shared(&["for-each-ref", "--format=%(objectname) %(refname)", "refs/heads", "refs/remotes"]),
+            &[],
+            None,
+        )?;
+        if !ok {
+            return Err(failed(err));
+        }
+        let oids: String = refs
+            .lines()
+            .filter_map(|l| l.split_once(' '))
+            .filter(|(_, name)| !name.starts_with("refs/heads/polyph/"))
+            .map(|(oid, _)| format!("{oid}\n"))
+            .collect();
+        let mut revs = format!("{tip}\n--not\n");
+        for oid in has(&oids)? {
+            revs.push_str(&oid);
+            revs.push('\n');
+        }
+        let mut pack = self.command(Trust::Agent, &["pack-objects", "--revs", "--stdout", "-q"])?;
+        pack.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut p = pack.spawn().map_err(GitError::Spawn)?;
+        let input = p.stdin.take();
+        let revs2 = revs.clone();
+        let writer = std::thread::spawn(move || {
+            use std::io::Write;
+            if let Some(mut i) = input {
+                let _ = i.write_all(revs2.as_bytes());
+            }
+        });
+        let Some(packed) = p.stdout.take() else { return Err(failed("no output from pack-objects".into())) };
+        let objects = common.join("objects");
+        let mut index = confine::confine(
+            shared(&["index-pack", "--stdin", "--strict"]),
+            std::slice::from_ref(&objects),
+            &[objects.join("info")],
+        );
+        index.stdin(Stdio::from(packed)).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let indexed = index.output().map_err(GitError::Spawn)?;
+        let _ = writer.join();
+        let packed = p.wait_with_output().map_err(GitError::Spawn)?;
+        if !packed.status.success() {
+            return Err(failed(String::from_utf8_lossy(&packed.stderr).into_owned()));
+        }
+        if !indexed.status.success() {
+            return Err(failed(String::from_utf8_lossy(&indexed.stderr).into_owned()));
+        }
+        // Everything the tip reaches is in the shared store now.
+        let (ok, _, err) =
+            output(shared(&["rev-list", "--objects", "--quiet", "--stdin"]), &[], Some(revs.as_bytes()))?;
+        if !ok || has(&format!("{tip}\n"))?.is_empty() {
+            return Err(failed(err));
+        }
+        Ok(())
     }
 
     /// Refuses `branch` when its tip is not where its reflog says git last
@@ -828,6 +1060,16 @@ impl Repo {
     /// Unified diff of `head` since it forked from `base`.
     pub fn diff(&self, base: &str, head: &str) -> Result<String> {
         self.git(&["diff", "--no-color", "--no-ext-diff", "--no-textconv", &format!("{base}...{head}")])
+    }
+
+    /// `git diff --shortstat` of `head` since it forked from `base`
+    /// ("2 files changed, 5 insertions(+), 1 deletion(-)"), empty when
+    /// nothing changed.
+    pub fn diff_stat(&self, base: &str, head: &str) -> Result<String> {
+        Ok(self
+            .git(&["diff", "--no-ext-diff", "--no-textconv", "--shortstat", &format!("{base}...{head}")])?
+            .trim()
+            .to_string())
     }
 
     /// Commit subjects on `head` since it forked from `base`, oldest first.
@@ -956,7 +1198,8 @@ impl Repo {
                 if wt.rev_parse("HEAD")? != old {
                     return Err(GitError::Invalid(format!("{branch} moved while merging; try again")));
                 }
-                wt.git(&["merge", "--ff-only", "--quiet", commit])?;
+                let scope = if main { vec![] } else { wt.branch_scope(branch)? };
+                wt.git_in(&["merge", "--ff-only", "--quiet", commit], &scope)?;
                 return Ok(());
             }
         }
@@ -1202,49 +1445,59 @@ pub fn clone_from(url: &str, dir: &Path, branch: Option<&str>, partial: bool) ->
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SandboxGit {
     /// Folders of the shared git directory the agent writes so it can
-    /// commit on its task branch: `objects/`, the folder in `refs/heads/`
-    /// that holds the branch and the matching folder in `logs/refs/heads/`,
-    /// and its own folder in `worktrees/` (its HEAD, index, reflog and
-    /// per-worktree refs). Empty unless it commits.
+    /// commit on its task branch `polyph/<task>/<name>`: its task's folder
+    /// in `refs/heads/polyph/` and the matching folder in
+    /// `logs/refs/heads/polyph/`, and its own folder in `worktrees/` (its
+    /// HEAD, index, reflog, per-worktree refs and its own object store).
+    /// Empty unless it commits.
     pub writable: Vec<PathBuf>,
-    /// Paths that stay read-only: the whole shared git directory, a linked
-    /// worktree's `.git` file and, when it commits, `objects/info/`, the
-    /// `commondir`, `gitdir` and `config.worktree` files in its own folder,
-    /// and every other entry in the two branch folders (other tasks'
-    /// branches and their reflogs).
+    /// Paths that stay read-only: the whole shared git directory (its
+    /// `objects/` included), a linked worktree's `.git` file and, when it
+    /// commits, the `commondir`, `gitdir` and `config.worktree` files and
+    /// `objects/info/` in its own folder, and every other entry in its task
+    /// folders.
     pub read_only: Vec<PathBuf>,
+    /// Environment for the agent when it commits: its own object store as
+    /// `GIT_OBJECT_DIRECTORY` and the shared one, read-only, as
+    /// `GIT_ALTERNATE_OBJECT_DIRECTORIES`. Set by the daemon, never read
+    /// from a file the agent writes.
+    pub env: Vec<(String, String)>,
+}
+
+/// The task id in a task branch `polyph/<task>/<name>` (no further `/`).
+pub fn task_folder(branch: &str) -> Option<&str> {
+    let (task, name) = branch.strip_prefix("polyph/")?.split_once('/')?;
+    (!task.is_empty() && !name.is_empty() && !name.contains('/') && check_branch_name(branch).is_ok()).then_some(task)
 }
 
 /// The [`SandboxGit`] for an agent working in `worktree`. With `branch` (a
-/// task's branch) and a linked worktree, the agent can run `git add` and
-/// `git commit` on that branch; otherwise (the person's own checkout,
-/// checks) the whole git directory is read-only and only read-only git
-/// commands work. A branch directly in `refs/heads/` (no `/` in its name)
-/// shares its folder with every other branch, so the agent gets no
-/// commits there; the daemon still commits its work when it finishes.
-/// Empty outside a git checkout. Creates the branch's folders in `refs/`
-/// and `logs/`, `objects/info/` and an empty `config.worktree` when they
-/// are missing, so the agent cannot create them.
+/// task's branch, `polyph/<task>/<name>`) and a linked worktree, the agent
+/// can run `git add` and `git commit` on that branch, with its objects in
+/// its worktree's own store; otherwise (the person's own checkout, checks,
+/// a branch of another form) the whole git directory is read-only and only
+/// read-only git commands work; the daemon still commits its work when it
+/// finishes. Empty outside a git checkout. Creates the task's folders in
+/// `refs/` and `logs/`, the worktree's object store with its `info/`, and an
+/// empty `config.worktree` when they are missing, so the agent cannot
+/// create them.
 pub fn sandbox_git(worktree: &Path, branch: Option<&str>) -> SandboxGit {
     let Ok(r) = Repo::open(worktree) else { return SandboxGit::default() };
     let Ok((gitdir, common)) = r.dirs() else { return SandboxGit::default() };
-    let mut g = SandboxGit { writable: vec![], read_only: vec![common.clone()] };
+    let mut g = SandboxGit { writable: vec![], read_only: vec![common.clone()], env: vec![] };
     // The `.git` link file of a linked worktree.
     if let Ok(root) = canonical(r.root())
         && std::fs::symlink_metadata(root.join(".git")).is_ok_and(|m| m.is_file())
     {
         g.read_only.push(root.join(".git"));
     }
-    let leaf = branch.filter(|b| check_branch_name(b).is_ok()).and_then(|b| {
-        let (dir, name) = b.rsplit_once('/')?;
-        (!name.is_empty() && !dir.is_empty()).then_some((dir, name))
-    });
-    if let Some((dir, name)) = leaf
+    let leaf = branch.and_then(|b| Some((task_folder(b)?, b.rsplit_once('/')?.1)));
+    if let Some((task, name)) = leaf
         && gitdir != common
     {
-        let refs = common.join("refs").join("heads").join(dir);
-        let logs = common.join("logs").join("refs").join("heads").join(dir);
-        let info = common.join("objects").join("info");
+        let refs = common.join("refs").join("heads").join("polyph").join(task);
+        let logs = common.join("logs").join("refs").join("heads").join("polyph").join(task);
+        let objects = gitdir.join("objects");
+        let info = objects.join("info");
         for d in [&refs, &logs, &info] {
             let _ = std::fs::create_dir_all(d);
         }
@@ -1252,11 +1505,10 @@ pub fn sandbox_git(worktree: &Path, branch: Option<&str>) -> SandboxGit {
         if std::fs::symlink_metadata(&per_worktree).is_err() {
             let _ = std::fs::write(&per_worktree, "");
         }
-        g.writable = vec![common.join("objects"), refs.clone(), logs.clone(), gitdir.clone()];
-        g.read_only.push(info);
+        g.writable = vec![refs.clone(), logs.clone(), gitdir.clone()];
         g.read_only.extend(["commondir", "gitdir", "config.worktree"].iter().map(|f| gitdir.join(f)));
-        // Everything else in the branch folders: other branches and their
-        // reflogs, and anything else in there, stay as they are.
+        g.read_only.push(info);
+        // Everything else in the task folders stays as it is.
         for d in [&refs, &logs] {
             let mut others: Vec<PathBuf> = std::fs::read_dir(d)
                 .into_iter()
@@ -1267,6 +1519,15 @@ pub fn sandbox_git(worktree: &Path, branch: Option<&str>) -> SandboxGit {
                 .collect();
             others.sort();
             g.read_only.extend(others);
+        }
+        if std::fs::symlink_metadata(&objects).is_ok_and(|m| m.is_dir()) {
+            g.env = vec![
+                ("GIT_OBJECT_DIRECTORY".into(), objects.to_string_lossy().into_owned()),
+                (
+                    "GIT_ALTERNATE_OBJECT_DIRECTORIES".into(),
+                    alternates_value(&common.join("objects")).to_string_lossy().into_owned(),
+                ),
+            ];
         }
     }
     let real = |p: &PathBuf, dir: bool| {
@@ -1339,7 +1600,8 @@ pub fn check_branch_name(b: &str) -> Result<()> {
     if bad { Err(GitError::Invalid(format!("not a valid branch name: {b}"))) } else { Ok(()) }
 }
 
-/// A branch name for a task: `polyph/<slug>-<short id>`.
+/// A branch name for a task: `polyph/<short id>/<slug>`, one folder per
+/// task, so a task agent writes only its own task's branches (SEC-13).
 pub fn task_branch(title: &str, short_id: &str) -> String {
     let mut slug = String::new();
     for c in title.chars() {
@@ -1353,7 +1615,9 @@ pub fn task_branch(title: &str, short_id: &str) -> String {
         }
     }
     let slug = slug.trim_end_matches('-');
-    if slug.is_empty() { format!("polyph/task-{short_id}") } else { format!("polyph/{slug}-{short_id}") }
+    let id: String = short_id.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    let id = if id.is_empty() { "task".to_string() } else { id };
+    if slug.is_empty() { format!("polyph/{id}/task") } else { format!("polyph/{id}/{slug}") }
 }
 
 /// `path` made absolute with links resolved, in the form other programs
@@ -1456,8 +1720,12 @@ mod tests {
 
     #[test]
     fn names() {
-        assert_eq!(task_branch("Add OAuth login!", "ab12"), "polyph/add-oauth-login-ab12");
-        assert_eq!(task_branch("日本語", "ab12"), "polyph/task-ab12");
+        assert_eq!(task_branch("Add OAuth login!", "ab12"), "polyph/ab12/add-oauth-login");
+        assert_eq!(task_branch("日本語", "ab12"), "polyph/ab12/task");
+        assert_eq!(task_folder("polyph/ab12/add-oauth-login"), Some("ab12"));
+        for b in ["polyph/ab12", "polyph/ab12/a/b", "polyph//a", "main", "other/ab12/a", "polyph/ab12/x.lock"] {
+            assert_eq!(task_folder(b), None, "{b}");
+        }
         assert!(check_branch_name("-rf").is_err() && check_branch_name("a..b").is_err());
         assert_eq!(Signature::agent("Bo/claude", "1f").email, "bo-claude.1f@agents.polyph.invalid");
     }
@@ -1474,6 +1742,7 @@ mod tests {
         let c = wt.commit_all("add new.rs", &Signature::agent("A", "1")).unwrap().unwrap();
         assert_eq!(r.changed_files("main", "polyph/t1").unwrap(), vec!["new.rs"]);
         assert!(r.diff("main", "polyph/t1").unwrap().contains("+fn n() {}"));
+        assert_eq!(r.diff_stat("main", "polyph/t1").unwrap(), "1 file changed, 1 insertion(+)");
         // Main moved on in the meantime.
         std::fs::write(d.path().join("other.rs"), "x\n").unwrap();
         r.commit_all("other", &Signature::agent("B", "2")).unwrap();
@@ -1918,36 +2187,59 @@ mod tests {
         let common = canonical(&r.common_dir().unwrap()).unwrap();
         // The person's own checkout: all of `.git`, whether it commits or not.
         let g = sandbox_git(d.path(), None);
-        assert_eq!(g, SandboxGit { writable: vec![], read_only: vec![common.clone()] });
+        assert_eq!(g, SandboxGit { writable: vec![], read_only: vec![common.clone()], env: vec![] });
         assert_eq!(sandbox_git(d.path(), Some("main")), g, "agents commit only in a task's worktree");
 
-        // A task's worktree: objects, its branch's folders in refs and logs,
-        // and its own folder, but not the files in it that name the
-        // repository or hold its settings, `objects/info`, or the other
-        // branches in its branch's folders.
+        // A task's worktree: its task's folders in refs and logs and its own
+        // folder (with its own object store), but not the shared `objects/`,
+        // the files in its folder that name the repository or hold its
+        // settings, its store's `info/`, or the other branches in its
+        // task's folders.
         let wt_dir = tempfile::tempdir().unwrap();
-        let wt = r.add_worktree(&wt_dir.path().join("t1"), "polyph/t1", "main").unwrap();
-        r.add_worktree(&wt_dir.path().join("t2"), "polyph/t2", "main").unwrap();
+        let wt = r.add_worktree(&wt_dir.path().join("t1"), "polyph/t1/work", "main").unwrap();
+        r.add_worktree(&wt_dir.path().join("t2"), "polyph/t2/work", "main").unwrap();
+        r.git(&["branch", "polyph/t1/other", "main"]).unwrap();
         let own = common.join("worktrees").join("t1");
-        let (refs, logs) = (common.join("refs/heads/polyph"), common.join("logs/refs/heads/polyph"));
-        let g = sandbox_git(wt.root(), Some("polyph/t1"));
-        assert_eq!(g.writable, vec![common.join("objects"), refs.clone(), logs.clone(), own.clone()]);
-        let mut ro = vec![common.clone(), wt.root().join(".git"), common.join("objects/info")];
-        ro.extend(["commondir", "gitdir", "config.worktree"].iter().map(|f| own.join(f)));
-        ro.extend([refs.join("t2"), logs.join("t2")]);
+        let (refs, logs) = (common.join("refs/heads/polyph/t1"), common.join("logs/refs/heads/polyph/t1"));
+        let g = sandbox_git(wt.root(), Some("polyph/t1/work"));
+        assert_eq!(g.writable, vec![refs.clone(), logs.clone(), own.clone()]);
+        let mut ro = vec![common.clone(), wt.root().join(".git")];
+        ro.extend(["commondir", "gitdir", "config.worktree", "objects/info"].iter().map(|f| own.join(f)));
+        ro.extend([refs.join("other"), logs.join("other")]);
         assert_eq!(g.read_only, ro);
         assert!(own.join("config.worktree").is_file(), "created so the agent cannot");
-        // Never `refs/`, `logs/` or `refs/heads/` as a whole.
-        for p in [common.join("refs"), common.join("logs"), common.join("refs/heads"), common.join("logs/refs")] {
-            assert!(!g.writable.contains(&p), "{p:?} is writable");
+        let alt = common.join("objects").to_string_lossy().into_owned();
+        assert_eq!(
+            g.env,
+            [
+                ("GIT_OBJECT_DIRECTORY".to_string(), own.join("objects").to_string_lossy().into_owned()),
+                ("GIT_ALTERNATE_OBJECT_DIRECTORIES".to_string(), alt)
+            ]
+        );
+        // Never `objects/`, `refs/`, `logs/`, `refs/heads/` or the shared
+        // `polyph/` folders as a whole.
+        for p in [
+            common.join("objects"),
+            common.join("refs"),
+            common.join("logs"),
+            common.join("refs/heads"),
+            common.join("logs/refs"),
+            common.join("refs/heads/polyph"),
+            common.join("logs/refs/heads/polyph"),
+        ] {
+            assert!(!g.writable.iter().any(|w| p.starts_with(w)), "{p:?} is writable");
         }
-        // A branch right in refs/heads shares its folder with main: no commits.
+        // A branch right in refs/heads shares its folder with main, and one
+        // outside a task folder shares it with other tasks: no commits.
         r.git(&["branch", "flat", "main"]).unwrap();
         assert!(sandbox_git(wt.root(), Some("flat")).writable.is_empty());
+        r.git(&["branch", "polyph/t1x", "main"]).unwrap();
+        assert!(sandbox_git(wt.root(), Some("polyph/t1x")).writable.is_empty());
+        assert!(sandbox_git(wt.root(), Some("polyph/t1x")).env.is_empty());
         // Checks in a worktree commit nothing.
         assert_eq!(sandbox_git(wt.root(), None).read_only, vec![common.clone(), wt.root().join(".git")]);
         assert!(sandbox_git(wt.root(), None).writable.is_empty());
-        assert_eq!(sandbox_git(tempfile::tempdir().unwrap().path(), Some("polyph/t1")), SandboxGit::default());
+        assert_eq!(sandbox_git(tempfile::tempdir().unwrap().path(), Some("polyph/t1/work")), SandboxGit::default());
     }
 
     /// SEC-13: git appends to reflogs through links. A reflog, a ref or a
@@ -2061,5 +2353,135 @@ mod tests {
         // Moved back by git: fine again.
         r.git(&["update-ref", "refs/heads/main", &second]).unwrap();
         r.check_branch_logged("main").unwrap();
+    }
+
+    /// Plain git in a task worktree as its agent runs it: objects in the
+    /// worktree's own store, the shared one an alternate.
+    fn agent_git(wt: &Repo, args: &[&str]) -> String {
+        let env = sandbox_git(wt.root(), wt.current_branch().as_deref()).env;
+        assert!(!env.is_empty(), "no object store of its own");
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(wt.root())
+            .args(["-c", "user.name=a", "-c", "user.email=a@b", "-c", "commit.gpgSign=false"])
+            .args(args)
+            .envs(env)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// The loose object file of `oid` in the object store `objects`.
+    fn loose(objects: &Path, oid: &str) -> PathBuf {
+        objects.join(&oid[..2]).join(&oid[2..])
+    }
+
+    /// SEC-13: a task agent's objects stay in its worktree's own store. The
+    /// daemon takes its commits into the shared store only through
+    /// `index-pack --strict`, which names objects by their content, so a
+    /// blob the agent swaps (before or after) never reaches the shared
+    /// store, a checkout, or the fast-forward of the person's checkout.
+    #[test]
+    fn swapped_task_objects_never_reach_the_shared_store() {
+        let (d, r) = init();
+        let common = canonical(&r.common_dir().unwrap()).unwrap();
+        let shared = common.join("objects");
+        let wt_dir = tempfile::tempdir().unwrap();
+        let wt = r.add_worktree(&wt_dir.path().join("t1"), "polyph/t1/work", "main").unwrap();
+        let own = common.join("worktrees/t1/objects");
+        assert!(own.join("info").is_dir(), "add_worktree makes the task's own store");
+
+        // The agent commits; its objects are in its own store only.
+        std::fs::write(wt.root().join("a.rs"), "fn good() {}\n").unwrap();
+        agent_git(&wt, &["add", "a.rs"]);
+        agent_git(&wt, &["commit", "-q", "-m", "good"]);
+        let tip = agent_git(&wt, &["rev-parse", "HEAD"]);
+        let good = agent_git(&wt, &["rev-parse", "HEAD:a.rs"]);
+        assert!(loose(&own, &good).is_file() && !loose(&shared, &good).exists());
+        assert!(r.show(&tip, "a.rs").is_none(), "the shared store has the agent's commit already");
+
+        // Before the daemon takes it: the blob's file now holds other content.
+        std::fs::write(wt.root().join("evil.txt"), "fn evil() {}\n").unwrap();
+        let evil = agent_git(&wt, &["hash-object", "-w", "evil.txt"]);
+        std::fs::remove_file(wt.root().join("evil.txt")).unwrap();
+        let (good_file, evil_file) = (loose(&own, &good), loose(&own, &evil));
+        let good_bytes = std::fs::read(&good_file).unwrap();
+        std::fs::remove_file(&good_file).unwrap();
+        std::fs::copy(&evil_file, &good_file).unwrap();
+        assert_eq!(agent_git(&wt, &["cat-file", "blob", &good]), "fn evil() {}", "git reads the swap as it is");
+        let who = Signature::agent("A", "1");
+        let err = wt.commit_task("polyph/t1/work", "x", &who).unwrap_err().to_string();
+        assert!(err.contains("shared object store"), "{err}");
+        assert!(r.show(&tip, "a.rs").is_none(), "a commit with a swapped blob reached the shared store");
+        assert!(!loose(&shared, &good).exists());
+
+        // Put back: the commit goes in, with its true content.
+        std::fs::remove_file(&good_file).unwrap();
+        std::fs::write(&good_file, &good_bytes).unwrap();
+        assert_eq!(wt.commit_task("polyph/t1/work", "x", &who).unwrap(), None);
+        assert_eq!(r.show(&tip, "a.rs").as_deref(), Some("fn good() {}\n"));
+
+        // After: the agent swaps its copy again. The merge, the checkout and
+        // the fast-forward of the person's checkout read the shared store.
+        std::fs::remove_file(&good_file).unwrap();
+        std::fs::copy(&evil_file, &good_file).unwrap();
+        let old = r.rev_parse("main").unwrap();
+        let out = r.merge("main", &tip, "merge", &Signature::agent("P", "q"), &mut |_| None).unwrap();
+        let MergeOutcome::Merged { commit, .. } = out else { panic!("{out:?}") };
+        r.advance_branch("main", &commit, &old).unwrap();
+        assert_eq!(std::fs::read_to_string(d.path().join("a.rs")).unwrap(), "fn good() {}\n");
+        let check = r.add_detached(&wt_dir.path().join("check"), &commit).unwrap();
+        assert_eq!(std::fs::read_to_string(check.root().join("a.rs")).unwrap(), "fn good() {}\n");
+    }
+
+    /// SEC-13: while the daemon commits a task's work, its agent keeps
+    /// flipping the branch's reflog between a file and a link to a file of
+    /// the person's. The daemon's git writes run in a sandbox where that
+    /// file is read-only, so no run writes it, whichever way the race goes.
+    #[cfg(unix)]
+    #[test]
+    fn a_racing_reflog_link_never_writes_outside() {
+        if confine::confinement() == confine::Confinement::None {
+            eprintln!("skipped: no sandbox for the daemon's git writes on this machine");
+            return;
+        }
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let (_d, r) = init();
+        let wt_dir = tempfile::tempdir().unwrap();
+        let wt = r.add_worktree(&wt_dir.path().join("t1"), "polyph/t1/work", "main").unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let profile = home.path().join(".profile");
+        std::fs::write(&profile, "export PATH\n").unwrap();
+        let log = r.common_dir().unwrap().join("logs/refs/heads/polyph/t1/work");
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let flipper = {
+            let (stop, log, profile) = (stop.clone(), log.clone(), profile.clone());
+            std::thread::spawn(move || {
+                let mut flips = 0u64;
+                while !stop.load(Ordering::Relaxed) {
+                    let _ = std::fs::remove_file(&log);
+                    let _ = std::fs::write(&log, "");
+                    let _ = std::fs::remove_file(&log);
+                    let _ = std::os::unix::fs::symlink(&profile, &log);
+                    flips += 1;
+                }
+                flips
+            })
+        };
+        let who = Signature::agent("A", "1");
+        let (mut ok, mut refused) = (0, 0);
+        for i in 0..150 {
+            std::fs::write(wt.root().join("n.rs"), format!("fn n() {{ {i} }}\n")).unwrap();
+            match wt.commit_task("polyph/t1/work", &format!("; touch PWNED {i}"), &who) {
+                Ok(_) => ok += 1,
+                Err(_) => refused += 1,
+            }
+            assert_eq!(std::fs::read_to_string(&profile).unwrap(), "export PATH\n", "run {i} wrote through the link");
+        }
+        stop.store(true, Ordering::Relaxed);
+        let flips = flipper.join().unwrap();
+        eprintln!("{ok} commits, {refused} refused, {flips} flips");
+        assert!(flips > 0);
     }
 }
