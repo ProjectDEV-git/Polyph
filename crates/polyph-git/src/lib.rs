@@ -1,8 +1,9 @@
 //! Git for Polyph, by running the `git` command (2.38 or newer).
 //!
 //! - Each agent task gets its own worktree and branch ([`Repo::add_worktree`]).
-//! - Agents only write files; the daemon commits for them
-//!   ([`Repo::commit_all`]), so sandboxes never need write access to `.git`.
+//! - The daemon commits an agent's work for it ([`Repo::commit_all`]). A
+//!   task agent may also commit in its own worktree; the sandbox keeps the
+//!   rest of `.git` read-only ([`sandbox_git`]).
 //! - Merges are computed with `git merge-tree --write-tree` and committed with
 //!   plumbing ([`Repo::merge`]), so no working copy is touched; conflicted
 //!   files are handed to a resolver (see `polyph-merge`).
@@ -91,7 +92,7 @@ enum Trust {
 /// the person's rights. Settings git keeps the first value of
 /// (`core.gitProxy`, `remote.*.uploadpack`) are handled where the command
 /// is built; settings under names no list can cover (`filter.*`,
-/// `merge.*.driver`) are not handled here: see [`protected_paths`] and
+/// `merge.*.driver`) are not handled here: see [`sandbox_git`] and
 /// `docs/security.md`.
 fn guard_args() -> &'static [String] {
     static ARGS: OnceLock<Vec<String>> = OnceLock::new();
@@ -186,6 +187,10 @@ fn person_config(args: &[&str]) -> Vec<String> {
 fn git_command(dir: &Path, trust: Trust) -> Command {
     let mut c = Command::new("git");
     c.arg("-C").arg(dir);
+    // Only the directories named here count, never the daemon's own.
+    for k in ["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY"] {
+        c.env_remove(k);
+    }
     if trust == Trust::Agent {
         c.args(guard_args());
         if std::env::var_os("GIT_PROXY_COMMAND").is_none() {
@@ -197,24 +202,82 @@ fn git_command(dir: &Path, trust: Trust) -> Command {
     c
 }
 
+/// Reads a small git pointer file (`.git`, `commondir`): a regular file of
+/// at most 4 KiB, never through a link.
+fn read_pointer(p: &Path) -> std::io::Result<String> {
+    let m = std::fs::symlink_metadata(p)?;
+    if !m.is_file() || m.len() > 4096 {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "not a small regular file"));
+    }
+    std::fs::read_to_string(p)
+}
+
+/// The git directory and the shared git directory of the working copy at
+/// `root`, checked so git takes its config, hooks and info only from where
+/// they belong (SEC-13). Refused: a `commondir` file in a main git
+/// directory (git would read the settings of the folder it names instead),
+/// and a linked worktree whose `commondir` names anything but the git
+/// directory two levels above its own folder in `worktrees/`.
+fn git_dirs(root: &Path) -> Result<(PathBuf, PathBuf)> {
+    let bad = |why: String| GitError::Invalid(format!("refusing to run git in {}: {why}", root.display()));
+    let dot = root.join(".git");
+    let m = std::fs::metadata(&dot).map_err(|e| bad(format!("cannot read .git: {e}")))?;
+    let gitdir = if m.is_dir() {
+        canonical(&dot).map_err(|e| bad(format!("cannot read .git: {e}")))?
+    } else {
+        let text = read_pointer(&dot).map_err(|e| bad(format!("cannot read .git: {e}")))?;
+        let dir = text.trim_end().strip_prefix("gitdir: ").ok_or_else(|| bad(".git has no gitdir line".into()))?;
+        canonical(&root.join(dir)).map_err(|e| bad(format!("its gitdir {dir} is missing: {e}")))?
+    };
+    let commondir = gitdir.join("commondir");
+    if std::fs::symlink_metadata(&commondir).is_err() {
+        return Ok((gitdir.clone(), gitdir));
+    }
+    if m.is_dir() {
+        return Err(bad(format!("{} exists; a main git directory must not name another", commondir.display())));
+    }
+    let text = read_pointer(&commondir).map_err(|e| bad(format!("cannot read {}: {e}", commondir.display())))?;
+    let common = canonical(&gitdir.join(text.trim_end()))
+        .map_err(|e| bad(format!("{} names a missing folder: {e}", commondir.display())))?;
+    let expected = gitdir.parent().filter(|w| w.file_name() == Some("worktrees".as_ref())).and_then(Path::parent);
+    if expected != Some(common.as_path()) {
+        return Err(bad(format!("{} names {}, not the repository it belongs to", commondir.display(), common.display())));
+    }
+    if std::fs::symlink_metadata(common.join("commondir")).is_ok() {
+        return Err(bad(format!("{} has a commondir file; a main git directory must not name another", common.display())));
+    }
+    Ok((gitdir, common))
+}
+
 /// Refuses a worktree whose `.git` file points anywhere but into the main
 /// repository's `.git/worktrees`: an agent could aim it at a repository it
 /// made, with config and hooks of its own (SEC-13). Returns the verified
-/// git directory, which commands then name explicitly.
-fn check_gitdir(root: &Path, worktrees: &Path) -> Result<PathBuf> {
+/// git directory and shared git directory, which commands then name
+/// explicitly.
+fn check_gitdir(root: &Path, worktrees: &Path) -> Result<(PathBuf, PathBuf)> {
     let bad = |why: String| GitError::Invalid(format!("refusing to run git in {}: {why}", root.display()));
-    let dot = root.join(".git");
-    let m = std::fs::symlink_metadata(&dot).map_err(|e| bad(format!("cannot read .git: {e}")))?;
-    if !m.is_file() || m.len() > 4096 {
+    let m = std::fs::symlink_metadata(root.join(".git")).map_err(|e| bad(format!("cannot read .git: {e}")))?;
+    if !m.is_file() {
         return Err(bad(".git is not a worktree's link file".into()));
     }
-    let text = std::fs::read_to_string(&dot).map_err(|e| bad(format!("cannot read .git: {e}")))?;
-    let dir = text.trim_end().strip_prefix("gitdir: ").ok_or_else(|| bad(".git has no gitdir line".into()))?;
-    let dir = canonical(&root.join(dir)).map_err(|e| bad(format!("its gitdir {dir} is missing: {e}")))?;
-    if dir.parent() != Some(worktrees) {
+    let (dir, common) = git_dirs(root)?;
+    if dir.parent() != Some(worktrees) || worktrees.parent() != Some(common.as_path()) {
         return Err(bad(format!("its gitdir {} is not in {}", dir.display(), worktrees.display())));
     }
-    Ok(dir)
+    Ok((dir, common))
+}
+
+/// The git subcommand in `args`, past any `-c key=value`.
+fn subcommand<'a>(args: &[&'a str]) -> &'a str {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if *a == "-c" {
+            it.next();
+        } else if !a.starts_with('-') {
+            return a;
+        }
+    }
+    ""
 }
 
 fn run(dir: &Path, args: &[&str], env: &[(&str, &str)], stdin: Option<&[u8]>) -> Result<(bool, String, String)> {
@@ -257,7 +320,7 @@ impl Repo {
     /// Opens the working copy containing `path` for a `fetch` or `push` that
     /// uses the repository's own configuration and hooks as they are. Only
     /// for repositories no agent could write the config, hooks or info of
-    /// (see [`protected_paths`]).
+    /// (see [`sandbox_git`]).
     pub fn open_trusted(path: &Path) -> Result<Self> {
         Ok(Self { network: Trust::Person, ..Self::open(path)? })
     }
@@ -268,8 +331,7 @@ impl Repo {
     /// directory itself, so git never reads the `.git` file the agent can
     /// rewrite.
     pub fn open_worktree(&self, path: &Path) -> Result<Repo> {
-        let common = self.common_dir()?;
-        let worktrees = canonical(&common).map_err(GitError::Spawn)?.join("worktrees");
+        let worktrees = self.common_dir()?.join("worktrees");
         let root = canonical(path).map_err(GitError::Spawn)?;
         check_gitdir(&root, &worktrees)?;
         Ok(Repo { root, worktrees: Some(worktrees), network: Trust::Agent })
@@ -279,20 +341,48 @@ impl Repo {
         &self.root
     }
 
-    /// The command for `args`, with the verified git directory of an
-    /// agent's worktree named explicitly.
+    /// The verified git directory and shared git directory (see
+    /// [`git_dirs`] and [`check_gitdir`]).
+    fn dirs(&self) -> Result<(PathBuf, PathBuf)> {
+        match &self.worktrees {
+            Some(w) => check_gitdir(&self.root, w),
+            None => git_dirs(&self.root),
+        }
+    }
+
+    /// The command for `args`, with the verified git directory named on the
+    /// command line and the shared one in `GIT_COMMON_DIR`, so git never
+    /// takes either from a file an agent could write.
     fn command(&self, trust: Trust, args: &[&str]) -> Result<Command> {
         let mut c = git_command(&self.root, trust);
-        if let Some(w) = &self.worktrees {
-            let dir = check_gitdir(&self.root, w)?;
-            let mut g = std::ffi::OsString::from("--git-dir=");
-            g.push(&dir);
-            let mut t = std::ffi::OsString::from("--work-tree=");
-            t.push(&self.root);
-            c.arg(g).arg(t);
-        }
+        let (dir, common) = self.dirs()?;
+        let mut g = std::ffi::OsString::from("--git-dir=");
+        g.push(&dir);
+        let mut t = std::ffi::OsString::from("--work-tree=");
+        t.push(&self.root);
+        c.arg(g).arg(t).env("GIT_COMMON_DIR", &common);
         c.args(args);
         Ok(c)
+    }
+
+    /// Before a fetch or push with the repository's own settings: git,
+    /// finding the repository by itself, must arrive at the shared git
+    /// directory verified above, `<main working copy>/.git`.
+    fn check_trusted(&self, cmd: &str) -> Result<()> {
+        let (_, common) = self.dirs()?;
+        let (ok, out, err) = run(&self.root, &["rev-parse", "--git-common-dir"], &[], None)?;
+        let found = PathBuf::from(out.trim());
+        let found = canonical(&if found.is_absolute() { found } else { self.root.join(found) }).ok();
+        let main = common.parent().map(|p| p.join(".git"));
+        if !ok || found.as_ref() != Some(&common) || main.as_ref() != Some(&common) {
+            let found = found.map(|p| p.display().to_string()).unwrap_or_else(|| err.trim().to_string());
+            return Err(GitError::Invalid(format!(
+                "refusing to {cmd} from {} with its own settings: git finds them in {found}, not in {}",
+                self.root.display(),
+                main.unwrap_or(common).display()
+            )));
+        }
+        Ok(())
     }
 
     fn exec(&self, args: &[&str], env: &[(&str, &str)], stdin: Option<&[u8]>) -> Result<(bool, String, String)> {
@@ -306,13 +396,12 @@ impl Repo {
     /// `fetch` and `push`: with the repository's own config when it is
     /// trusted ([`Repo::open_trusted`]).
     fn git_network(&self, args: &[&str]) -> Result<String> {
-        let (ok, out, err) = output(self.command(self.network, args)?, &[], None)?;
-        if ok {
-            Ok(out)
-        } else {
-            let cmd = args.iter().find(|a| !a.starts_with('-') && !a.contains('=')).copied().unwrap_or_default();
-            Err(GitError::Failed { cmd: cmd.to_string(), stderr: err.trim().into() })
+        let cmd = subcommand(args);
+        if self.network == Trust::Person {
+            self.check_trusted(cmd)?;
         }
+        let (ok, out, err) = output(self.command(self.network, args)?, &[], None)?;
+        if ok { Ok(out) } else { Err(GitError::Failed { cmd: cmd.to_string(), stderr: err.trim().into() }) }
     }
 
     fn git_env(&self, args: &[&str], env: &[(&str, &str)], stdin: Option<&[u8]>) -> Result<String> {
@@ -321,16 +410,16 @@ impl Repo {
             Ok(out)
         } else {
             Err(GitError::Failed {
-                cmd: args.first().copied().unwrap_or_default().to_string(),
+                cmd: subcommand(args).to_string(),
                 stderr: err.trim().into(),
             })
         }
     }
 
-    /// The shared `.git` directory (the same for every worktree).
+    /// The shared `.git` directory (the same for every worktree), verified
+    /// and with links resolved.
     pub fn common_dir(&self) -> Result<PathBuf> {
-        let p = PathBuf::from(self.git(&["rev-parse", "--git-common-dir"])?.trim());
-        Ok(if p.is_absolute() { p } else { self.root.join(p) })
+        Ok(self.dirs()?.1)
     }
 
     pub fn rev_parse(&self, rev: &str) -> Result<String> {
@@ -394,9 +483,23 @@ impl Repo {
         Ok(v)
     }
 
-    /// Paths with uncommitted changes (including untracked files).
+    /// Paths with uncommitted changes (including untracked files). Never
+    /// looks inside submodules or other repositories in the working copy,
+    /// whose own config could name programs; in an agent's worktree a
+    /// repository that is not a submodule of HEAD is refused.
     pub fn dirty_files(&self) -> Result<Vec<String>> {
-        let out = self.git(&["status", "--porcelain=v1", "-z", "--untracked-files=all"])?;
+        if self.worktrees.is_some() {
+            self.check_nested("read the changes in")?;
+        }
+        let out = self.git(&[
+            "-c",
+            "diff.ignoreSubmodules=all",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--ignore-submodules=all",
+        ])?;
         let mut v = vec![];
         let mut parts = out.split('\0');
         while let Some(e) = parts.next() {
@@ -412,16 +515,98 @@ impl Repo {
         Ok(v)
     }
 
+    /// Refuses a working copy that holds a git repository (a `.git` file or
+    /// folder below its root) not listed as a submodule in HEAD's
+    /// `.gitmodules`, or a submodule entry (mode 160000) in the index that
+    /// HEAD does not have. Git runs commands inside such a repository with
+    /// its config, and an agent writes that config (the clean filter of a
+    /// nested repository runs during `status`, SEC-13).
+    fn check_nested(&self, what: &str) -> Result<()> {
+        use std::collections::BTreeSet;
+        let refuse = |why: String| GitError::Invalid(format!("refusing to {what} {}: {why}", self.root.display()));
+        let z = |out: String| -> Vec<String> { out.split('\0').filter(|s| !s.is_empty()).map(str::to_string).collect() };
+        let has_head = self.rev_parse("HEAD").is_ok();
+        let mut submodules = BTreeSet::new();
+        let mut head_links = BTreeSet::new();
+        if has_head {
+            if let Ok(out) =
+                self.git(&["config", "-z", "--blob", "HEAD:.gitmodules", "--get-regexp", r"^submodule\..*\.path$"])
+            {
+                for kv in z(out) {
+                    if let Some((_, path)) = kv.split_once('\n') {
+                        submodules.insert(path.trim_end_matches('/').to_string());
+                    }
+                }
+            }
+            for e in z(self.git(&["ls-tree", "-r", "-z", "--full-tree", "HEAD"])?) {
+                if let Some((meta, path)) = e.split_once('\t')
+                    && meta.starts_with("160000 ")
+                {
+                    head_links.insert(path.to_string());
+                }
+            }
+        }
+        let mut dirs = BTreeSet::new();
+        for e in z(self.git(&["ls-files", "-s", "-z"])?) {
+            let Some((meta, path)) = e.split_once('\t') else { continue };
+            if meta.starts_with("160000 ") {
+                if !head_links.contains(path) {
+                    return Err(refuse(format!("{path} is a new submodule entry; add submodules yourself")));
+                }
+                dirs.insert(path.to_string());
+            }
+            let mut p = Path::new(path).parent();
+            while let Some(d) = p.filter(|d| !d.as_os_str().is_empty()) {
+                if !dirs.insert(d.to_string_lossy().into_owned()) {
+                    break;
+                }
+                p = d.parent();
+            }
+        }
+        // Untracked repositories show as their folder, with a slash.
+        for e in z(self.git(&["ls-files", "-z", "--others", "--exclude-standard"])?) {
+            if let Some(d) = e.strip_suffix('/') {
+                dirs.insert(d.to_string());
+            }
+        }
+        for d in dirs {
+            if std::fs::symlink_metadata(self.root.join(&d).join(".git")).is_ok() && !submodules.contains(&d) {
+                return Err(refuse(format!(
+                    "{d} is a git repository inside the worktree and not a submodule in .gitmodules; remove its .git"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Commits every change in the working copy. Returns the new commit, or
-    /// None when there was nothing to commit.
+    /// None when there was nothing to commit. Submodules are never looked
+    /// into (see [`Repo::dirty_files`]).
     pub fn commit_all(&self, message: &str, who: &Signature) -> Result<Option<String>> {
         if self.dirty_files()?.is_empty() {
             return Ok(None);
         }
-        self.git(&["add", "-A"])?;
+        let no_sub = ["-c", "diff.ignoreSubmodules=all", "-c", "submodule.recurse=false"];
+        if self.worktrees.is_some() {
+            self.check_nested("commit in")?;
+        }
+        // `add` looks into every submodule it updates, whatever the
+        // config says, so submodule entries are left out by path.
+        let links: Vec<String> = self
+            .git(&["ls-files", "-s", "-z"])?
+            .split('\0')
+            .filter_map(|e| e.strip_prefix("160000 ")?.split_once('\t').map(|(_, p)| format!(":(exclude,literal){p}")))
+            .collect();
+        let mut add = vec!["add", "-A", "--", "."];
+        add.extend(links.iter().map(String::as_str));
+        self.git(&[&no_sub[..], &add].concat())?;
         let env = sig_env(who);
         let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
-        self.git_env(&["commit", "--no-verify", "--quiet", "-F", "-"], &env, Some(message.as_bytes()))?;
+        self.git_env(
+            &[&no_sub[..], &["commit", "--no-verify", "--quiet", "-F", "-"]].concat(),
+            &env,
+            Some(message.as_bytes()),
+        )?;
         Ok(Some(self.rev_parse("HEAD")?))
     }
 
@@ -811,39 +996,53 @@ pub fn clone_from(url: &str, dir: &Path, branch: Option<&str>, partial: bool) ->
     Repo::open(dir)
 }
 
-/// Paths of the git checkout at `worktree` that an agent working there must
-/// not write, for the sandbox to mount read-only (SEC-13): the shared
-/// `config`, `hooks/` and `info/`, the worktree's own `config.worktree`, and
-/// a linked worktree's `.git` file. Missing `hooks/` and `info/` folders are
-/// created first (as is `config.worktree` when the repository uses one), so
-/// the agent cannot create them. Objects, refs, the index and logs stay
-/// writable: agents commit. Empty outside a git checkout.
-pub fn protected_paths(worktree: &Path) -> Vec<PathBuf> {
-    let Ok(r) = Repo::open(worktree) else { return vec![] };
-    let (Ok(common), Ok(dir)) = (r.common_dir(), r.git(&["rev-parse", "--absolute-git-dir"])) else { return vec![] };
-    let (Ok(common), Ok(dir)) = (canonical(&common), canonical(Path::new(dir.trim()))) else { return vec![] };
-    let mut v = vec![common.join("config")];
-    for d in ["hooks", "info"] {
-        let p = common.join(d);
-        let _ = std::fs::create_dir_all(&p);
-        v.push(p);
-    }
-    let per_worktree = dir.join("config.worktree");
-    let uses = r.git(&["config", "--bool", "--get", "extensions.worktreeConfig"]).is_ok_and(|s| s.trim() == "true");
-    if uses && !per_worktree.exists() {
-        let _ = std::fs::write(&per_worktree, "");
-    }
-    v.push(per_worktree);
-    // The `.git` link file, never a `.git` folder (commits write there).
+/// How an agent's sandbox mounts the git checkout it works in (SEC-13).
+/// Bubblewrap and Seatbelt enforce it; Landlock, Windows and container
+/// mode do not.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SandboxGit {
+    /// Folders of the shared git directory the agent writes so it can
+    /// commit: `objects/`, `refs/`, `logs/` and its own folder in
+    /// `worktrees/`. Empty unless it commits.
+    pub writable: Vec<PathBuf>,
+    /// Paths that stay read-only: the whole shared git directory, a linked
+    /// worktree's `.git` file and, when it commits, the `commondir`, `gitdir`
+    /// and `config.worktree` files in its own folder.
+    pub read_only: Vec<PathBuf>,
+}
+
+/// The [`SandboxGit`] for an agent working in `worktree`. With `commits`
+/// and a linked worktree (an agent's task), the agent can run `git add` and
+/// `git commit`; otherwise (the person's own checkout, checks) the whole git
+/// directory is read-only and only read-only git commands work. Empty
+/// outside a git checkout. Creates `logs/` and an empty `config.worktree`
+/// when they are missing, so the agent cannot create them.
+pub fn sandbox_git(worktree: &Path, commits: bool) -> SandboxGit {
+    let Ok(r) = Repo::open(worktree) else { return SandboxGit::default() };
+    let Ok((gitdir, common)) = r.dirs() else { return SandboxGit::default() };
+    let mut g = SandboxGit { writable: vec![], read_only: vec![common.clone()] };
+    // The `.git` link file of a linked worktree.
     if let Ok(root) = canonical(r.root())
         && std::fs::symlink_metadata(root.join(".git")).is_ok_and(|m| m.is_file())
     {
-        v.push(root.join(".git"));
+        g.read_only.push(root.join(".git"));
     }
-    v.retain(|p| p.is_dir() || std::fs::symlink_metadata(p).is_ok_and(|m| m.is_file()));
-    v.sort();
-    v.dedup();
-    v
+    if commits && gitdir != common {
+        let _ = std::fs::create_dir_all(common.join("logs"));
+        let per_worktree = gitdir.join("config.worktree");
+        if std::fs::symlink_metadata(&per_worktree).is_err() {
+            let _ = std::fs::write(&per_worktree, "");
+        }
+        g.writable = ["objects", "refs", "logs"].iter().map(|d| common.join(d)).collect();
+        g.writable.push(gitdir.clone());
+        g.read_only.extend(["commondir", "gitdir", "config.worktree"].iter().map(|f| gitdir.join(f)));
+    }
+    let real = |p: &PathBuf, dir: bool| {
+        std::fs::symlink_metadata(p).is_ok_and(|m| if dir { m.is_dir() } else { m.is_dir() || m.is_file() })
+    };
+    g.writable.retain(|p| real(p, true));
+    g.read_only.retain(|p| real(p, false));
+    g
 }
 
 /// What [`Repo::sync`] did.
@@ -955,7 +1154,7 @@ mod tests {
     pub(crate) fn init() -> (tempfile::TempDir, Repo) {
         let d = tempfile::tempdir().unwrap();
         let r = Repo { root: d.path().to_path_buf(), worktrees: None, network: Trust::Agent };
-        r.git(&["init", "-q", "-b", "main"]).unwrap();
+        run(d.path(), &["init", "-q", "-b", "main"], &[], None).unwrap();
         // Byte-exact merge results: no CRLF conversion on Windows checkouts.
         r.git(&["config", "core.autocrlf", "false"]).unwrap();
         std::fs::write(d.path().join("lib.rs"), "fn a() {}\n").unwrap();
@@ -1184,8 +1383,138 @@ mod tests {
         let args: Vec<String> = c.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert!(args.contains(&format!("--git-dir={}", gitdir.display())), "{args:?}");
         assert!(args.contains(&format!("--work-tree={}", wt.root().display())), "{args:?}");
+        let common = canonical(&r.root().join(".git")).unwrap();
+        assert!(c.get_envs().any(|(k, v)| k == "GIT_COMMON_DIR" && v == Some(common.as_os_str())), "{c:?}");
+        // The main checkout names its own `.git` too.
         let c = r.command(Trust::Agent, &["status"]).unwrap();
-        assert!(!c.get_args().any(|a| a.to_string_lossy().starts_with("--git-dir")), "the main checkout needs none");
+        let args: Vec<String> = c.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert!(args.contains(&format!("--git-dir={}", common.display())), "{args:?}");
+        assert!(c.get_envs().any(|(k, v)| k == "GIT_COMMON_DIR" && v == Some(common.as_os_str())), "{c:?}");
+    }
+
+    /// SEC-13: a `commondir` file makes git read the config and hooks of
+    /// another folder. The daemon refuses one in a main git directory and
+    /// any value but the expected one in a worktree's folder.
+    #[cfg(unix)]
+    #[test]
+    fn commondir_redirects_are_refused() {
+        let (d, r) = init();
+        let t = tempfile::tempdir().unwrap();
+        let (script, ran) = tattler(t.path(), "hook");
+        // A git directory of the agent's, with a hook and a pager.
+        let evil = t.path().join("evil");
+        run(t.path(), &["init", "-q", "--bare", &evil.to_string_lossy()], &[], None).unwrap();
+        std::fs::create_dir_all(evil.join("hooks")).unwrap();
+        std::fs::copy(&script, evil.join("hooks").join("pre-commit")).unwrap();
+        std::fs::write(evil.join("config"), format!("[core]\n\tfsmonitor = {}\n", script.display())).unwrap();
+        let common = canonical(&r.common_dir().unwrap()).unwrap();
+
+        // In a main git directory.
+        std::fs::write(common.join("commondir"), format!("{}\n", evil.display())).unwrap();
+        let e = r.dirty_files().unwrap_err().to_string();
+        assert!(e.contains("refusing to run git") && e.contains("commondir"), "{e}");
+        let trusted = Repo { network: Trust::Person, ..r.clone() };
+        assert!(trusted.fetch("origin").unwrap_err().to_string().contains("refusing"));
+        assert!(r.commit_all("x", &Signature::agent("A", "1")).is_err());
+        std::fs::remove_file(common.join("commondir")).unwrap();
+        r.dirty_files().unwrap();
+
+        // In a task worktree's own folder.
+        let wt_dir = tempfile::tempdir().unwrap();
+        let wt = r.add_worktree(&wt_dir.path().join("t1"), "polyph/t1", "main").unwrap();
+        let own = common.join("worktrees").join("t1").join("commondir");
+        assert_eq!(std::fs::read_to_string(&own).unwrap().trim(), "../..");
+        std::fs::write(&own, format!("{}\n", evil.display())).unwrap();
+        assert!(wt.dirty_files().unwrap_err().to_string().contains("not the repository"));
+        assert!(r.open_worktree(wt.root()).is_err());
+        std::fs::write(wt.root().join("n.rs"), "x\n").unwrap();
+        assert!(wt.commit_all("n", &Signature::agent("A", "1")).is_err());
+        std::fs::write(&own, "../..\n").unwrap();
+        wt.commit_all("n", &Signature::agent("A", "1")).unwrap().unwrap();
+        assert!(!ran.exists(), "ran: {}", std::fs::read_to_string(&ran).unwrap_or_default());
+        assert_eq!(r.main_root().unwrap(), canonical(d.path()).unwrap());
+    }
+
+    /// The trusted fetch checks where git, finding the repository by itself,
+    /// takes its settings from.
+    #[test]
+    fn trusted_fetch_checks_where_git_finds_its_settings() {
+        let (d, r) = init();
+        let bare = tempfile::tempdir().unwrap();
+        run(bare.path(), &["init", "-q", "--bare"], &[], None).unwrap();
+        r.git(&["remote", "add", "origin", &bare.path().to_string_lossy()]).unwrap();
+        let trusted = Repo::open_trusted(d.path()).unwrap();
+        trusted.push("origin", "main").unwrap();
+        trusted.fetch("origin").unwrap();
+        // A person's own linked worktree shares the checkout's settings.
+        let wt_dir = tempfile::tempdir().unwrap();
+        run(d.path(), &["worktree", "add", "-q", &wt_dir.path().join("mine").to_string_lossy()], &[], None).unwrap();
+        Repo::open_trusted(&wt_dir.path().join("mine")).unwrap().fetch("origin").unwrap();
+    }
+
+    /// SEC-13: a repository the agent puts inside its worktree, with a
+    /// clean filter in its config, never runs it when the daemon reads or
+    /// commits the agent's changes.
+    #[cfg(unix)]
+    #[test]
+    fn nested_repositories_run_no_filters() {
+        let (_d, r) = init();
+        let t = tempfile::tempdir().unwrap();
+        let marker = t.path().join("filter.ran");
+        let filter = format!("sh -c 'echo ran >> \"{}\"; cat'", marker.display());
+        let wt_dir = tempfile::tempdir().unwrap();
+        let wt = r.add_worktree(&wt_dir.path().join("t1"), "polyph/t1", "main").unwrap();
+        let sub = wt.root().join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let git_in = |dir: &Path, args: &[&str]| {
+            let out = Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        };
+        git_in(&sub, &["init", "-q"]);
+        git_in(&sub, &["config", "filter.x.clean", &filter]);
+        std::fs::write(sub.join(".gitattributes"), "* filter=x\n").unwrap();
+        std::fs::write(sub.join("f"), "1\n").unwrap();
+        git_in(&sub, &["add", "-A"]);
+        git_in(&sub, &["-c", "user.name=a", "-c", "user.email=a@b", "commit", "-q", "-m", "s"]);
+        std::fs::remove_file(&marker).ok();
+        std::fs::write(sub.join("f"), "2\n").unwrap();
+        // Plain git does run it, so the test can see the difference.
+        git_in(wt.root(), &["add", "-A"]);
+        git_in(wt.root(), &["status", "--porcelain"]);
+        assert!(marker.exists(), "plain git status ran no filter, so the test shows nothing");
+        std::fs::remove_file(&marker).unwrap();
+        git_in(wt.root(), &["reset", "-q"]);
+
+        // Untracked: refused with a clear error.
+        let e = wt.commit_all("x", &Signature::agent("A", "1")).unwrap_err().to_string();
+        assert!(e.contains("sub is a git repository inside the worktree"), "{e}");
+        assert!(wt.dirty_files().is_err());
+        // A new submodule entry in the index: refused too.
+        git_in(wt.root(), &["add", "sub"]);
+        let e = wt.commit_all("x", &Signature::agent("A", "1")).unwrap_err().to_string();
+        assert!(e.contains("new submodule entry"), "{e}");
+        // A `.git` in a folder that has tracked files.
+        git_in(wt.root(), &["reset", "-q"]);
+        std::fs::rename(sub.join(".git"), t.path().join("sub.git")).unwrap();
+        git_in(wt.root(), &["add", "sub"]);
+        std::fs::write(sub.join(".git"), format!("gitdir: {}\n", t.path().join("sub.git").display())).unwrap();
+        assert!(wt.commit_all("x", &Signature::agent("A", "1")).unwrap_err().to_string().contains("sub is a git"));
+        assert!(!marker.exists(), "the filter ran: {}", std::fs::read_to_string(&marker).unwrap_or_default());
+        // In the person's own checkout the commands still never look inside.
+        git_in(wt.root(), &["reset", "-q"]);
+        std::fs::remove_file(sub.join(".git")).unwrap();
+        std::fs::rename(t.path().join("sub.git"), sub.join(".git")).unwrap();
+        let main = Repo::open(r.root()).unwrap();
+        let nested = r.root().join("sub");
+        std::fs::rename(&sub, &nested).unwrap();
+        git_in(r.root(), &["add", "sub"]);
+        git_in(r.root(), &["-c", "user.name=a", "-c", "user.email=a@b", "commit", "-q", "-m", "link"]);
+        std::fs::remove_file(&marker).ok();
+        std::fs::write(nested.join("f"), "3\n").unwrap();
+        main.dirty_files().unwrap();
+        std::fs::write(r.root().join("lib.rs"), "fn a() { 3 }\n").unwrap();
+        main.commit_all("c", &Signature::agent("A", "1")).unwrap().unwrap();
+        assert!(!marker.exists(), "the filter ran: {}", std::fs::read_to_string(&marker).unwrap_or_default());
     }
 
     #[test]
@@ -1352,23 +1681,28 @@ mod tests {
     }
 
     #[test]
-    fn protected_paths_cover_config_hooks_and_info() {
+    fn sandbox_git_keeps_the_git_directory_read_only() {
         let (d, r) = init();
         let common = canonical(&r.common_dir().unwrap()).unwrap();
-        std::fs::remove_dir_all(common.join("hooks")).ok();
-        let p = protected_paths(d.path());
-        assert_eq!(p, vec![common.join("config"), common.join("hooks"), common.join("info")]);
-        assert!(common.join("hooks").is_dir(), "created so the agent cannot");
+        // The person's own checkout: all of `.git`, whether it commits or not.
+        let g = sandbox_git(d.path(), false);
+        assert_eq!(g, SandboxGit { writable: vec![], read_only: vec![common.clone()] });
+        assert_eq!(sandbox_git(d.path(), true), g, "agents commit only in a task's worktree");
 
-        // A linked worktree: also its `.git` file and, when used, its config.worktree.
-        r.git(&["config", "extensions.worktreeConfig", "true"]).unwrap();
+        // A task's worktree: objects, refs, logs and its own folder, but not
+        // the files in it that name the repository or hold its settings.
         let wt_dir = tempfile::tempdir().unwrap();
         let wt = r.add_worktree(&wt_dir.path().join("t1"), "polyph/t1", "main").unwrap();
-        let p = protected_paths(wt.root());
-        let own = common.join("worktrees").join("t1").join("config.worktree");
-        assert!(p.contains(&own) && own.is_file(), "{p:?}");
-        assert!(p.contains(&wt.root().join(".git")), "{p:?}");
-        assert!(p.contains(&common.join("config")), "{p:?}");
-        assert!(protected_paths(tempfile::tempdir().unwrap().path()).is_empty());
+        let own = common.join("worktrees").join("t1");
+        let g = sandbox_git(wt.root(), true);
+        assert_eq!(g.writable, vec![common.join("objects"), common.join("refs"), common.join("logs"), own.clone()]);
+        let mut ro = vec![common.clone(), wt.root().join(".git")];
+        ro.extend(["commondir", "gitdir", "config.worktree"].iter().map(|f| own.join(f)));
+        assert_eq!(g.read_only, ro);
+        assert!(own.join("config.worktree").is_file(), "created so the agent cannot");
+        // Checks in a worktree commit nothing.
+        assert_eq!(sandbox_git(wt.root(), false).read_only, vec![common.clone(), wt.root().join(".git")]);
+        assert!(sandbox_git(wt.root(), false).writable.is_empty());
+        assert_eq!(sandbox_git(tempfile::tempdir().unwrap().path(), true), SandboxGit::default());
     }
 }
