@@ -34,3 +34,6 @@ apps/vscode/package.nls*.json
 # Agent worktrees and extra build directories
 .claude/worktrees/
 /target-*/
+
+# Local Claude Code settings (status line capture)
+.claude/settings.local.json

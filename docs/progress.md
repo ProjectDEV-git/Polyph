@@ -96,6 +96,43 @@ Next:
 3. Baseline build and test run from `HANDOFF.md`; record pass and fail.
 4. Product reviewer baseline journey and scores in `docs/beta-review.md`.
 
+### Paused at 05:50 UTC (5-hour block at 76%, reported by Kao)
+
+Resets at 09:40 UTC. The session checks hourly (background `sleep 3600`,
+since foreground sleep is blocked here) and resumes after 09:40 UTC.
+Running when paused (allowed to finish, nothing new dispatched):
+- #14 rework on Opus (merge gates under trust, `polyph trust` shows what it
+  trusts, data-dir refusal).
+- #16 security fixes on Opus (read-only `.git`, `GIT_COMMON_DIR`, nested
+  repos, toml link read).
+#15 rework finished at b07f76e and is not yet verified by the lead.
+
+Usage reading: ccusage shows 46M tokens in the block and the reset at
+10:00 UTC, but gives no percentage, because there is no earlier block to
+compare against. `get_session` `rate_limit_info` shows only the seven-day
+window (`allowed_warning`). Kao's figure (76%) is the one that counts.
+`.claude/scripts/statusline-capture.sh` is set as the local status line to
+save Claude Code's `rate_limits.five_hour.used_percentage` to
+`~/.claude/usage-status.json`. Whether a cloud session runs the status line
+is not confirmed yet. `.claude/scripts/usage-check.sh` reads ccusage and the
+rate-limit fields and prints CONTINUE, PAUSE or WAIT_UNTIL.
+
+### Next after the pause
+
+1. Run the usage check. Continue only if the new block is under 75%.
+2. Verify #15 (b07f76e): `cargo test -p polyph-proto -p polyph-core
+   -p polyph-relay` and `cargo test -p polyph-testkit --test m2 --test m8
+   --test m9` in `.claude/worktrees/agent-ac594e0f3ced295c1` with
+   `CARGO_TARGET_DIR=/root/targets/pr15`. The m9 setup switched to
+   `phone.pair` (accepted, same as m8). Then send it to the architect
+   reviewer and the security auditor (it now touches `cert.rs`).
+3. Verify the #14 and #16 reworks the same way when they report, then
+   architect re-review and security sign-off.
+4. DF-1 and DF-2 (relay client trust store, silent relay failure) to a
+   rust-engineer.
+5. Linear tools are now available (`mcp__Linear__*`): copy DF-1..DF-5 and
+   the review findings into project "Polyph public beta".
+
 ## Proposed edits (awaiting Kao)
 
 None yet.

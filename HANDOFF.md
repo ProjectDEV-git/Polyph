@@ -1,5 +1,11 @@
 # Handoff
 
+> **Paused for the 5-hour usage limit (2026-11-07 05:50 UTC).** Kao reported
+> the block at 76%; it resets at 09:40 UTC (4:40 PM Thailand time). The
+> session checks every hour and resumes after the reset. Resume from
+> `docs/progress.md` ("Next after the pause"). The weekly limit is also at
+> warning level (resets 2026-11-13 05:00 UTC).
+
 Read this first when continuing the build. Then `PLAN.md` (checklist),
 `STUBS.md` (what is not done), `DECISIONS.md` (why things are the way they
 are), `PRODUCT.md` and `DESIGN.md` (product and visual truth). The original
