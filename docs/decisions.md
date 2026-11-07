@@ -77,6 +77,22 @@ architecture decisions stay in `DECISIONS.md` at the root.
   call: when an Owner or Maintainer daemon loads a room, it re-issues held
   peers whose chain runs through a superseded issuer, as `change_role`
   does. No wire change, so it stays out of Kao's queue.
+- **PR #16 third pass: narrow writable refs and logs.** The auditor showed
+  writable `refs/` lets a task agent move the base branch, and a symlinked
+  reflog lets the daemon's commit write into any file as the person.
+  Lead's call: task agents write only their own task branch's ref and log;
+  `objects/info` is read-only; one shared daemon guard refuses symlinks
+  under `logs/`, `refs/`, `worktrees/<name>/` and `objects/info/` and an
+  unexpected `alternates`; the daemon refuses a merge when the base ref
+  moved. Narrows agents only, no wire change, so not a hard stop.
+- **PR #14 third pass.** Untrusted `[prices]` with a dollar budget blocks
+  the turn instead of pricing at $0. `merge.via` and `merge.remote` join
+  the trusted sections (untrusted means a local merge). `usage.get` reads
+  the same trusted settings that are enforced.
+- **PR #15 security findings.** Device-id takeover and certificate
+  overwrite by a lower role are fixed in client logic on the branch. Proof
+  of key possession in `JoinRequest` and signed revocations need a wire
+  change: filed for Kao as KAO-95 (`human-only`).
 - **5-hour token limit is about 62M tokens** (Kao, 2026-11-07). ccusage
   counts cache reads in that total, and so does the 75% rule.
   `.claude/scripts/usage-check.sh` takes it as `POLYPH_TOKEN_LIMIT`. Cloud

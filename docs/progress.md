@@ -153,6 +153,18 @@ REQUESTED (upgrade gap, decided as re-issue on load; see decisions). #16
 security re-audit and #14 architect re-review dispatched. DF-1/2 opened as
 PR #17.
 
+Reviews (13:00-13:20 UTC):
+- #15 security: SEC-1 and SEC-4 SIGN-OFF (now low); SEC-2 and SEC-3 NO
+  SIGN-OFF (two new highs: lower role overwrites a higher device's
+  certificate; joiner claims an existing device id). One Opus rework covers
+  those, the architect's upgrade gap and the mediums.
+- #16 security: SEC-13 and SEC-16 SIGN-OFF, but two new highs (writable
+  `refs/` moves the base branch; symlinked reflog written by the daemon)
+  block the branch. Opus rework dispatched.
+- #14 architect: earlier findings closed; new blocker (untrusted `[prices]`
+  disables dollar budgets). Opus rework dispatched.
+- KAO-95 filed for Kao (wire-change items from the #15 audit).
+
 ### Next
 
 1. (done) Read the lead's check run for #14, #16 and DF-1/2
