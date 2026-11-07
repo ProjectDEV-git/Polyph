@@ -118,7 +118,8 @@ is not confirmed yet. `.claude/scripts/usage-check.sh` reads ccusage and the
 rate-limit fields and prints CONTINUE, PAUSE or WAIT_UNTIL.
 
 Reading at 06:00 UTC with the 62M limit: 49.3M tokens, 79%. Resets 09:40
-UTC (Kao's figure; ccusage says 10:00).
+UTC (Kao's figure; ccusage says 10:00). Hourly checks: 06:48 UTC 50.0M
+(80%), 07:48 UTC 50.7M (81%). Still paused.
 
 ### Next after the pause
 
