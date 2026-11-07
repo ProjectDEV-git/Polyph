@@ -176,16 +176,44 @@ Reviews (13:00-13:20 UTC):
   was changed lose every chain). Third Opus rework dispatched. KAO-95
   extended with signed supersession records.
 
-### Next
+Paused 13:45 UTC: Kao reported 96% of the 5-hour window (resets 14:40 UTC).
+ccusage said 66% because the container restart lost its earlier logs;
+get_session showed `five_hour` `allowed_warning`, which the check was not
+given. No workers running.
 
-1. (done) Read the lead's check run for #14, #16 and DF-1/2
-   (`verify-3.txt` in the session scratchpad); send back any failure.
-2. #15 reviews: merge only with APPROVE and SIGN-OFF.
-3. #14 and #16 to the architect reviewer and the security auditor.
-4. DF-1/2: open a PR (the brief authorizes PRs for the beta work); the
-   security auditor looks at the trust store change.
-5. KAO-93 and KAO-94 to a builder or Sonnet engineer.
-6. Dogfood room: retry `polyph start` with the DF-1 build.
+State at the pause:
+- #14 `beta/kao-73-project-trust` at 39c223a: architect APPROVE (f1a8ac7),
+  security SIGN-OFF (SEC-12 now low), SEC-12 docs updated (39c223a, docs
+  only). Ready to merge once PR CI is green.
+- #16 `beta/kao-74-77-git-symlinks` at 82ce0e7: lead verified, all checks
+  pass. Assertion changes follow the new `sandbox_git(branch)` signature
+  and are stricter (checked). Needs the security auditor and the architect.
+  Residual gap: a task agent can move other `polyph/` branches (never
+  `main`); full fix renames task branches to `polyph/<id>/<slug>`.
+- #15 `beta/kao-78-80-room-relay` at cf4b47e: not yet verified by the lead.
+  Item 4 (re-issue after drop) not done because it contradicts a sim test;
+  lead's call: keep the drop rule (CHANGELOG tells mixed-version rooms to
+  update Owner and Maintainer devices first). Needs verification, then the
+  security auditor and the architect, then the i18n reviewer for the new
+  ja/th/zh-Hans activity strings.
+- #17 (DF-1/2) open; needs the security auditor on the trust store change.
+- Linear: KAO-91..98 filed this session (KAO-95 is Kao's wire-change
+  question).
+
+### Next after the pause
+
+1. Usage check with the plan signal: run get_session, then
+   `RATE_TYPE=<rateLimitType> RATE_STATUS=<status> RATE_RESETS_AT=<resetsAt>
+   POLYPH_TOKEN_LIMIT=62000000 .claude/scripts/usage-check.sh`. Continue only
+   on CONTINUE and when Kao's figure (if given) is under 75%.
+2. Merge #14 when its CI is green.
+3. Verify #15 cf4b47e (proto/core/relay/daemon tests, m2/m8/m9, i18n,
+   clippy, fmt; check removed assertions), then security auditor and
+   architect.
+4. #16 82ce0e7 to the security auditor and the architect. Rebase onto Main
+   after #14 merges (both touch agents.rs and project.rs).
+5. #17 to the security auditor.
+6. KAO-93 and KAO-94 to a builder; dogfood room retry with the DF-1 build.
 
 ## Proposed edits (awaiting Kao)
 

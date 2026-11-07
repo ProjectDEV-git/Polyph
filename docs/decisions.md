@@ -93,6 +93,14 @@ architecture decisions stay in `DECISIONS.md` at the root.
   overwrite by a lower role are fixed in client logic on the branch. Proof
   of key possession in `JoinRequest` and signed revocations need a wire
   change: filed for Kao as KAO-95 (`human-only`).
+- **Every usage check reads the plan's own signal (after the 96% miss).**
+  At 13:45 UTC Kao reported 96% while ccusage showed 66%: the container
+  restart had wiped the logs from 09:40 to 12:54. From now on each check
+  first calls get_session and passes `rateLimitType`, `status` and
+  `resetsAt` to `usage-check.sh` as RATE_TYPE, RATE_STATUS and
+  RATE_RESETS_AT. Any five-hour status other than `allowed` pauses, and so
+  does a figure from Kao at or over 75%. ccusage alone is never enough
+  after a restart. Checks run before each dispatch, not only each hour.
 - **5-hour token limit is about 62M tokens** (Kao, 2026-11-07). ccusage
   counts cache reads in that total, and so does the 75% rule.
   `.claude/scripts/usage-check.sh` takes it as `POLYPH_TOKEN_LIMIT`. Cloud
