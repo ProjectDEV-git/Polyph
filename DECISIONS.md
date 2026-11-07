@@ -444,3 +444,23 @@ could not be followed exactly. Newest at the bottom of each section.
   window conventions, HIG clarity and deference) is applied from the brief and
   recorded in `DESIGN.md`. Listed in `STUBS.md` so a later interactive session
   installs it.
+
+## Public beta
+
+- **No telemetry in the beta** (2026-11-07). Opt-in anonymous counts would
+  need a collection endpoint. The project has no running service that could
+  take them: `polyph-cloud` is not deployed, and the relay should not learn
+  more than it routes. A new endpoint is a new service, possibly a paid
+  one, which is Kao's call. `docs/beta.md` keeps saying "Polyph sends no
+  telemetry". Feedback goes through `polyph feedback`, which opens a GitHub
+  issue in the browser with version, OS, surface and relay kind (default
+  or custom), and nothing from rooms.
+- **No waitlist or invite field on the website.** The beta is open to
+  anyone. GitHub Pages cannot store an email address without a third-party
+  form service, which would load third-party script on a site that must not
+  have any (see the phone app's storage note in `STUBS.md`).
+- **Project files need a person's trust** (SEC-12). Security-relevant
+  sections of `polyph.toml` (`[sandbox]`, `[agents.*]`, `checks`,
+  `[policy] preset`) apply only after `polyph trust` records their hash.
+  Before that, Polyph uses the defaults. Teams upgrading from 0.1.x with
+  checks or custom agents run `polyph trust` once.
