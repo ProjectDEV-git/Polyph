@@ -21,7 +21,16 @@ GitHub release page.
 - **Rooms from 0.1.2.** On the first connect after updating, an Owner's or
   Maintainer's daemon re-issues certificates for people let in by a
   Maintainer whose role changed since, so devices that join later accept
-  them.
+  them. Re-issued people get their role back at most as Member, and the
+  activity feed lists them; raise a role again with `polyph room role`. It
+  runs once per room. If the room owner's role was changed in 0.1.2, the
+  owner's device goes back to Owner. In a room where some devices still run
+  0.1.2, update the Owner and Maintainer devices first: a role change made
+  from a 0.1.2 device leaves the people that member let in cut off on
+  updated devices.
+- **Removed devices.** Re-inviting someone from a device that was removed
+  from the room now says so; they join again from another machine or a
+  separate `POLYPH_HOME`.
 
 ## 0.1.2
 

@@ -109,12 +109,22 @@ writes on the new link. A device already held keeps the chain held for it.
 For the same reason a role change also re-issues, from the changer's own
 chain and keeping their role, every device whose chain runs through a
 device being re-issued, and a device whose own chain runs through the member
-being changed cannot change that member's role. After any replacement a
+being changed cannot change that member's role. After any replacement, and
+after taking a device it did not hold (in `Hello`, `RoleChanged`,
+`MemberAdded` or a snapshot, whatever the order of the snapshot's members), a
 client checks every chain it holds again and drops those now issued through
-a superseded certificate. On the first connect after loading a room, an Owner
-or Maintainer re-issues held devices whose chain runs through a superseded
-certificate and whose last certificate predates the supersession (rooms saved
-by 0.1.2, whose role changes re-issued only the member's own devices).
+a superseded certificate. For the room owner's device only its genesis
+self-certificate counts in that check.
+
+Rooms saved by 0.1.2 can hold chains this version refuses. On loading one, a
+client puts the room owner's device back on its genesis chain (a 0.1.2 role
+change of the owner left a newer certificate from another device), and on
+the first connect after that an Owner or Maintainer re-issues held devices
+whose chain runs through a superseded certificate and whose last certificate
+predates the supersession (0.1.2 role changes re-issued only the member's
+own devices). Those re-issues give the role held, at most Member, and are
+logged in the activity feed (`certificates_reissued`). This is local saved
+state; nothing on the wire changes.
 
 ### 4.3 Roles
 

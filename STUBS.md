@@ -87,10 +87,25 @@ lists notes and agents write them.
   (wire change, Kao). A role change re-issues only the devices the changer
   holds; others drop a device whose chain runs through the demoted
   certificate until someone re-issues it, and if the Owner never held it,
-  it has to join again. On the first connect after loading a room, an Owner
-  or Maintainer re-issues held peers whose chain runs through a superseded
-  certificate and that were let in before it was superseded (rooms from
-  0.1.2); a chain backdated by a modified client passes that date check. A
+  it has to join again. On the first connect after loading a room saved by
+  0.1.2, an Owner or Maintainer re-issues held peers whose chain runs
+  through a superseded certificate and that were let in before it was
+  superseded, at most as Member, and logs who in the activity feed;
+  `issued_at` is set by the issuer, so a chain backdated by a modified
+  client passes that date check. In rooms that still have 0.1.2 Owner or
+  Maintainer devices, a role change made on one re-issues only the member's
+  devices, and upgraded clients drop the people that member let in; only a
+  device that still holds them can re-issue them, otherwise they join again
+  (re-issuing them at once on upgraded devices conflicts with the current
+  rule that such chains are dropped; lead to decide). A Maintainer can re-issue another
+  Maintainer at the same role and so cut off that Maintainer's invitees
+  silently. A Maintainer can give an Owner-ranked device that is not the
+  room owner's a newer, lower certificate, which a client that has not met
+  that device keeps; two Maintainers demoting each other at once can leave
+  clients disagreeing. These need signed supersession records (wire change,
+  Kao, KAO-95). Only the room owner's device issues Owner certificates: once
+  its state is lost, no Owner certificate can be issued or lowered, and a
+  stolen second Owner device can only be removed. A
   Maintainer whose own chain runs through a member cannot change that
   member's role. Certificates are ordered by the issuer's clock, so role
   changes made from devices whose clocks differ by more than the time

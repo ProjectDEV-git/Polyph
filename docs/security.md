@@ -109,7 +109,9 @@ existing member id. A Member, who cannot approve joins, is told it cannot
 pair a phone or add an agent host. A knock that names a device already in
 the room (or removed from it, or the owner's device) is refused unless it is
 that device re-joining with the same keys, so a joiner cannot take over a
-device id. A request does not prove that the joiner holds the device key it
+device id. A removed device stays removed: a removed person rejoins from a
+new device identity (another machine, or a separate `POLYPH_HOME`), and the
+approver is told that the device was removed. A request does not prove that the joiner holds the device key it
 names, so a client that never saw that device can still accept a
 certificate an older client issued for it.
 
@@ -124,9 +126,35 @@ chain. A new certificate replaces the one held only when it keeps the
 device's member id and encryption key and its issuer ranks at least as high
 as the role held; only the room owner's device re-issues an Owner, so a
 Maintainer cannot demote the Owner. After a replacement, clients drop chains
-issued through the superseded certificate. A client that has not yet seen
-the demotion, directly or in a snapshot, still accepts the old chain until
-it does.
+issued through the superseded certificate, and they check again whenever
+they take a device they did not hold, so the order of a snapshot does not
+matter. A client that has not yet seen the demotion, directly or in a
+snapshot, still accepts the old chain until it does.
+
+Limits of this client-side scheme (signed supersession records would close
+them; see `STUBS.md`):
+
+- A Maintainer can re-issue another Maintainer at the same role. That
+  supersedes the old certificate without changing the role, and clients
+  then drop the people the other Maintainer let in unless the re-issuer
+  re-issued them too. A modified client can do this silently.
+- An Owner-ranked device other than the room owner's can be given a newer,
+  lower certificate by a Maintainer on a client that has not met that
+  device yet; that client keeps the lower one.
+- Two Maintainers who demote each other at the same time can leave clients
+  disagreeing about which demotion won, depending on arrival order.
+- `issued_at` is written by the issuer. A modified client can backdate a
+  certificate, so a demoted Maintainer can issue a chain dated before its
+  demotion that passes the "let in before it was superseded" check (and the
+  0.1.2 re-issue on load, which is why that re-issue gives Member at most).
+- Only the room owner's device issues or re-issues Owner certificates. If
+  that device's state is lost, no Owner certificate can be issued or lowered
+  any more; a second Owner device that is stolen can only be removed.
+
+Rooms saved by 0.1.2: on load, the room owner's device goes back to its
+genesis chain, and on the first connect an Owner or Maintainer re-issues
+people let in by a Maintainer whose role changed since, at most as Member,
+listed in the activity feed so the Owner can check them.
 
 ### A network attacker between a member and the relay
 

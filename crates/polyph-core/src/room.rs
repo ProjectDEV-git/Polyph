@@ -1124,8 +1124,8 @@ impl RoomCore {
         }
         // A device already held keeps the certificate held (a re-joining
         // device's new one arrives in its hello, under the usual rules).
-        if !self.peers.contains_key(&dev) {
-            self.peers.insert(dev, Peer { chain, verified: Some(v), profile: None, presence: None, last_seen: 0 });
+        if let std::collections::btree_map::Entry::Vacant(e) = self.peers.entry(dev) {
+            e.insert(Peer { chain, verified: Some(v), profile: None, presence: None, last_seen: 0 });
             // Its certificate may supersede a link of a held chain.
             out.extend(self.drop_superseded_chains());
         }

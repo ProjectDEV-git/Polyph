@@ -118,7 +118,9 @@ public repository, with the community watching.
    as backlog cards. Pull requests for tasks are checked about every minute.
 8. Late joiners catch up with `polyph catchup` and `polyph search <words>`.
 9. Change roles as people come and go: `polyph room role <member> member`,
-   `polyph room remove <member>`.
+   `polyph room remove <member>`. A removed device cannot join that room
+   again; to let the person back in, they join from another machine or with
+   a separate `POLYPH_HOME`.
 
 ## 4. Agencies and freelancers
 
