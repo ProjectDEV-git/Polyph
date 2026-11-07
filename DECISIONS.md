@@ -425,9 +425,14 @@ could not be followed exactly. Newest at the bottom of each section.
 ## Skipped work
 
 - **The Nublet provider (M8) was skipped** on 2026-11-04 at the project
-  owner's request: Nublet's provider interface was not available, and an
-  integration guessed without it would have been wrong. The status feed it
-  would read already exists. Tracked in `STUBS.md` and `PLAN.md`.
+  owner's request: Nublet's provider interface was not available. It was
+  picked up in the beta (2026-11-06): Nublet had no provider interface, so
+  the beta team proposed a minimal one in Nublet (kaorii-ako/nublet#7: id,
+  title, icon, a pure parse function, `start(host)` and `stop()`) and built
+  the Polyph provider on it. It reads the existing read-only D-Bus service
+  `org.polyph.Status1` instead of a new channel, and it does not approve or
+  deny from the pill: the D-Bus service stays read-only, and the person
+  decides with the request's full context in Polyph. See `docs/nublet.md`.
 
 ## Process
 
@@ -439,3 +444,23 @@ could not be followed exactly. Newest at the bottom of each section.
   window conventions, HIG clarity and deference) is applied from the brief and
   recorded in `DESIGN.md`. Listed in `STUBS.md` so a later interactive session
   installs it.
+
+## Public beta
+
+- **No telemetry in the beta** (2026-11-07). Opt-in anonymous counts would
+  need a collection endpoint. The project has no running service that could
+  take them: `polyph-cloud` is not deployed, and the relay should not learn
+  more than it routes. A new endpoint is a new service, possibly a paid
+  one, which is Kao's call. `docs/beta.md` keeps saying "Polyph sends no
+  telemetry". Feedback goes through `polyph feedback`, which opens a GitHub
+  issue in the browser with version, OS, surface and relay kind (default
+  or custom), and nothing from rooms.
+- **No waitlist or invite field on the website.** The beta is open to
+  anyone. GitHub Pages cannot store an email address without a third-party
+  form service, which would load third-party script on a site that must not
+  have any (see the phone app's storage note in `STUBS.md`).
+- **Project files need a person's trust** (SEC-12). Security-relevant
+  sections of `polyph.toml` (`[sandbox]`, `[agents.*]`, `checks`,
+  `[policy] preset`) apply only after `polyph trust` records their hash.
+  Before that, Polyph uses the defaults. Teams upgrading from 0.1.x with
+  checks or custom agents run `polyph trust` once.

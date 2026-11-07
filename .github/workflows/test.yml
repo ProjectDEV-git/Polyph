@@ -149,7 +149,10 @@ jobs:
           test -f "$p/share/polyph/web/app/index.html"
           # A tampered download changes nothing.
           cp dist/SHA256SUMS dist/SHA256SUMS.good
-          sed -i 's/^./0/' dist/SHA256SUMS
+          # Change the first digit of every sum so it can never stay the same
+          # (replacing it with a fixed digit is a no-op one time in 16).
+          awk '{ $1 = (substr($1,1,1) == "0" ? "1" : "0") substr($1,2); print }' dist/SHA256SUMS.good > dist/SHA256SUMS
+          if cmp -s dist/SHA256SUMS dist/SHA256SUMS.good; then exit 1; fi
           if "$p/bin/polyph" update --force; then exit 1; fi
           test -x "$p/bin/polyph"
           mv dist/SHA256SUMS.good dist/SHA256SUMS

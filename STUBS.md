@@ -5,15 +5,10 @@ here should be described as done anywhere else.
 
 ## Not started (later milestones)
 
-The directory `integrations/` is not built. `polyph` with no
-arguments opens the TUI in a terminal and prints help otherwise.
-
-CLI commands not implemented yet (they arrive with their milestones):
-`sync`, `spectate-link *`. (`login`, `logout` and `cloud status` arrived in M10.) (`agent start --on`,
-`agent-host`, `template`, `skills` and `plugin` arrived in M9.) (`polyph mcp` exists: agents start it.) People can
-list memory notes and message agents through the daemon API (`memory.list`,
-`inbox.send`) but not yet from the CLI. `polyph host --mode hosted` is
-accepted but hosted mode is M4.
+CLI commands not implemented yet: `spectate-link *` (spectator links are
+not in the beta; see `docs/beta.md`). Memory notes cannot be added or
+removed from the CLI: the daemon has `memory.list` only, so `polyph memory`
+lists notes and agents write them.
 
 ## Partial work in finished milestones
 
@@ -77,7 +72,6 @@ accepted but hosted mode is M4.
 
 ## Milestone 4 gaps
 
-- **Whiteboard tools for agents** come with whiteboards (M5).
 - **Local agent ignores MCP servers.** `polyph-localagent` does not read
   `mcpServers` from `session/new`, so it has no Polyph tools; it still gets
   claims through its ACP writes.
@@ -92,8 +86,10 @@ accepted but hosted mode is M4.
 - **Merges are per device.** The merge queue merges into the target branch of
   the repository on the device that ran the task. Members on different
   machines share work through a remote (`[merge] push`), which asks a person
-  before pushing; nothing fetches or rebases a teammate's pushes yet, and a
-  successor on another device after a handoff needs the branch fetched by hand.
+  before pushing. Linked folders are fetched in the background and
+  `polyph sync` fast-forwards a checkout when nothing would be lost, but
+  nothing rebases a teammate's work, and a successor on another device after
+  a handoff has not been tested end to end.
 - **Symbols are found by heuristics** (`polyph-merge::symbols`), not a parser:
   unusual formatting can put a change "outside any symbol", which falls back to
   a whole-file claim or an agent-resolved conflict, never to a wrong merge.
@@ -104,22 +100,19 @@ accepted but hosted mode is M4.
   --mode hosted` / `polyph mirror` again after a daemon restart. Files over
   512 KiB, build output and gitignored files are not mirrored; a member's
   mirror has no `.git`, so members' agents do not get task worktrees there.
-- **Agents cannot pick up tasks themselves.** The board's `auto_pickup` field
+- **Agents do not start on cards by themselves.** An agent takes the next
+  ready card when it calls `next_task`, but the board's `auto_pickup` field
   is not acted on; people start agents on cards.
 - **Real-agent smoke tests** of the review, resolve and planner prompts have
   not run (no real agents installed here).
 
 ## Milestone 5 gaps
 
-- **Terminal attach** exists in the TUI; `polyph term send/read` remain the
-  scripted way in the CLI.
 - **Late viewers of a terminal** see output from when their device came
   online (plus what the relay buffer replays); the owner does not resend
   scrollback to newcomers.
 - **Agents' own command terminals** are summarized in transcripts, not shared
   as live terminals.
-- **Terminal output redaction** works per output batch; a secret split across
-  two batches can slip through.
 - **OS notifications** are not shown by the daemon itself: local apps receive
   `notification` events and show them (M6/M7); Linux panels can use D-Bus.
 - **Webhook URLs and secrets** are per device and not synced between a
@@ -127,8 +120,6 @@ accepted but hosted mode is M4.
 - **GitHub and Linear** are followed by polling (every minute for pull
   requests); no incoming webhooks from them yet. Linear only moves issues for
   card moves made on the device holding the key.
-- **D-Bus** only on Linux; macOS and Windows status integrations come with
-  the status pill (M7).
 - **Activity checkpoints** cover cards (column and title); replaying other
   card fields needs the full card history.
 
@@ -152,8 +143,6 @@ accepted but hosted mode is M4.
 
 - **Browser-only members** arrived in M8 as the phone app (`/phone/`). The
   desktop browser client is still a window onto the person's own daemon.
-- **Desktop packaging** arrived in M11 (release overlay with `polyph`
-  bundled); see "Milestone 11 gaps" for signing.
 - **macOS and Windows** builds of the desktop app have not been run; it was
   built and run on Linux (WebKitGTK under Xvfb).
 - **Shared terminals keep the owner's size**: the app shows them at their
@@ -171,12 +160,12 @@ accepted but hosted mode is M4.
 
 ## Milestone 8 gaps
 
-- **Nublet provider: skipped** (2026-11-04, the project owner's decision).
-  The brief names a Nublet provider, but Nublet's provider interface is not
-  in the repository and could not be found, so the work moved on to M9
-  without it. When it is picked up, the status feed (`polyph status
-  --watch`, NDJSON, versioned in `polyph-proto::status`) is what it would
-  read. Nothing else depends on it.
+- **Nublet provider** is built on Nublet's side (kaorii-ako/nublet#7, a
+  small provider contract plus a Polyph provider that reads the D-Bus status
+  service; see `docs/nublet.md`). Not yet run inside GNOME Shell (no desktop
+  in the build environment) and not merged into Nublet. Clicking an approval
+  opens `polyph web`, not the single approval: Polyph has no link to one
+  approval yet.
 - **One room per phone.** The phone engine holds one room; joining another
   means leaving the first on that phone (Settings > Leave this room).
 - **No push when the phone app is closed.** Approval alerts show while the
@@ -199,9 +188,10 @@ accepted but hosted mode is M4.
   LTO but no `wasm-opt` pass (not installed here).
 - **LAN rooms cannot pair a phone**: a LAN relay's self-signed certificate
   cannot be pinned by a browser; `phone.pair` refuses with an explanation.
-- **VS Code extension** is not published or packaged into a `.vsix` yet
-  (release work, M11); it has been run in VS Code 1.144 on Linux under
-  Xvfb. Its webview uses Polyph's own theme rather than VS Code's colors.
+- **VS Code extension** is packaged as a `.vsix` on the releases page but not
+  published to a marketplace (see "Milestone 11 gaps"); it has been run in
+  VS Code 1.144 on Linux under Xvfb. Its webview uses Polyph's own theme
+  rather than VS Code's colors.
 - **Claims in VS Code** are matched against workspace folders' git roots;
   a workspace that is not the room's repository simply shows no claims.
 
@@ -282,20 +272,17 @@ accepted but hosted mode is M4.
 ## Milestone 11 gaps
 
 - **No M11 brief in the repository.** Scope was derived (see `PLAN.md`).
-- **No release is tagged or published yet.** Tagging `v0.1.0` runs
-  `.github/workflows/release.yml` for the first time; it has been checked
-  with actionlint but has not run on GitHub's runners. Until a release
-  exists, the install scripts and the website's download commands have
-  nothing to download.
-- **Built and tested here (Linux x86_64 only):** the release archive (smoke
-  test, `install.sh` from a local server, a tampered checksum refused), the
-  `.vsix` in a real VS Code, the relay image from prebuilt binaries, and the
-  relay Compose stack with Caddy (TLS and WebSocket upgrade). Not run here:
-  macOS and Windows builds, `install.ps1`, the AppImage and `.rpm`, the
-  from-source Dockerfiles (this sandbox's network proxy is not reachable from
-  `docker build`), `deploy/cloud`.
-- **The local archive had no phone engine**: wasm-bindgen is not installed
-  here; the release workflow builds it.
+- **Releases v0.1.0, v0.1.1 and v0.1.2 are published** on GitHub, built by
+  `.github/workflows/release.yml`, which smoke-tests every archive on its own
+  platform before upload. Still partial: no hand install outside CI is
+  recorded on macOS or Windows (`install.ps1`, `.dmg`, `.msi`/`.exe`), nor
+  of the AppImage and `.rpm` on Bazzite or Fedora Atomic.
+- **Built and tested in the build sandbox (Linux x86_64 only):** the release
+  archive (smoke test, `install.sh` from a local server, a tampered checksum
+  refused), the `.vsix` in a real VS Code, the relay image from prebuilt
+  binaries, and the relay Compose stack with Caddy (TLS and WebSocket
+  upgrade). Not run yet: the from-source Dockerfiles (the sandbox's
+  network proxy is not reachable from `docker build`) and `deploy/cloud`.
 - **Windows code signing** is not set up; SmartScreen will warn. macOS signing
   and notarization run only when the Apple secrets are added.
 - **No auto-update** in the desktop app (Tauri's updater needs a signing key
@@ -306,13 +293,5 @@ accepted but hosted mode is M4.
   (Alpine) and Windows on ARM have no prebuilt binaries.
 - **LAN relay port** is chosen fresh each time; a fixed-port option would
   make firewall rules simpler.
-- **CI is green on Linux, macOS and Windows** since the end of M11. Earlier
-  failures had hidden later ones (CI now runs with `--no-fail-fast`). Fixed
-  during M11: a Clippy 1.99 lint; the macOS sandbox profile allowing writes
-  to shared temp folders; Windows file isolation (low integrity level);
-  line endings (git for Windows checks out CRLF) in symbol claims and in the
-  merge tests; Windows verbatim paths (`\\?\C:\...`) reaching git; races in
-  the relay join, terminal resize and reviewer tests; GNU-only `sed -i` in a
-  test; and test fixtures that assumed Unix paths.
 - **The `.vsix` is 22.6 MB**, mostly Excalidraw's fonts, which the webview
   bundles twice (assets and excalidraw folders).
