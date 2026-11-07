@@ -169,6 +169,12 @@ Reviews (13:00-13:20 UTC):
   with the security auditor; one architect reviewer has #14 and #15.
   KAO-96 filed (ACP agents record no model, so dollar budgets never fire).
   Usage at 13:20 UTC: 28%.
+- #14 f1a8ac7: architect APPROVE; security auditor dispatched. Lows filed
+  as a follow-up issue.
+- #15 241bb04: security SEC-1/3/4 SIGN-OFF, SEC-2 waits on the snapshot
+  re-check; architect CHANGES REQUESTED (0.1.2 rooms where the Owner's role
+  was changed lose every chain). Third Opus rework dispatched. KAO-95
+  extended with signed supersession records.
 
 ### Next
 
