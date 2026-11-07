@@ -71,6 +71,8 @@ pub struct HostedCode {
     pub kind: CodeKind,
     pub expires_at: i64,
     pub failures: u32,
+    /// Joins whose code verified on this host.
+    pub uses: u32,
     /// Made by `phone.pair` or `host.invite` for another device of this member:
     /// a knock through it may claim this member id. Kept in memory only.
     pub own_device: Option<MemberId>,
@@ -407,13 +409,8 @@ async fn on_connect(rt: &RoomRuntime, shared: &Shared, sender: &RelaySender) -> 
     ctx.connected = true;
     ctx.connected_at = Some(tokio::time::Instant::now());
     // Re-host live codes: the relay forgets them when the host disconnects.
-    let codes: Vec<(RendezvousId, HostedCode)> = ctx.codes.iter().map(|(r, c)| (*r, c.clone())).collect();
-    for (r, c) in codes {
-        if c.expires_at > now {
-            sender
-                .send(ClientFrame::HostCode { rendezvous: r, kind: c.kind.clone(), expires_at: c.expires_at })
-                .await?;
-        }
+    for (r, c) in codes_to_rehost(&ctx, now) {
+        sender.send(ClientFrame::HostCode { rendezvous: r, kind: c.kind.clone(), expires_at: c.expires_at }).await?;
     }
     let effects = ctx.core.on_connected(now);
     apply(rt, &mut ctx, shared, effects).await;
@@ -567,11 +564,17 @@ async fn handle_frame(rt: &RoomRuntime, shared: &Shared, f: RelayFrame) {
         RelayFrame::PakeEnded { session, .. } => {
             // A join that ends before the joiner proved the code is a failed
             // attempt here too, whatever the relay counts.
-            if let Some(j) = ctx.joins.remove(&session)
-                && matches!(j.stage, Some(HostStage::AwaitPake(_) | HostStage::AwaitConfirm(_)))
-                && let Some(c) = ctx.codes.get_mut(&j.rendezvous)
-            {
-                c.failures += 1;
+            let Some(j) = ctx.joins.remove(&session) else { return };
+            match j.stage {
+                Some(HostStage::AwaitPake(_) | HostStage::AwaitConfirm(_)) => {
+                    if let Some(c) = ctx.codes.get_mut(&j.rendezvous) {
+                        c.failures += 1;
+                    }
+                }
+                // The joiner left while waiting: its knock can no longer
+                // complete, so it goes with any own-device mark.
+                Some(HostStage::Knocked { knock, .. }) => ctx.core.drop_knock(&knock),
+                _ => {}
             }
         }
         RelayFrame::Error { code, detail } => {
@@ -631,8 +634,12 @@ async fn host_join_step(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, se
             (tag, Ok(ch)) => {
                 let _ = sender.send(ClientFrame::Pake { session, data: tag.to_vec() }).await;
                 let _ = sender.send(ClientFrame::PakeResult { session, ok: true }).await;
-                if let Some(c) = ctx.codes.get_mut(&j.rendezvous) {
-                    c.failures = 0;
+                if let Some(c) = code_verified(ctx, j.rendezvous) {
+                    shared.emit(ApiEvent::room_kind(
+                        &rt.id,
+                        "code_closed",
+                        serde_json::json!({ "code": c.code.to_string(), "reason": "used" }),
+                    ));
                 }
                 j.stage = Some(HostStage::AwaitRequest(ch));
                 ctx.joins.insert(session, j);
@@ -696,6 +703,26 @@ async fn host_join_step(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, se
     }
 }
 
+/// Codes to host again after (re)connecting: the live ones this host still holds.
+fn codes_to_rehost(ctx: &RoomCtx, now: i64) -> Vec<(RendezvousId, HostedCode)> {
+    ctx.codes.iter().filter(|(_, c)| c.expires_at > now).map(|(r, c)| (*r, c.clone())).collect()
+}
+
+/// A joiner proved it knows the code. Resets the failure count and retires
+/// the code here once it is used up (a one-time code at once), without
+/// waiting for the relay's `CodeClosed`, which a reconnect can lose: the code
+/// would otherwise be hosted again. Returns the retired code.
+fn code_verified(ctx: &mut RoomCtx, r: RendezvousId) -> Option<HostedCode> {
+    let c = ctx.codes.get_mut(&r)?;
+    c.failures = 0;
+    c.uses += 1;
+    let done = match c.kind {
+        CodeKind::OneTime => true,
+        CodeKind::Reusable { max_uses } => max_uses.is_some_and(|m| c.uses >= m),
+    };
+    if done { ctx.codes.remove(&r) } else { None }
+}
+
 /// Creates a join code and asks the relay to host it. Returns the code and a
 /// receiver that resolves once the relay confirms (`true`) or refuses it
 /// because the rendezvous is taken (`false`). When disconnected the code is
@@ -710,7 +737,8 @@ pub async fn host_code(
     let code = JoinCode::generate()?;
     let r = code.rendezvous();
     let own_device = own_device.then_some(ctx.core.my_member);
-    ctx.codes.insert(r, HostedCode { code: code.clone(), kind: kind.clone(), expires_at, failures: 0, own_device });
+    ctx.codes
+        .insert(r, HostedCode { code: code.clone(), kind: kind.clone(), expires_at, failures: 0, uses: 0, own_device });
     let mut waiter = None;
     if let (Some(s), true) = (&ctx.sender, ctx.connected) {
         let (tx, rx) = oneshot::channel();
@@ -724,4 +752,34 @@ pub async fn host_code(
 /// Member id used for a member's actions in this room.
 pub fn my_member(ctx: &RoomCtx) -> MemberId {
     ctx.core.my_member
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use polyph_proto::identity::DeviceIdentity;
+
+    fn ctx() -> Arc<RoomRuntime> {
+        let id = Arc::new(DeviceIdentity::generate().unwrap());
+        let (core, _) = RoomCore::create(id, MemberId::random().unwrap(), "payments", "Ann", false, 1_000).unwrap();
+        RoomRuntime::new(core, RelayAddr::parse("ws://127.0.0.1:9/ws"))
+    }
+
+    #[tokio::test]
+    async fn a_used_one_time_code_is_not_hosted_again_after_a_reconnect() {
+        let rt = ctx();
+        let mut c = rt.ctx.lock().await;
+        let (pair, _) = host_code(&mut c, CodeKind::OneTime, 5_000, true).await.unwrap();
+        let (reusable, _) = host_code(&mut c, CodeKind::Reusable { max_uses: Some(2) }, 5_000, false).await.unwrap();
+        assert_eq!(codes_to_rehost(&c, 1_000).len(), 2);
+        // The pairing code verifies once; the relay's `CodeClosed` never arrives.
+        assert!(code_verified(&mut c, pair.rendezvous()).is_some());
+        let live: Vec<RendezvousId> = codes_to_rehost(&c, 1_000).into_iter().map(|(r, _)| r).collect();
+        assert_eq!(live, vec![reusable.rendezvous()], "the used pairing code is gone");
+        // A reusable code lasts until its use limit.
+        assert!(code_verified(&mut c, reusable.rendezvous()).is_none());
+        assert!(code_verified(&mut c, reusable.rendezvous()).is_some());
+        assert!(codes_to_rehost(&c, 1_000).is_empty());
+    }
 }

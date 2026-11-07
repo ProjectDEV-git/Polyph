@@ -2155,6 +2155,13 @@ impl Daemon {
                 if c.core.quick && reusable {
                     return Err(ApiError::BadRequest("quick sessions only have one-time codes".into()));
                 }
+                // A knock naming this member is let in only by this device,
+                // so a role that cannot approve joins cannot add a device.
+                if own_device && !c.core.role().can_approve_joins() {
+                    let lang = self.shared.config.lock().lang.clone();
+                    let l = polyph_i18n::Localizer::new(&polyph_i18n::detect(lang.as_deref()));
+                    return Err(ApiError::Forbidden(l.t("error-add-device-needs-approver")));
+                }
                 if !c.core.role().can_write() {
                     return Err(ApiError::Forbidden("viewers cannot invite people".into()));
                 }

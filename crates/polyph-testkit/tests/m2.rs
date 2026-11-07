@@ -286,3 +286,29 @@ async fn only_pairing_codes_let_a_device_join_as_the_inviter() {
     let joined = joining.await.unwrap().map_err(|e| e.to_string()).unwrap();
     assert_eq!(joined["id"], rid.as_str());
 }
+
+/// Only an approver's own device can let in a knock naming its member, so a
+/// Member is told up front that it cannot pair a phone or add an agent host.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn members_are_told_they_cannot_add_their_own_devices() {
+    let mut h = Harness::new().await.unwrap();
+    let a = h.add("Ann").await.unwrap();
+    let b = h.add("Bo").await.unwrap();
+    let room = h.nodes[a].call("room.create", json!({ "name": "payments" })).await.unwrap();
+    let rid = room["id"].as_str().unwrap().to_string();
+    h.until("connected", || async {
+        h.nodes[a].call("room.get", json!({ "room": rid })).await.unwrap()["connected"] == true
+    })
+    .await
+    .unwrap();
+    h.join(&rid, a, b, a, "member").await.unwrap();
+    h.nodes[b].call("config.set", json!({ "key": "lang", "value": "en" })).await.unwrap();
+    for method in ["phone.pair", "host.invite"] {
+        let e = h.nodes[b].call(method, json!({ "room": rid })).await.unwrap_err().to_string();
+        assert!(e.contains("Only an Owner or Maintainer can add another device"), "{method}: {e}");
+    }
+    // The Owner still can.
+    for method in ["phone.pair", "host.invite"] {
+        h.nodes[a].call(method, json!({ "room": rid })).await.unwrap();
+    }
+}

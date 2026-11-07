@@ -683,12 +683,8 @@ impl RoomCore {
     /// a demoted Maintainer's earlier issues stop counting until someone with
     /// the role re-issues them (`change_role` does for the devices it holds).
     fn drop_superseded_chains(&mut self) -> Vec<Effect> {
-        let stale: Vec<DeviceId> = self
-            .peers
-            .iter()
-            .filter(|(_, p)| self.issued_through_superseded(&p.chain))
-            .map(|(d, _)| *d)
-            .collect();
+        let stale: Vec<DeviceId> =
+            self.peers.iter().filter(|(_, p)| self.issued_through_superseded(&p.chain)).map(|(d, _)| *d).collect();
         let mut out = vec![];
         for d in stale {
             if let Some(m) = self.sender_member(&d)
