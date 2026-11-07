@@ -442,8 +442,8 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
     // daemon stops trusting that checkout's settings for its own fetches and
     // pushes, and says so. (With no sandbox the agent runs as the person.)
     let git = {
-        let (wt, commits) = (worktree.clone(), task_wt.is_some());
-        tokio::task::spawn_blocking(move || polyph_git::sandbox_git(&wt, commits)).await.unwrap_or_default()
+        let (wt, branch) = (worktree.clone(), task_wt.as_ref().map(|w| w.branch.clone()));
+        tokio::task::spawn_blocking(move || polyph_git::sandbox_git(&wt, branch.as_deref())).await.unwrap_or_default()
     };
     let enforced = git_mounts_enforced(mech);
     let warnings = git_warnings(mech, task_wt.is_some(), !git.read_only.is_empty());

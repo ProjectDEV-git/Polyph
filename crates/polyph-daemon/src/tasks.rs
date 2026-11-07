@@ -178,7 +178,7 @@ pub async fn finish(daemon: Arc<Daemon>, h: Arc<AgentHandle>, message: Option<St
         let (into, branch, repo) = (into.clone(), branch.clone(), wt.repo.clone());
         blocking(move || -> Result<(String, usize), ApiError> {
             let r = Repo::open(&repo).and_then(|m| m.open_worktree(&path)).map_err(git_err)?;
-            r.commit_all(&msg, &sig).map_err(git_err)?;
+            r.commit_task(&branch, &msg, &sig).map_err(git_err)?;
             let head = r.rev_parse(&branch).map_err(git_err)?;
             let ahead = r.log_subjects(&into, &head).map_err(git_err)?.len();
             Ok((head, ahead))
@@ -332,6 +332,8 @@ async fn process(
         let (msg, who2) = (message.clone(), who.clone());
         let (old, outcome, how) = blocking(move || -> Result<_, ApiError> {
             let r = Repo::open(&root).map_err(git_err)?;
+            // A branch that changed without git is not merged into (SEC-13).
+            r.check_branch_logged(&into).map_err(git_err)?;
             let old = r.rev_parse(&into).map_err(git_err)?;
             let mut how: Vec<(String, Strategy)> = vec![];
             let out = r
@@ -736,7 +738,7 @@ async fn run_checks_in(shared: &Arc<Shared>, project: &ProjectConfig, wt: &Path)
     // Checks read the repository; they commit nothing.
     let git = {
         let wt = wt.to_path_buf();
-        tokio::task::spawn_blocking(move || polyph_git::sandbox_git(&wt, false)).await.unwrap_or_default()
+        tokio::task::spawn_blocking(move || polyph_git::sandbox_git(&wt, None)).await.unwrap_or_default()
     };
     let policy = Policy {
         worktree: wt.to_path_buf(),
@@ -887,7 +889,7 @@ pub async fn handoff(
         let msg = format!("Work in progress, handed over by {}", h.agent.label);
         commits = blocking(move || -> Result<Vec<String>, ApiError> {
             let r = Repo::open(&wt.repo).and_then(|m| m.open_worktree(&wt.path)).map_err(git_err)?;
-            r.commit_all(&msg, &sig).map_err(git_err)?;
+            r.commit_task(&wt.branch, &msg, &sig).map_err(git_err)?;
             r.log_subjects(&wt.base, &wt.branch).map_err(git_err)
         })
         .await??;

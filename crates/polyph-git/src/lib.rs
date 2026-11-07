@@ -274,6 +274,108 @@ fn check_gitdir(root: &Path, worktrees: &Path) -> Result<(PathBuf, PathBuf)> {
     Ok((dir, common))
 }
 
+/// Git subcommands that can write the git directory (refs, reflogs,
+/// objects, the index). Before any of them the daemon runs [`check_links`].
+const WRITES: &[&str] = &[
+    "add",
+    "branch",
+    "checkout",
+    "cherry-pick",
+    "commit",
+    "commit-tree",
+    "fetch",
+    "gc",
+    "hash-object",
+    "merge",
+    "pack-refs",
+    "prune",
+    "pull",
+    "push",
+    "read-tree",
+    "rebase",
+    "reflog",
+    "repack",
+    "reset",
+    "revert",
+    "stash",
+    "switch",
+    "tag",
+    "update-index",
+    "update-ref",
+    "worktree",
+    "write-tree",
+];
+
+/// Refuses a git directory where git, run by the daemon as the person, would
+/// write through a link an agent planted (SEC-13): git appends to reflogs
+/// with a plain open, so `logs/HEAD` linked to `~/.profile` adds a line the
+/// agent chose there. Walks `logs/`, `refs/`, `worktrees/` and
+/// `objects/info/` of the shared git directory, and the worktree's own git
+/// directory, and refuses any symbolic link and (on Unix, outside `objects/`,
+/// whose files `git clone --local` hard-links) any file with more than one
+/// hard link, naming the path. `info/` too, which the daemon writes itself.
+fn check_links(gitdir: &Path, common: &Path) -> Result<()> {
+    fn walk(p: &Path, depth: usize, nlink: bool) -> std::result::Result<(), PathBuf> {
+        let Ok(m) = std::fs::symlink_metadata(p) else { return Ok(()) };
+        if m.file_type().is_symlink() {
+            return Err(p.to_path_buf());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if nlink && m.is_file() && m.nlink() > 1 {
+                return Err(p.to_path_buf());
+            }
+        }
+        #[cfg(not(unix))]
+        let _ = nlink;
+        // Deeper than any ref name git accepts here: refuse rather than recurse.
+        if m.is_dir() && depth > 64 {
+            return Err(p.to_path_buf());
+        }
+        if m.is_dir() {
+            for e in std::fs::read_dir(p).map_err(|_| p.to_path_buf())? {
+                walk(&e.map_err(|_| p.to_path_buf())?.path(), depth + 1, nlink)?;
+            }
+        }
+        Ok(())
+    }
+    let mut roots: Vec<PathBuf> =
+        ["logs", "refs", "worktrees", "objects/info", "info"].iter().map(|d| common.join(d)).collect();
+    if gitdir != common {
+        roots.push(gitdir.to_path_buf());
+    }
+    for r in &roots {
+        walk(r, 0, !r.starts_with(common.join("objects"))).map_err(|p| {
+            GitError::Invalid(format!(
+                "refusing to run git in {}: {} is a link (symbolic or hard), and git would write through it; \
+                 remove it and check what it points at",
+                common.display(),
+                p.display()
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+/// Refuses `objects/info/alternates` (and `http-alternates`): they make git
+/// read objects from another repository, and the daemon never creates them
+/// (SEC-13). Checked before every command.
+fn check_alternates(common: &Path) -> Result<()> {
+    for f in ["alternates", "http-alternates"] {
+        let p = common.join("objects").join("info").join(f);
+        if std::fs::symlink_metadata(&p).is_ok() {
+            return Err(GitError::Invalid(format!(
+                "refusing to run git in {}: {} makes git read objects from another repository, and Polyph did \
+                 not create it; remove it (`git repack -a -d` first if the repository needs those objects)",
+                common.display(),
+                p.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// The git subcommand in `args`, past any `-c key=value`.
 fn subcommand<'a>(args: &[&'a str]) -> &'a str {
     let mut it = args.iter();
@@ -363,6 +465,10 @@ impl Repo {
     fn command(&self, trust: Trust, args: &[&str]) -> Result<Command> {
         let mut c = git_command(&self.root, trust);
         let (dir, common) = self.dirs()?;
+        check_alternates(&common)?;
+        if WRITES.contains(&subcommand(args)) {
+            check_links(&dir, &common)?;
+        }
         let mut g = std::ffi::OsString::from("--git-dir=");
         g.push(&dir);
         let mut t = std::ffi::OsString::from("--work-tree=");
@@ -615,6 +721,89 @@ impl Repo {
         Ok(Some(self.rev_parse("HEAD")?))
     }
 
+    /// Commits every change in this task worktree onto `branch`, which HEAD
+    /// must name. The commit goes onto the branch itself (`commit-tree` on
+    /// its tip, then `update-ref` from that tip), never through HEAD: a task
+    /// agent writes its worktree's HEAD, and pointing it at `main` must not
+    /// make the daemon commit there (SEC-13). Returns the new commit, or
+    /// None when there was nothing to commit.
+    pub fn commit_task(&self, branch: &str, message: &str, who: &Signature) -> Result<Option<String>> {
+        check_branch_name(branch)?;
+        let full = format!("refs/heads/{branch}");
+        let head = self.exec(&["symbolic-ref", "--quiet", "HEAD"], &[], None)?.1.trim().to_string();
+        if head != full {
+            let head = if head.is_empty() { "detached".to_string() } else { head };
+            return Err(GitError::Invalid(format!(
+                "refusing to commit in {}: HEAD is {head}, not {full}; check out {branch} there",
+                self.root.display()
+            )));
+        }
+        if self.dirty_files()?.is_empty() {
+            return Ok(None);
+        }
+        let no_sub = ["-c", "diff.ignoreSubmodules=all", "-c", "submodule.recurse=false"];
+        if self.worktrees.is_some() {
+            self.check_nested("commit in")?;
+        }
+        let links: Vec<String> = self
+            .git(&["ls-files", "-s", "-z"])?
+            .split('\0')
+            .filter_map(|e| e.strip_prefix("160000 ")?.split_once('\t').map(|(_, p)| format!(":(exclude,literal){p}")))
+            .collect();
+        let mut add = vec!["add", "-A", "--", "."];
+        add.extend(links.iter().map(String::as_str));
+        self.git(&[&no_sub[..], &add].concat())?;
+        let parent = self.rev_parse(&full)?;
+        let tree = self.git(&["write-tree"])?.trim().to_string();
+        if self.git(&["rev-parse", &format!("{parent}^{{tree}}")])?.trim() == tree {
+            return Ok(None);
+        }
+        let env = sig_env(who);
+        let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        let text = format!("{}\n", message.trim());
+        let commit =
+            self.git_env(&["commit-tree", &tree, "-p", &parent, "-F", "-"], &env, Some(text.as_bytes()))?.trim().to_string();
+        let subject = text.lines().next().unwrap_or_default();
+        self.git(&["update-ref", "-m", &format!("commit: {subject}"), &full, &commit, &parent])?;
+        Ok(Some(commit))
+    }
+
+    /// Refuses `branch` when its tip is not where its reflog says git last
+    /// set it: then something wrote the ref without git, as an agent that
+    /// could write `refs/` would (SEC-13). The daemon checks the branch it
+    /// merges into before merging and before moving it. A branch without a
+    /// reflog (or an empty one) passes.
+    pub fn check_branch_logged(&self, branch: &str) -> Result<()> {
+        use std::io::{Read, Seek, SeekFrom};
+        check_branch_name(branch)?;
+        let full = format!("refs/heads/{branch}");
+        let tip = self.git(&["rev-parse", "--verify", "--quiet", &full])?.trim().to_string();
+        let log = self.common_dir()?.join("logs").join("refs").join("heads").join(branch);
+        let bad = |why: String| GitError::Invalid(format!("refusing to merge into {branch}: {why}"));
+        let Ok(m) = std::fs::symlink_metadata(&log) else { return Ok(()) };
+        if !m.is_file() {
+            return Err(bad(format!("{} is not a plain file", log.display())));
+        }
+        let mut f = std::fs::File::open(&log).map_err(GitError::Spawn)?;
+        f.seek(SeekFrom::Start(m.len().saturating_sub(8192))).map_err(GitError::Spawn)?;
+        let mut tail = vec![];
+        f.read_to_end(&mut tail).map_err(GitError::Spawn)?;
+        let tail = String::from_utf8_lossy(&tail);
+        let Some(last) = tail.lines().rev().find(|l| !l.trim().is_empty()) else { return Ok(()) };
+        let logged = last.split(' ').nth(1).unwrap_or_default();
+        if logged != tip {
+            let short = |s: &str| s.chars().take(12).collect::<String>();
+            return Err(bad(format!(
+                "it points at {}, but its reflog ({}) says git last set it to {}. Something changed it without \
+                 git, perhaps an agent outside its sandbox; check {branch} before queueing the merge again",
+                short(&tip),
+                log.display(),
+                short(logged)
+            )));
+        }
+        Ok(())
+    }
+
     pub fn merge_base(&self, a: &str, b: &str) -> Result<Option<String>> {
         match self.exec(&["merge-base", a, b], &[], None)? {
             (true, out, _) => Ok(Some(out.trim().to_string())),
@@ -748,8 +937,10 @@ impl Repo {
 
     /// Moves `branch` to `commit` if it still points at `old`. When the branch
     /// is checked out in a clean worktree, that worktree is fast-forwarded too.
+    /// Refuses a branch that changed without git ([`Repo::check_branch_logged`]).
     pub fn advance_branch(&self, branch: &str, commit: &str, old: &str) -> Result<()> {
         check_branch_name(branch)?;
+        self.check_branch_logged(branch)?;
         for (path, b) in self.worktrees()? {
             if b.as_deref() == Some(branch) {
                 let main = canonical(&path).ok() == canonical(&self.main_root()?).ok();
@@ -895,7 +1086,9 @@ impl Repo {
 
     /// Adds a line to `.git/info/exclude` unless it is there.
     pub fn exclude(&self, pattern: &str) -> Result<()> {
-        let p = self.common_dir()?.join("info").join("exclude");
+        let (dir, common) = self.dirs()?;
+        check_links(&dir, &common)?;
+        let p = common.join("info").join("exclude");
         let cur = std::fs::read_to_string(&p).unwrap_or_default();
         if cur.lines().any(|l| l.trim() == pattern) {
             return Ok(());
@@ -1007,22 +1200,30 @@ pub fn clone_from(url: &str, dir: &Path, branch: Option<&str>, partial: bool) ->
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SandboxGit {
     /// Folders of the shared git directory the agent writes so it can
-    /// commit: `objects/`, `refs/`, `logs/` and its own folder in
-    /// `worktrees/`. Empty unless it commits.
+    /// commit on its task branch: `objects/`, the folder in `refs/heads/`
+    /// that holds the branch and the matching folder in `logs/refs/heads/`,
+    /// and its own folder in `worktrees/` (its HEAD, index, reflog and
+    /// per-worktree refs). Empty unless it commits.
     pub writable: Vec<PathBuf>,
     /// Paths that stay read-only: the whole shared git directory, a linked
-    /// worktree's `.git` file and, when it commits, the `commondir`, `gitdir`
-    /// and `config.worktree` files in its own folder.
+    /// worktree's `.git` file and, when it commits, `objects/info/`, the
+    /// `commondir`, `gitdir` and `config.worktree` files in its own folder,
+    /// and every other entry in the two branch folders (other tasks'
+    /// branches and their reflogs).
     pub read_only: Vec<PathBuf>,
 }
 
-/// The [`SandboxGit`] for an agent working in `worktree`. With `commits`
-/// and a linked worktree (an agent's task), the agent can run `git add` and
-/// `git commit`; otherwise (the person's own checkout, checks) the whole git
-/// directory is read-only and only read-only git commands work. Empty
-/// outside a git checkout. Creates `logs/` and an empty `config.worktree`
-/// when they are missing, so the agent cannot create them.
-pub fn sandbox_git(worktree: &Path, commits: bool) -> SandboxGit {
+/// The [`SandboxGit`] for an agent working in `worktree`. With `branch` (a
+/// task's branch) and a linked worktree, the agent can run `git add` and
+/// `git commit` on that branch; otherwise (the person's own checkout,
+/// checks) the whole git directory is read-only and only read-only git
+/// commands work. A branch directly in `refs/heads/` (no `/` in its name)
+/// shares its folder with every other branch, so the agent gets no
+/// commits there; the daemon still commits its work when it finishes.
+/// Empty outside a git checkout. Creates the branch's folders in `refs/`
+/// and `logs/`, `objects/info/` and an empty `config.worktree` when they
+/// are missing, so the agent cannot create them.
+pub fn sandbox_git(worktree: &Path, branch: Option<&str>) -> SandboxGit {
     let Ok(r) = Repo::open(worktree) else { return SandboxGit::default() };
     let Ok((gitdir, common)) = r.dirs() else { return SandboxGit::default() };
     let mut g = SandboxGit { writable: vec![], read_only: vec![common.clone()] };
@@ -1032,15 +1233,39 @@ pub fn sandbox_git(worktree: &Path, commits: bool) -> SandboxGit {
     {
         g.read_only.push(root.join(".git"));
     }
-    if commits && gitdir != common {
-        let _ = std::fs::create_dir_all(common.join("logs"));
+    let leaf = branch.filter(|b| check_branch_name(b).is_ok()).and_then(|b| {
+        let (dir, name) = b.rsplit_once('/')?;
+        (!name.is_empty() && !dir.is_empty()).then_some((dir, name))
+    });
+    if let Some((dir, name)) = leaf
+        && gitdir != common
+    {
+        let refs = common.join("refs").join("heads").join(dir);
+        let logs = common.join("logs").join("refs").join("heads").join(dir);
+        let info = common.join("objects").join("info");
+        for d in [&refs, &logs, &info] {
+            let _ = std::fs::create_dir_all(d);
+        }
         let per_worktree = gitdir.join("config.worktree");
         if std::fs::symlink_metadata(&per_worktree).is_err() {
             let _ = std::fs::write(&per_worktree, "");
         }
-        g.writable = ["objects", "refs", "logs"].iter().map(|d| common.join(d)).collect();
-        g.writable.push(gitdir.clone());
+        g.writable = vec![common.join("objects"), refs.clone(), logs.clone(), gitdir.clone()];
+        g.read_only.push(info);
         g.read_only.extend(["commondir", "gitdir", "config.worktree"].iter().map(|f| gitdir.join(f)));
+        // Everything else in the branch folders: other branches and their
+        // reflogs, and anything else in there, stay as they are.
+        for d in [&refs, &logs] {
+            let mut others: Vec<PathBuf> = std::fs::read_dir(d)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|e| e.file_name() != name)
+                .map(|e| e.path())
+                .collect();
+            others.sort();
+            g.read_only.extend(others);
+        }
     }
     let real = |p: &PathBuf, dir: bool| {
         std::fs::symlink_metadata(p).is_ok_and(|m| if dir { m.is_dir() } else { m.is_dir() || m.is_file() })
@@ -1690,24 +1915,149 @@ mod tests {
         let (d, r) = init();
         let common = canonical(&r.common_dir().unwrap()).unwrap();
         // The person's own checkout: all of `.git`, whether it commits or not.
-        let g = sandbox_git(d.path(), false);
+        let g = sandbox_git(d.path(), None);
         assert_eq!(g, SandboxGit { writable: vec![], read_only: vec![common.clone()] });
-        assert_eq!(sandbox_git(d.path(), true), g, "agents commit only in a task's worktree");
+        assert_eq!(sandbox_git(d.path(), Some("main")), g, "agents commit only in a task's worktree");
 
-        // A task's worktree: objects, refs, logs and its own folder, but not
-        // the files in it that name the repository or hold its settings.
+        // A task's worktree: objects, its branch's folders in refs and logs,
+        // and its own folder, but not the files in it that name the
+        // repository or hold its settings, `objects/info`, or the other
+        // branches in its branch's folders.
         let wt_dir = tempfile::tempdir().unwrap();
         let wt = r.add_worktree(&wt_dir.path().join("t1"), "polyph/t1", "main").unwrap();
+        r.add_worktree(&wt_dir.path().join("t2"), "polyph/t2", "main").unwrap();
         let own = common.join("worktrees").join("t1");
-        let g = sandbox_git(wt.root(), true);
-        assert_eq!(g.writable, vec![common.join("objects"), common.join("refs"), common.join("logs"), own.clone()]);
-        let mut ro = vec![common.clone(), wt.root().join(".git")];
+        let (refs, logs) = (common.join("refs/heads/polyph"), common.join("logs/refs/heads/polyph"));
+        let g = sandbox_git(wt.root(), Some("polyph/t1"));
+        assert_eq!(g.writable, vec![common.join("objects"), refs.clone(), logs.clone(), own.clone()]);
+        let mut ro = vec![common.clone(), wt.root().join(".git"), common.join("objects/info")];
         ro.extend(["commondir", "gitdir", "config.worktree"].iter().map(|f| own.join(f)));
+        ro.extend([refs.join("t2"), logs.join("t2")]);
         assert_eq!(g.read_only, ro);
         assert!(own.join("config.worktree").is_file(), "created so the agent cannot");
+        // Never `refs/`, `logs/` or `refs/heads/` as a whole.
+        for p in [common.join("refs"), common.join("logs"), common.join("refs/heads"), common.join("logs/refs")] {
+            assert!(!g.writable.contains(&p), "{p:?} is writable");
+        }
+        // A branch right in refs/heads shares its folder with main: no commits.
+        r.git(&["branch", "flat", "main"]).unwrap();
+        assert!(sandbox_git(wt.root(), Some("flat")).writable.is_empty());
         // Checks in a worktree commit nothing.
-        assert_eq!(sandbox_git(wt.root(), false).read_only, vec![common.clone(), wt.root().join(".git")]);
-        assert!(sandbox_git(wt.root(), false).writable.is_empty());
-        assert_eq!(sandbox_git(tempfile::tempdir().unwrap().path(), true), SandboxGit::default());
+        assert_eq!(sandbox_git(wt.root(), None).read_only, vec![common.clone(), wt.root().join(".git")]);
+        assert!(sandbox_git(wt.root(), None).writable.is_empty());
+        assert_eq!(sandbox_git(tempfile::tempdir().unwrap().path(), Some("polyph/t1")), SandboxGit::default());
+    }
+
+    /// SEC-13: git appends to reflogs through links. A reflog, a ref or a
+    /// worktree's file replaced with a link stops every command that writes.
+    #[cfg(unix)]
+    #[test]
+    fn links_in_the_git_directory_stop_writes() {
+        let t = tempfile::tempdir().unwrap();
+        let outside = t.path().join("profile");
+        for planted in ["logs/HEAD", "logs/refs/heads/polyph/t1", "worktrees/t1/logs/HEAD", "refs/heads/polyph/x"] {
+            let (_d, r) = init();
+            let wt_dir = tempfile::tempdir().unwrap();
+            let wt = r.add_worktree(&wt_dir.path().join("t1"), "polyph/t1", "main").unwrap();
+            std::fs::write(&outside, "export PATH\n").unwrap();
+            let p = r.common_dir().unwrap().join(planted);
+            let _ = std::fs::remove_file(&p);
+            std::os::unix::fs::symlink(&outside, &p).unwrap();
+            std::fs::write(wt.root().join("new.rs"), "fn n() {}\n").unwrap();
+            let who = Signature::agent("A", "1");
+            let err = wt.commit_task("polyph/t1", "work", &who).unwrap_err().to_string();
+            assert!(err.contains(planted), "{planted}: {err}");
+            std::fs::write(r.root().join("lib.rs"), "fn a() { 9 }\n").unwrap();
+            let err = r.commit_all("person", &who).unwrap_err().to_string();
+            assert!(err.contains(planted), "{planted}: {err}");
+            let head = r.rev_parse("HEAD").unwrap();
+            assert!(r.advance_branch("polyph/t1", &head, &head).is_err(), "{planted}");
+            assert!(r.exclude("/x/").is_err(), "{planted}");
+            assert_eq!(std::fs::read_to_string(&outside).unwrap(), "export PATH\n", "{planted}");
+            // Reading still works.
+            assert!(r.rev_parse("HEAD").is_ok());
+        }
+        // A hard link to a file outside, in a reflog.
+        let (_d, r) = init();
+        std::fs::write(&outside, "export PATH\n").unwrap();
+        let log = r.common_dir().unwrap().join("logs/refs/heads/main");
+        std::fs::remove_file(&log).unwrap();
+        std::fs::hard_link(&outside, &log).unwrap();
+        std::fs::write(r.root().join("lib.rs"), "fn a() { 9 }\n").unwrap();
+        let err = r.commit_all("person", &Signature::agent("A", "1")).unwrap_err().to_string();
+        assert!(err.contains("logs/refs/heads/main"), "{err}");
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "export PATH\n");
+    }
+
+    /// SEC-13: `objects/info/alternates` makes git read another repository's
+    /// objects; the daemon creates none and refuses to run git with one.
+    #[test]
+    fn alternates_are_refused() {
+        let (o, other) = init();
+        std::fs::write(o.path().join("lib.rs"), "fn theirs() {}\n").unwrap();
+        other.commit_all("theirs", &Signature::agent("Bo", "1")).unwrap();
+        let (_d, r) = init();
+        let info = r.common_dir().unwrap().join("objects/info");
+        std::fs::create_dir_all(&info).unwrap();
+        let theirs = other.rev_parse("HEAD").unwrap();
+        assert!(r.show(&theirs, "lib.rs").is_none());
+        std::fs::write(info.join("alternates"), format!("{}\n", other.common_dir().unwrap().join("objects").display()))
+            .unwrap();
+        let err = r.rev_parse("HEAD").unwrap_err().to_string();
+        assert!(err.contains("alternates"), "{err}");
+        assert!(r.show(&theirs, "lib.rs").is_none(), "read another repository's objects");
+        assert!(r.commit_all("x", &Signature::agent("A", "1")).is_err());
+    }
+
+    /// SEC-13: the daemon commits a task's work on the task's branch only,
+    /// whatever the worktree's HEAD (which the agent writes) names.
+    #[test]
+    fn task_commits_go_to_the_task_branch_only() {
+        let (_d, r) = init();
+        let wt_dir = tempfile::tempdir().unwrap();
+        let wt = r.add_worktree(&wt_dir.path().join("t1"), "polyph/t1", "main").unwrap();
+        let main = r.rev_parse("main").unwrap();
+        std::fs::write(wt.root().join("new.rs"), "fn n() {}\n").unwrap();
+        let who = Signature::agent("A", "1");
+        let c = wt.commit_task("polyph/t1", "Add n\n", &who).unwrap().unwrap();
+        assert_eq!(r.rev_parse("polyph/t1").unwrap(), c);
+        assert_eq!(r.log_subjects("main", "polyph/t1").unwrap(), ["Add n"]);
+        assert!(wt.dirty_files().unwrap().is_empty());
+        assert_eq!(wt.commit_task("polyph/t1", "again", &who).unwrap(), None);
+        r.check_branch_logged("polyph/t1").unwrap();
+
+        // The agent points HEAD at main and leaves work behind.
+        let head = r.common_dir().unwrap().join("worktrees/t1/HEAD");
+        std::fs::write(&head, "ref: refs/heads/main\n").unwrap();
+        std::fs::write(wt.root().join("evil.rs"), "fn e() {}\n").unwrap();
+        let err = wt.commit_task("polyph/t1", "x", &who).unwrap_err().to_string();
+        assert!(err.contains("HEAD is refs/heads/main"), "{err}");
+        assert_eq!(r.rev_parse("main").unwrap(), main, "main moved");
+    }
+
+    /// SEC-13: a branch written without git (as an agent with `refs/`
+    /// writable would) is not merged into, nor moved.
+    #[test]
+    fn a_branch_changed_without_git_is_not_merged_into() {
+        let (d, r) = init();
+        r.check_branch_logged("main").unwrap();
+        let first = r.rev_parse("main").unwrap();
+        std::fs::write(d.path().join("lib.rs"), "fn a() { 1 }\n").unwrap();
+        let second = r.commit_all("person", &Signature::agent("Ann", "0")).unwrap().unwrap();
+        r.check_branch_logged("main").unwrap();
+        // An "agent" makes a commit and writes main's ref file directly.
+        let evil = r
+            .git_env(&["commit-tree", &format!("{second}^{{tree}}"), "-p", &second, "-m", "evil"], &[], None)
+            .unwrap()
+            .trim()
+            .to_string();
+        let common = r.common_dir().unwrap();
+        std::fs::write(common.join("refs/heads/main"), format!("{evil}\n")).unwrap();
+        let err = r.check_branch_logged("main").unwrap_err().to_string();
+        assert!(err.contains("refusing to merge into main") && err.contains("reflog"), "{err}");
+        assert!(r.advance_branch("main", &first, &evil).is_err());
+        // Moved back by git: fine again.
+        r.git(&["update-ref", "refs/heads/main", &second]).unwrap();
+        r.check_branch_logged("main").unwrap();
     }
 }
