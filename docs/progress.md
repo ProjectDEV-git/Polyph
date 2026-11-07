@@ -164,6 +164,11 @@ Reviews (13:00-13:20 UTC):
 - #14 architect: earlier findings closed; new blocker (untrusted `[prices]`
   disables dollar budgets). Opus rework dispatched.
 - KAO-95 filed for Kao (wire-change items from the #15 audit).
+- #15 rework 241bb04 and #14 rework f1a8ac7 verified by the lead (all
+  checks pass; #14 split one m4_merge test, every assertion kept). #15 is
+  with the security auditor; one architect reviewer has #14 and #15.
+  KAO-96 filed (ACP agents record no model, so dollar budgets never fire).
+  Usage at 13:20 UTC: 28%.
 
 ### Next
 
