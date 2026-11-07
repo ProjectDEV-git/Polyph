@@ -5,6 +5,20 @@ GitHub release page.
 
 ## Unreleased
 
+- **Upgrading from 0.1.2: run `polyph trust` once.** The security sections
+  of `polyph.toml` (`[sandbox]`, `[agents.*]`, `checks`, `[policy] preset`,
+  `[merge] approval`, `run_checks`, `via` and `remote`, `[prices]`) now apply only after you
+  run `polyph trust` in the repository, and again after every edit to the
+  file. Until then agents use the default sandbox and built-in definitions,
+  merges wait for approval, and a merge with checks fails before anyone is
+  asked to approve it and asks you to trust the file. `polyph trust` shows these sections and asks first;
+  `--yes` skips the question.
+- Dollar budgets stop the agent until `polyph trust` is run when the file's
+  `[prices]` were ignored, since every turn would otherwise count as $0.
+- `[merge] via` and `remote` also need `polyph trust`. Until then tasks merge
+  locally, and the task's merge entry says the push and pull request settings
+  were ignored.
+
 - **`polyph feedback`.** Opens a prefilled GitHub issue with your Polyph
   version, OS, architecture, Linux distro, surface and whether the daemon
   runs. It leaves out room names, paths, chat, code, user and host names and

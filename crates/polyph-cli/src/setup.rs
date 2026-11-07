@@ -12,7 +12,7 @@ use crate::client::{self as daemon_client, Api};
 use crate::{Ctx, call};
 use polyph_daemon::clients::{self, CLIENTS, Change, Client, Env, Transport};
 
-fn confirm(question: &str) -> anyhow::Result<bool> {
+pub(crate) fn confirm(question: &str) -> anyhow::Result<bool> {
     use std::io::Write;
     eprint!("{question} ");
     std::io::stderr().flush()?;

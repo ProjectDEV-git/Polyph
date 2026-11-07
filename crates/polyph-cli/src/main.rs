@@ -226,6 +226,14 @@ enum Cmd {
         no_connect: bool,
     },
     Doctor,
+    Trust {
+        /// Stop trusting this repository's polyph.toml.
+        #[arg(long)]
+        revoke: bool,
+        /// Trust without asking, after reviewing the file (for scripts).
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
     Hook {
         #[command(subcommand)]
         cmd: HookCmd,
@@ -606,6 +614,70 @@ fn localize(mut cmd: clap::Command, l: &Localizer, path: &str) -> clap::Command 
     cmd
 }
 
+/// `polyph trust`: records (or with `--revoke` removes) this person's trust in
+/// the current content of the repository's polyph.toml, kept in Polyph's
+/// data directory. Uses the main checkout, as the daemon does. Shows the
+/// settings it is about to trust and asks first, unless `yes`.
+fn trust(ctx: &Ctx, revoke: bool, yes: bool) -> anyhow::Result<()> {
+    use polyph_agents::project::{ProjectFile, TrustStore};
+    let l = &ctx.l;
+    let cwd = std::env::current_dir()?;
+    let root = polyph_git::Repo::open(&cwd).ok().and_then(|r| r.main_root().ok()).unwrap_or(cwd);
+    let store = TrustStore::at(ctx.paths.trusted_projects());
+    let file = ProjectFile::find(&root)?;
+    let shown = |p: &std::path::Path| p.display().to_string();
+    if revoke {
+        let dir = match &file {
+            Some(f) => f.dir.clone(),
+            None => polyph_git::canonical(&root)?,
+        };
+        let had = store.revoke(&dir)?;
+        if ctx.json {
+            ctx.print_json(&json!({ "dir": dir, "revoked": had }));
+        } else {
+            ctx.out(tr!(l, if had { "trust-revoked" } else { "trust-revoke-none" }, dir = shown(&dir)));
+        }
+        return Ok(());
+    }
+    let Some(f) = file else {
+        anyhow::bail!(tr!(l, "trust-no-file", dir = shown(&root)));
+    };
+    let already = store.is_trusted(&f.dir, &f.sha256);
+    if !already {
+        let sections = f.parse()?.security_toml();
+        if !ctx.json {
+            if sections.is_empty() {
+                ctx.out(tr!(l, "trust-review-none", file = shown(&f.path)));
+            } else {
+                ctx.out(tr!(l, "trust-review", file = shown(&f.path)));
+                ctx.out("");
+                for s in sections.lines() {
+                    ctx.out(format!("    {s}"));
+                }
+                ctx.out("");
+            }
+        }
+        if !yes {
+            use std::io::IsTerminal;
+            if ctx.json || !std::io::stdin().is_terminal() {
+                anyhow::bail!(l.t("trust-needs-yes"));
+            }
+            if !setup::confirm(&l.t("trust-confirm"))? {
+                ctx.out(l.t("trust-cancelled"));
+                return Ok(());
+            }
+        }
+        store.trust(&f)?;
+    }
+    if ctx.json {
+        ctx.print_json(&json!({ "file": f.path, "sha256": f.sha256, "trusted": true, "already": already, "settings": f.parse()?.security_toml() }));
+    } else {
+        ctx.out(tr!(l, if already { "trust-already" } else { "trust-saved" }, file = shown(&f.path)));
+        ctx.out(tr!(l, "trust-hash", hash = f.sha256.as_str()));
+    }
+    Ok(())
+}
+
 struct Ctx {
     l: Localizer,
     json: bool,
@@ -707,14 +779,32 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let code = rt.block_on(async {
-        match run(&ctx, cli.cmd).await {
-            Ok(()) => 0,
-            Err(e) => {
-                eprintln!("{e}");
-                1
-            }
-        }
+    // `block_on` polls `run` on the calling thread, and in a debug build the
+    // poll frame of `run` (one state machine for every subcommand) is larger
+    // than the 1 MiB main-thread stack on Windows: `polyph trust` overflowed
+    // it. Poll on a thread with a stack sized for it; boxing the future would
+    // not shrink that frame.
+    let code = std::thread::scope(|s| {
+        std::thread::Builder::new()
+            .name("main-run".into())
+            .stack_size(16 << 20)
+            .spawn_scoped(s, || {
+                rt.block_on(async {
+                    match run(&ctx, cli.cmd).await {
+                        Ok(()) => 0,
+                        Err(e) => {
+                            eprintln!("{e}");
+                            1
+                        }
+                    }
+                })
+            })
+            .map_err(|e| e.to_string())
+            .and_then(|h| h.join().map_err(|_| "the command panicked".to_string()))
+    });
+    let code = code.unwrap_or_else(|e| {
+        eprintln!("{e}");
+        1
     });
     std::process::exit(code);
 }
@@ -789,6 +879,7 @@ async fn run(ctx: &Ctx, cmd: Option<Cmd>) -> anyhow::Result<()> {
         Cmd::Disconnect { clients, yes } => setup::disconnect(ctx, &clients, yes).await,
         Cmd::Start { name, yes, no_connect } => setup::start(ctx, name, yes, no_connect).await,
         Cmd::Doctor => setup::doctor(ctx).await,
+        Cmd::Trust { revoke, yes } => trust(ctx, revoke, yes),
         Cmd::Hook { cmd: HookCmd::PreEdit { client } } => {
             let code = hook::pre_edit(ctx, &client).await;
             if code != 0 {
@@ -1427,6 +1518,7 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
         | Cmd::Disconnect { .. }
         | Cmd::Start { .. }
         | Cmd::Doctor
+        | Cmd::Trust { .. }
         | Cmd::Feedback { .. }
         | Cmd::Hook { .. }
         | Cmd::Brief { .. }
@@ -1552,6 +1644,20 @@ async fn agent_cmd(ctx: &Ctx, api: &mut Api, cmd: AgentCmd) -> anyhow::Result<()
                     label = v["label"].as_str().unwrap_or_default(),
                     sandbox = v["sandbox"].as_str().unwrap_or_default()
                 ));
+                if let Some(u) = v["untrusted"].as_object() {
+                    let ignored: Vec<&str> =
+                        u["ignored"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                    eprintln!(
+                        "{}",
+                        tr!(
+                            l,
+                            "agent-untrusted-project",
+                            ignored = ignored.join(", "),
+                            file = u["file"].as_str().unwrap_or_default(),
+                            dir = u["dir"].as_str().unwrap_or_default()
+                        )
+                    );
+                }
             }
         }
         AgentCmd::List { room } => {

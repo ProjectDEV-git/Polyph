@@ -112,6 +112,15 @@ network goes through the daemon's allowlisting proxy; anything else becomes an
 approval request. `polyph sandbox test` reports which protections work on a
 given machine. See `docs/sandbox.md` (M3).
 
+A repository's `polyph.toml` cannot weaken this on its own. Its `[sandbox]`
+(mode, image, allow_hosts), `[agents.*]`, `checks`, `[policy] preset`,
+`[merge] approval`, `run_checks`, `via`, `remote` and `[prices]` sections only
+apply once a person on that device ran `polyph trust` for that exact content (a
+per-user record of folder and SHA-256 in Polyph's data directory); the file is
+read from the person's checkout, never the agent's worktree, and any edit voids
+the record.
+See "Trusting a project file" in `docs/sandbox.md`.
+
 ### A lost phone
 
 The phone app keeps its device key and room state in the browser's IndexedDB,

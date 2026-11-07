@@ -28,7 +28,7 @@ Summary:
 | SEC-9 | medium | Relay | Unbounded room entries and chain verification per frame allow memory and CPU exhaustion |
 | SEC-10 | low | Relay | Relay authentication is not bound to the relay |
 | SEC-11 | low | Relay | First `X-Forwarded-For` entry is trusted from loopback |
-| SEC-12 | critical | Sandbox | `polyph.toml` in the worktree turns the sandbox off and defines agent commands |
+| SEC-12 | low | Sandbox | `polyph.toml` in the worktree turns the sandbox off and defines agent commands (fixed in PR #14, with residuals) |
 | SEC-13 | critical | Sandbox | Agents can write git configuration that the daemon then executes unsandboxed |
 | SEC-14 | critical | Sandbox | Host IPC (D-Bus session bus, Unix sockets, LaunchServices) is reachable from the sandbox |
 | SEC-15 | high | Sandbox (Landlock) | Landlock mode hides nothing and silently drops its network rule on older kernels |
@@ -326,7 +326,8 @@ Summary:
 
 ## SEC-12: `polyph.toml` in the worktree turns the sandbox off and defines agent commands
 
-- Severity: critical
+- Severity: low
+- Status: Fixed in PR #14, with residuals
 - Area: Sandbox
 - Evidence:
   - `crates/polyph-daemon/src/agents.rs:349-360`: `[sandbox] mode = "off"`
@@ -354,6 +355,20 @@ Summary:
   (similar to `direnv allow`). Read the project file from the base commit,
   not from the agent's worktree, and mount it read-only inside the sandbox.
 - Wire change: no.
+- Residuals:
+  - Medium (fix with SEC-13): an agent without a task worktree, running in the
+    person's checkout, can replace `.git` with a `gitdir:` file pointing at
+    another repository, so the next agent started there reads that other
+    project's trusted settings (`crates/polyph-daemon/src/agents.rs:359`,
+    `crates/polyph-git/src/lib.rs:399`).
+  - Low: `github.import` (`crates/polyph-daemon/src/github.rs:145`) reads the
+    project file without trust.
+  - Low: `[github] repo` is applied without trust and is not shown in the
+    `polyph trust` review, though `open_pr` sends pull requests there.
+  - Low: `[merge] into`, `[claims] watch` and `[router] tiers` still apply from
+    an untrusted file; none reaches the sandbox.
+  - Info: the trust record's folder key uses a lossy string conversion for
+    non-UTF-8 paths.
 
 ## SEC-13: Agents can write git configuration that the daemon executes unsandboxed
 
