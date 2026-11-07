@@ -52,6 +52,10 @@ impl Paths {
     pub fn log(&self) -> PathBuf {
         self.home.join("daemon.log")
     }
+    /// Project files this person trusted with `polyph trust`.
+    pub fn trusted_projects(&self) -> PathBuf {
+        self.home.join("trusted-projects.json")
+    }
 }
 
 #[cfg(unix)]

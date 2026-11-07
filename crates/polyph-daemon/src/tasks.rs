@@ -269,8 +269,8 @@ async fn process(
     agent: &AgentRef,
 ) -> Result<(), ApiError> {
     let shared = daemon.shared.clone();
-    // The target branch's own polyph.toml, which people control.
-    let project = ProjectConfig::load(repo_root).unwrap_or_default();
+    // The target branch's own polyph.toml, which people control and trust.
+    let project = agents::trusted_project(&shared, repo_root).unwrap_or_default().config;
     let card = match &e.card {
         Some(c) => card(&mut *rt.ctx.lock().await, c),
         None => None,

@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use polyph_agents::convert::Converter;
 use polyph_agents::policy::{self, Action, ClaimState, Preset, Verdict};
-use polyph_agents::project::ProjectConfig;
+use polyph_agents::project::{Loaded, ProjectConfig, TrustStore};
 use polyph_agents::registry::{self, AgentConfig, AgentDef};
 use polyph_agents::supervisor::{AgentProcess, Answer, CommandWrapper, Output, Request};
 use polyph_agents::usage::{Budget, BudgetState, Ledger};
@@ -333,6 +333,33 @@ async fn pump(
     }
 }
 
+/// The project file that decides how agents and checks run. It is read from
+/// the person's main checkout, never a task worktree an agent can write, and
+/// its security-relevant sections only apply once `polyph trust` recorded this
+/// exact content; otherwise they are dropped and the person is told.
+pub fn trusted_project(shared: &Shared, dir: &Path) -> anyhow::Result<Loaded> {
+    let root = polyph_git::Repo::open(dir).ok().and_then(|r| r.main_root().ok()).unwrap_or_else(|| dir.to_path_buf());
+    let loaded = ProjectConfig::load_trusted(&root, &TrustStore::at(shared.paths.trusted_projects()))?;
+    if let Some(u) = untrusted_json(&loaded) {
+        warn!("{}", u["message"].as_str().unwrap_or_default());
+        shared.emit(crate::events::ApiEvent::global("project_untrusted", u));
+    }
+    Ok(loaded)
+}
+
+/// What an untrusted project file had ignored, for the person to act on.
+fn untrusted_json(loaded: &Loaded) -> Option<serde_json::Value> {
+    let file = loaded.file.as_ref().filter(|_| !loaded.ignored.is_empty())?;
+    let dir = file.parent().unwrap_or(file);
+    let message = format!(
+        "Ignored {} in {}: this file is not trusted on this device, so agents run with the default sandbox and built-in agent definitions. Review the file, then run `polyph trust` in {} to apply it.",
+        loaded.ignored.join(", "),
+        file.display(),
+        dir.display()
+    );
+    Some(json!({ "file": file, "dir": dir, "ignored": loaded.ignored, "message": message }))
+}
+
 pub fn custom_agents(shared: &Shared, project: &ProjectConfig) -> BTreeMap<String, AgentConfig> {
     let mut m = shared.opts.extra_agents.clone();
     m.extend(project.agents.clone());
@@ -378,8 +405,10 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
         }
         _ => None,
     };
+    // Settings come from the person's checkout, not the agent's worktree.
+    let loaded = trusted_project(&shared, task_wt.as_ref().map(|w| w.repo.as_path()).unwrap_or(&cwd))?;
+    let project = loaded.config.clone();
     let worktree = task_wt.as_ref().map(|w| w.path.clone()).unwrap_or(cwd);
-    let project = ProjectConfig::load(&worktree)?;
     let defs = registry::all(&custom_agents(&shared, &project));
     let def = find_def(&defs, &p.kind)?;
     let preset: Preset = match &p.preset {
@@ -556,6 +585,7 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
         "preset": preset,
         "worktree": task_wt.as_ref().map(|w| w.path.clone()),
         "branch": task_wt.as_ref().map(|w| w.branch.clone()),
+        "untrusted": untrusted_json(&loaded),
     }))
 }
 
@@ -712,7 +742,7 @@ pub async fn stop(shared: &Shared, agents: &Agents, rt: &RoomRuntime, id: Object
 }
 
 pub fn doctor(shared: &Shared, cwd: &Path) -> ApiResult {
-    let project = ProjectConfig::load(cwd).unwrap_or_default();
+    let project = trusted_project(shared, cwd).unwrap_or_default().config;
     let defs = registry::all(&custom_agents(shared, &project));
     let items = registry::doctor(&defs);
     let sandbox = polyph_sandbox::detect(&shared.opts.sandbox_helper);
