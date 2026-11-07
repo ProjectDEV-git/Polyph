@@ -779,14 +779,32 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let code = rt.block_on(async {
-        match run(&ctx, cli.cmd).await {
-            Ok(()) => 0,
-            Err(e) => {
-                eprintln!("{e}");
-                1
-            }
-        }
+    // `block_on` polls `run` on the calling thread, and in a debug build the
+    // poll frame of `run` (one state machine for every subcommand) is larger
+    // than the 1 MiB main-thread stack on Windows: `polyph trust` overflowed
+    // it. Poll on a thread with a stack sized for it; boxing the future would
+    // not shrink that frame.
+    let code = std::thread::scope(|s| {
+        std::thread::Builder::new()
+            .name("main-run".into())
+            .stack_size(16 << 20)
+            .spawn_scoped(s, || {
+                rt.block_on(async {
+                    match run(&ctx, cli.cmd).await {
+                        Ok(()) => 0,
+                        Err(e) => {
+                            eprintln!("{e}");
+                            1
+                        }
+                    }
+                })
+            })
+            .map_err(|e| e.to_string())
+            .and_then(|h| h.join().map_err(|_| "the command panicked".to_string()))
+    });
+    let code = code.unwrap_or_else(|e| {
+        eprintln!("{e}");
+        1
     });
     std::process::exit(code);
 }

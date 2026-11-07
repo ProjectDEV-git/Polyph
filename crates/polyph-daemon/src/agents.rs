@@ -420,7 +420,7 @@ fn check_data_dir(
     // A path that cannot be resolved cannot be compared: refuse rather than
     // compare the raw path, which a symlink could make look harmless.
     let canon = |p: &Path| {
-        std::fs::canonicalize(p).map_err(|e| {
+        polyph_git::canonical(p).map_err(|e| {
             ApiError::BadRequest(l.t_args(
                 "agent-path-unresolved",
                 &[("path", FluentValue::from(p.display().to_string())), ("error", FluentValue::from(e.to_string()))],

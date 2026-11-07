@@ -294,7 +294,7 @@ impl ProjectFile {
                 let bytes = std::fs::read(&p)?;
                 let sha256 = Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect();
                 let text = String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("{} is not UTF-8", p.display()))?;
-                let dir = std::fs::canonicalize(cur)?;
+                let dir = polyph_git::canonical(cur)?;
                 return Ok(Some(Self { path: dir.join("polyph.toml"), dir, sha256, text }));
             }
             d = cur.parent();

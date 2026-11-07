@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 polyph-proto = { workspace = true }
 polyph-sandbox = { workspace = true }
+polyph-git = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
