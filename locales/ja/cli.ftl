@@ -142,6 +142,14 @@ help-budget-set = ルームまたはメンバーの予算を設定します。
 
 agent-started = { $label } を起動しました（サンドボックス: { $sandbox }）。
 agent-stopped = 停止しました。
+agent-untrusted-project = { $file } の { $ignored } を無視しました。このファイルはこのデバイスで信頼されていないため、エージェントは既定のサンドボックスと組み込みのエージェント定義で動作します。ファイルを確認してから { $dir } で `polyph trust` を実行すると適用されます。
+help-trust = このリポジトリの polyph.toml をこのデバイスで信頼し、サンドボックス・エージェント・チェックの設定を適用します。
+trust-saved = このデバイスで { $file } を信頼しました。サンドボックス、エージェント、チェック、ポリシープリセットの設定が適用されます。ファイルを編集したら、もう一度 `polyph trust` を実行してください。
+trust-already = { $file } はこのデバイスですでに信頼されています。
+trust-hash = SHA-256: { $hash }
+trust-no-file = { $dir } とその親フォルダーに polyph.toml がありません。
+trust-revoked = { $dir } の polyph.toml の信頼を取り消しました。もう一度 `polyph trust` を実行するまで、サンドボックス、エージェント、チェック、ポリシープリセットの設定は無視されます。
+trust-revoke-none = 取り消すものはありません。{ $dir } にこのデバイスで信頼された polyph.toml はありません。
 agents-empty = このルームで動いているエージェントはありません。
 agent-line = { $label }  { $state }
 agent-prompted = { $label } が完了しました（{ $reason }）。

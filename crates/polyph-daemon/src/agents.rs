@@ -338,13 +338,17 @@ async fn pump(
 /// its security-relevant sections only apply once `polyph trust` recorded this
 /// exact content; otherwise they are dropped and the person is told.
 pub fn trusted_project(shared: &Shared, dir: &Path) -> anyhow::Result<Loaded> {
-    let root = polyph_git::Repo::open(dir).ok().and_then(|r| r.main_root().ok()).unwrap_or_else(|| dir.to_path_buf());
-    let loaded = ProjectConfig::load_trusted(&root, &TrustStore::at(shared.paths.trusted_projects()))?;
+    let loaded = load_from_main_checkout(&TrustStore::at(shared.paths.trusted_projects()), dir)?;
     if let Some(u) = untrusted_json(&loaded) {
         warn!("{}", u["message"].as_str().unwrap_or_default());
         shared.emit(crate::events::ApiEvent::global("project_untrusted", u));
     }
     Ok(loaded)
+}
+
+fn load_from_main_checkout(store: &TrustStore, dir: &Path) -> anyhow::Result<Loaded> {
+    let root = polyph_git::Repo::open(dir).ok().and_then(|r| r.main_root().ok()).unwrap_or_else(|| dir.to_path_buf());
+    ProjectConfig::load_trusted(&root, store)
 }
 
 /// What an untrusted project file had ignored, for the person to act on.
@@ -747,4 +751,47 @@ pub fn doctor(shared: &Shared, cwd: &Path) -> ApiResult {
     let items = registry::doctor(&defs);
     let sandbox = polyph_sandbox::detect(&shared.opts.sandbox_helper);
     Ok(json!({ "agents": items, "sandbox": sandbox }))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    /// An agent's task worktree can carry its own polyph.toml; the daemon
+    /// reads the person's checkout instead, and only trusted content counts.
+    #[test]
+    fn project_comes_from_the_main_checkout_and_needs_trust() {
+        let t = tempfile::tempdir().unwrap();
+        let main = t.path().join("main");
+        std::fs::create_dir_all(&main).unwrap();
+        let git = |args: &[&str]| {
+            assert!(std::process::Command::new("git").args(args).current_dir(&main).status().unwrap().success())
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "core.autocrlf", "false"]);
+        std::fs::write(main.join("polyph.toml"), "[sandbox]\nmode = \"off\"\n").unwrap();
+        let repo = polyph_git::Repo::open(&main).unwrap();
+        repo.commit_all("initial", &polyph_git::Signature::agent("Ann/test", "0")).unwrap();
+        let wt = t.path().join("task");
+        repo.add_worktree(&wt, "task", "main").unwrap();
+        std::fs::write(wt.join("polyph.toml"), "[agents.claude]\ncommand = \"sh\"\n[sandbox]\nmode = \"off\"\n")
+            .unwrap();
+        let store = TrustStore::at(t.path().join("home/trusted-projects.json"));
+
+        let main_file = polyph_git::canonical(&main).unwrap().join("polyph.toml");
+        let l = load_from_main_checkout(&store, &wt).unwrap();
+        assert_eq!(l.file.as_deref(), Some(main_file.as_path()));
+        assert_eq!(l.ignored, vec!["sandbox"]);
+        assert_eq!(l.config.sandbox.mode, None);
+        let u = untrusted_json(&l).unwrap();
+        assert!(u["message"].as_str().unwrap().contains("polyph trust"));
+
+        store.trust(&polyph_agents::project::ProjectFile::find(&main).unwrap().unwrap()).unwrap();
+        let l = load_from_main_checkout(&store, &wt).unwrap();
+        assert!(l.ignored.is_empty() && untrusted_json(&l).is_none());
+        assert_eq!(l.config.sandbox.mode.as_deref(), Some("off"));
+        // The worktree's own agent definition never applies.
+        assert!(l.config.agents.is_empty());
+    }
 }

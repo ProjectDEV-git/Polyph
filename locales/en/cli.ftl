@@ -163,6 +163,14 @@ help-budget-set = Set a budget for the room or one member.
 
 agent-started = Started { $label } (sandbox: { $sandbox }).
 agent-stopped = Stopped.
+agent-untrusted-project = Ignored { $ignored } in { $file }: this file is not trusted on this device, so the agent runs with the default sandbox and built-in agent definitions. Review the file, then run `polyph trust` in { $dir } to apply it.
+help-trust = Trust this repository's polyph.toml on this device, so its sandbox, agent and check settings apply.
+trust-saved = Trusted { $file } on this device. Its sandbox, agent, check and policy preset settings now apply. After any edit to the file, run `polyph trust` again.
+trust-already = { $file } is already trusted on this device.
+trust-hash = SHA-256: { $hash }
+trust-no-file = No polyph.toml in { $dir } or its parent folders.
+trust-revoked = Stopped trusting the polyph.toml in { $dir }. Its sandbox, agent, check and policy preset settings are ignored until you run `polyph trust` again.
+trust-revoke-none = Nothing to revoke: no polyph.toml in { $dir } is trusted on this device.
 agents-empty = No agents are running in this room.
 agent-line = { $label }  { $state }
 agent-prompted = { $label } finished ({ $reason }).

@@ -142,6 +142,14 @@ help-budget-set = 为房间或某位成员设置预算。
 
 agent-started = 已启动 { $label }（沙箱：{ $sandbox }）。
 agent-stopped = 已停止。
+agent-untrusted-project = 已忽略 { $file } 中的 { $ignored }：此文件在这台设备上未被信任，因此智能体使用默认沙箱和内置的智能体定义运行。请检查该文件，然后在 { $dir } 中运行 `polyph trust` 以应用它。
+help-trust = 在这台设备上信任此仓库的 polyph.toml，使其中的沙箱、智能体和检查设置生效。
+trust-saved = 已在这台设备上信任 { $file }。其中的沙箱、智能体、检查和策略预设设置现已生效。修改该文件后，请再次运行 `polyph trust`。
+trust-already = { $file } 已在这台设备上受信任。
+trust-hash = SHA-256：{ $hash }
+trust-no-file = { $dir } 及其上级文件夹中没有 polyph.toml。
+trust-revoked = 已不再信任 { $dir } 中的 polyph.toml。在你再次运行 `polyph trust` 之前，其中的沙箱、智能体、检查和策略预设设置都会被忽略。
+trust-revoke-none = 无需撤销：这台设备上没有信任 { $dir } 中的 polyph.toml。
 agents-empty = 此房间没有正在运行的智能体。
 agent-line = { $label }  { $state }
 agent-prompted = { $label } 已完成（{ $reason }）。

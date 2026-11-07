@@ -226,6 +226,11 @@ enum Cmd {
         no_connect: bool,
     },
     Doctor,
+    Trust {
+        /// Stop trusting this repository's polyph.toml.
+        #[arg(long)]
+        revoke: bool,
+    },
     Hook {
         #[command(subcommand)]
         cmd: HookCmd,
@@ -606,6 +611,47 @@ fn localize(mut cmd: clap::Command, l: &Localizer, path: &str) -> clap::Command 
     cmd
 }
 
+/// `polyph trust`: records (or with `--revoke` removes) this person's trust in
+/// the current content of the repository's polyph.toml, kept in Polyph's
+/// data directory. Uses the main checkout, as the daemon does.
+fn trust(ctx: &Ctx, revoke: bool) -> anyhow::Result<()> {
+    use polyph_agents::project::{ProjectFile, TrustStore};
+    let l = &ctx.l;
+    let cwd = std::env::current_dir()?;
+    let root = polyph_git::Repo::open(&cwd).ok().and_then(|r| r.main_root().ok()).unwrap_or(cwd);
+    let store = TrustStore::at(ctx.paths.trusted_projects());
+    let file = ProjectFile::find(&root)?;
+    let shown = |p: &std::path::Path| p.display().to_string();
+    if revoke {
+        let dir = match &file {
+            Some(f) => f.dir.clone(),
+            None => polyph_git::canonical(&root)?,
+        };
+        let had = store.revoke(&dir)?;
+        if ctx.json {
+            ctx.print_json(&json!({ "dir": dir, "revoked": had }));
+        } else {
+            ctx.out(tr!(l, if had { "trust-revoked" } else { "trust-revoke-none" }, dir = shown(&dir)));
+        }
+        return Ok(());
+    }
+    let Some(f) = file else {
+        anyhow::bail!(tr!(l, "trust-no-file", dir = shown(&root)));
+    };
+    let already = store.is_trusted(&f.dir, &f.sha256);
+    if !already {
+        f.parse()?;
+        store.trust(&f)?;
+    }
+    if ctx.json {
+        ctx.print_json(&json!({ "file": f.path, "sha256": f.sha256, "trusted": true, "already": already }));
+    } else {
+        ctx.out(tr!(l, if already { "trust-already" } else { "trust-saved" }, file = shown(&f.path)));
+        ctx.out(tr!(l, "trust-hash", hash = f.sha256.as_str()));
+    }
+    Ok(())
+}
+
 struct Ctx {
     l: Localizer,
     json: bool,
@@ -789,6 +835,7 @@ async fn run(ctx: &Ctx, cmd: Option<Cmd>) -> anyhow::Result<()> {
         Cmd::Disconnect { clients, yes } => setup::disconnect(ctx, &clients, yes).await,
         Cmd::Start { name, yes, no_connect } => setup::start(ctx, name, yes, no_connect).await,
         Cmd::Doctor => setup::doctor(ctx).await,
+        Cmd::Trust { revoke } => trust(ctx, revoke),
         Cmd::Hook { cmd: HookCmd::PreEdit { client } } => {
             let code = hook::pre_edit(ctx, &client).await;
             if code != 0 {
@@ -1427,6 +1474,7 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
         | Cmd::Disconnect { .. }
         | Cmd::Start { .. }
         | Cmd::Doctor
+        | Cmd::Trust { .. }
         | Cmd::Feedback { .. }
         | Cmd::Hook { .. }
         | Cmd::Brief { .. }
@@ -1552,6 +1600,20 @@ async fn agent_cmd(ctx: &Ctx, api: &mut Api, cmd: AgentCmd) -> anyhow::Result<()
                     label = v["label"].as_str().unwrap_or_default(),
                     sandbox = v["sandbox"].as_str().unwrap_or_default()
                 ));
+                if let Some(u) = v["untrusted"].as_object() {
+                    let ignored: Vec<&str> =
+                        u["ignored"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                    eprintln!(
+                        "{}",
+                        tr!(
+                            l,
+                            "agent-untrusted-project",
+                            ignored = ignored.join(", "),
+                            file = u["file"].as_str().unwrap_or_default(),
+                            dir = u["dir"].as_str().unwrap_or_default()
+                        )
+                    );
+                }
             }
         }
         AgentCmd::List { room } => {
