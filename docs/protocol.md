@@ -90,7 +90,13 @@ whose chain they have not verified.
 
 Clients keep one chain per device and replace it only with a chain whose last
 certificate has a later `issued_at` (or the same `issued_at` and no higher
-role), whether it arrives in `Hello`, `RoleChanged` or a snapshot. A role
+role), names the same member id and encryption key (`kx`), and was issued
+by a device whose role is at least the role held, whether it arrives in
+`Hello`, `RoleChanged` or a snapshot (this device's own chain included). An
+Owner's certificate is replaced only by a certificate the room owner's device
+issued, and the room owner's device (named in the genesis) is certified only
+by its own first certificate: a chain with another certificate for it is
+refused. A role
 change re-issues the certificate of every device of the member, with an
 `issued_at` later than the one it replaces, so a demoted device cannot restore
 its old role by presenting its previous chain.
@@ -103,7 +109,12 @@ writes on the new link. A device already held keeps the chain held for it.
 For the same reason a role change also re-issues, from the changer's own
 chain and keeping their role, every device whose chain runs through a
 device being re-issued, and a device whose own chain runs through the member
-being changed cannot change that member's role.
+being changed cannot change that member's role. After any replacement a
+client checks every chain it holds again and drops those now issued through
+a superseded certificate. On the first connect after loading a room, an Owner
+or Maintainer re-issues held devices whose chain runs through a superseded
+certificate and whose last certificate predates the supersession (rooms saved
+by 0.1.2, whose role changes re-issued only the member's own devices).
 
 ### 4.3 Roles
 
@@ -248,8 +259,12 @@ room, except in two cases:
 - The knocking device is already one of that member's devices and its knock
   carries the same encryption key (`kx`) as the certificate held for it.
 
-A knock that names an existing member id is never approved automatically,
-even with "Require approval to join" off.
+Clients also refuse a knock that names this device, the room owner's device,
+a device they hold or a removed device, unless it is that same device
+re-joining (same member id and same `kx`), and do not let a `MemberAdded`
+chain for a held device under another member id or key replace it. A
+knock that names an existing member id or device is never approved
+automatically, even with "Require approval to join" off.
 
 Both sides exchange confirmation tags and compare in constant time. The
 joiner sends its tag as soon as it has the host's SPAKE2 message. The host

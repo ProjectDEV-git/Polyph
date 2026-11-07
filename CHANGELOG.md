@@ -15,6 +15,13 @@ GitHub release page.
   from Viewers. A Viewer on Polyph 0.1.2 connected to an upgraded relay logs
   one harmless relay error each snapshot interval (5 minutes) until it
   updates.
+- **Pairing a phone or adding an agent host needs an Owner or Maintainer.**
+  Only those roles can approve the new device's join, so `phone.pair` and
+  `host.invite` now refuse up front for Members and Viewers.
+- **Rooms from 0.1.2.** On the first connect after updating, an Owner's or
+  Maintainer's daemon re-issues certificates for people let in by a
+  Maintainer whose role changed since, so devices that join later accept
+  them.
 
 ## 0.1.2
 

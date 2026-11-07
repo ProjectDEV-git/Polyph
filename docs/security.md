@@ -105,7 +105,13 @@ on the approving device for its own person (recorded on that device only;
 the approval says a new device is joining as you), and a device already in
 the room re-joining with the same keys its certificate names. Such knocks are
 never approved automatically. Plain invite codes never let a joiner take an
-existing member id.
+existing member id. A Member, who cannot approve joins, is told it cannot
+pair a phone or add an agent host. A knock that names a device already in
+the room (or removed from it, or the owner's device) is refused unless it is
+that device re-joining with the same keys, so a joiner cannot take over a
+device id. A request does not prove that the joiner holds the device key it
+names, so a client that never saw that device can still accept a
+certificate an older client issued for it.
 
 ### A demoted Maintainer
 
@@ -114,8 +120,13 @@ after the one it replaces; clients keep the newest certificate per device.
 A chain whose issuing link is older than the certificate a client holds for
 that issuer is refused, and no device may certify itself, so a demoted
 Maintainer cannot restore its role or certify a new device from its old
-chain. A client that has not yet seen the demotion, directly or in a
-snapshot, still accepts the old chain until it does.
+chain. A new certificate replaces the one held only when it keeps the
+device's member id and encryption key and its issuer ranks at least as high
+as the role held; only the room owner's device re-issues an Owner, so a
+Maintainer cannot demote the Owner. After a replacement, clients drop chains
+issued through the superseded certificate. A client that has not yet seen
+the demotion, directly or in a snapshot, still accepts the old chain until
+it does.
 
 ### A network attacker between a member and the relay
 
