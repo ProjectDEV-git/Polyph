@@ -382,18 +382,34 @@ Summary:
   before running, and set `GIT_CONFIG_NOSYSTEM`-style protections where
   possible.
 - Wire change: no.
-- Status: partly fixed (KAO-74). Under bubblewrap and Seatbelt the
-  checkout's `.git/config`, `hooks/`, `info/`, a linked worktree's `.git`
-  file and `config.worktree` are read-only and `.git` cannot be renamed
-  (bubblewrap tested by `crates/polyph-sandbox/tests/sandbox.rs`; Seatbelt
-  by a profile unit test only). Task worktrees' `.git` files are verified
-  and git is run with `--git-dir`; the daemon's git commands override the
-  settings listed in `docs/security.md`. Remaining gap: under Landlock,
-  Windows and container mode an agent in its own checkout can still write
-  `.git/config` and hooks; the daemon no longer runs most of what it
-  writes, but filter and merge drivers still run on its status, commit and
-  fast-forward there, and the person's own git runs all of it. Tracked in
-  `STUBS.md`.
+- Status: fixed under bubblewrap and Seatbelt; open on Landlock, Windows
+  and container mode (KAO-74). Fixed:
+  - Without a task, the whole `.git` of the person's checkout is read-only
+    inside the sandbox and cannot be renamed; the agent runs read-only git
+    but cannot commit. A task agent writes only `objects/`, `refs/`,
+    `logs/` and its own `worktrees/<name>/`, whose `commondir`, `gitdir`
+    and `config.worktree` stay read-only, as do other worktrees' folders
+    (bubblewrap: `crates/polyph-sandbox/tests/sandbox.rs`, both cases;
+    Seatbelt: profile unit tests only, not run on a Mac).
+  - The `commondir` redirect found in review: the daemon names the git
+    directory and `GIT_COMMON_DIR` on every command, refuses a `commondir`
+    file in a main git directory and any `commondir` in a worktree's folder
+    that does not name its own repository, and before a trusted fetch or
+    push checks that git's own discovery arrives at `<root>/.git`
+    (`polyph-git` tests `commondir_redirects_are_refused`,
+    `trusted_fetch_checks_where_git_finds_its_settings`).
+  - The nested repository found in review (`sub/.git` with `filter.x.clean`
+    and `.gitattributes`): status, add and commit never look inside
+    submodules, and in a task worktree a nested repository not in HEAD's
+    `.gitmodules`, or a new submodule entry, is refused (`polyph-git` test
+    `nested_repositories_run_no_filters`).
+  Open: under Landlock, Windows and container mode an agent in its own
+  checkout can still write `.git/config` and hooks; the daemon warns at
+  start, no longer runs most of what it writes and refuses a `commondir`,
+  but filter and merge drivers still run on its status, commit and
+  fast-forward there, and the person's own git runs all of it. Low, by
+  design: a task agent can move any branch through `refs/`, and can write
+  `objects/info/alternates`. Tracked in `STUBS.md`.
 
 ## SEC-14: Host IPC is reachable from the sandbox
 
@@ -480,6 +496,15 @@ Summary:
   be a symlink), and cap sizes. Apply the same rule to every daemon read
   under an agent's worktree.
 - Wire change: no.
+- Status: fixed (KAO-77). The brief, areas, skills, mirrored files, merge
+  resolutions, symbol claims and `polyph.toml` are read with `read_under`: no link on any
+  part of the path, opened with `O_NOFOLLOW | O_NONBLOCK` on Linux and
+  macOS, then checked with `fstat` (same file as checked, regular, one
+  link, size cap). An invalid `polyph.toml` is reported by line and column
+  only, never quoted (`polyph-plugins` test
+  `worktree_reads_refuse_links_and_big_files`, `polyph-agents` test
+  `project_file_errors_quote_nothing`). Open: on Windows nothing checks
+  that the file opened is the one checked; listed in `STUBS.md`.
 
 ## SEC-17: Windows agents can read the API token and drive the daemon API
 

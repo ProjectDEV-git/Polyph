@@ -114,17 +114,32 @@ given machine. See `docs/sandbox.md` (M3).
 
 The daemon treats an agent's worktree as hostile input:
 
-- Under bubblewrap and Seatbelt, the git `config`, `hooks/` and `info/` of
-  the agent's checkout (and a linked worktree's `.git` file and
-  `config.worktree`) are read-only inside the sandbox, and `.git` cannot be
-  renamed or replaced. The rest of `.git` stays writable so agents can
-  commit. Seatbelt's rules are covered by a unit test of the profile, not
-  yet run on a Mac. Landlock, Windows and container mode do not enforce
-  this; see "Git settings an agent can write" below.
-- In a task worktree, the daemon checks before each git command that the
-  worktree's `.git` file points into the main repository's
-  `.git/worktrees/`, refuses otherwise, and then names that git directory
-  itself (`--git-dir`), so git never reads the `.git` file again.
+- Under bubblewrap and Seatbelt, an agent working in the person's own
+  checkout (no task) gets the whole `.git` read-only, mounted so it cannot
+  be renamed, removed or replaced. It can edit files and run read-only git
+  commands (`git status`, `git diff`, `git log`); it cannot commit, change
+  the config, hooks or info, or add a `commondir` file. A task agent gets
+  the shared `.git` read-only too, except `objects/`, `refs/`, `logs/` and
+  its own `.git/worktrees/<name>/` folder, so it can run `git add` and
+  `git commit` in its worktree. Inside that folder the `commondir`, `gitdir`
+  and `config.worktree` files stay read-only (the daemon creates an empty
+  `config.worktree` first), as do its worktree's `.git` file and the
+  folders of other worktrees, their `config.worktree` included. Because
+  `refs/` is writable, a task agent can move any branch of the repository,
+  not only its own; the merge queue still merges only through the daemon.
+  Bubblewrap is tested by `crates/polyph-sandbox/tests/sandbox.rs`;
+  Seatbelt's rules by a unit test of the profile only, not yet run on a
+  Mac. Landlock, Windows and container mode do not enforce any of this;
+  see "Git settings an agent can write" below.
+- Every git command the daemon runs names the git directory itself
+  (`--git-dir`, `--work-tree`) and sets `GIT_COMMON_DIR`, after checking
+  the checkout: a main git directory must not contain a `commondir` file,
+  and a linked worktree's `.git` file must point into the main repository's
+  `.git/worktrees/`, whose `commondir` must name that same repository. The
+  daemon refuses to run git otherwise, with an error that names the file.
+  Before a fetch or push with the repository's own settings, git, finding
+  the repository by itself (`rev-parse --git-common-dir`), must arrive at
+  `<main working copy>/.git`, or the command is refused.
 - Every local git command the daemon runs (status, commit, diff, merge)
   overrides `core.fsmonitor`, `core.hooksPath`, `core.pager`,
   `protocol.ext.allow`, `commit.gpgSign`, `core.sshCommand` and
@@ -138,11 +153,27 @@ The daemon treats an agent's worktree as hostile input:
   Landlock, Windows or container mode. Any other checkout is fetched and
   pushed with its own settings, so per-repository `core.sshCommand`,
   `includeIf` and pre-push hooks (Git LFS) keep working. Fetches never
-  recurse into submodules, whose git directories stay writable.
-- Filter drivers (`filter.*`) and merge drivers cannot be overridden by
-  setting names; pointing `core.attributesFile` elsewhere does not stop them
-  either, since `.gitattributes` in the worktree and `.git/info/attributes`
-  still apply. They rely on the read-only `config` and `info/` above.
+  recurse into submodules.
+- Git runs commands inside a nested repository or submodule with that
+  repository's own config, which the agent can write (its clean filter runs
+  during `git status`, for one). The daemon's `status`, `add` and `commit`
+  never look inside submodules (`--ignore-submodules=all`,
+  `diff.ignoreSubmodules=all`, and submodule entries left out of `git add`
+  by path, so the daemon's commits never update a submodule's commit). In a
+  task worktree it also refuses to read changes or commit when there is a
+  `.git` file or folder below the worktree's root that is not a submodule
+  in HEAD's `.gitmodules`, or a submodule entry in the index that HEAD does
+  not have.
+- Filter drivers (`filter.*`) and merge drivers in the repository's own
+  config cannot be overridden by setting names; pointing
+  `core.attributesFile` elsewhere does not stop them either, since
+  `.gitattributes` in the worktree and `.git/info/attributes` still apply.
+  They rely on `.git` being read-only, as above. A relative `include.path`
+  in `.git/config` resolves inside `.git/`, which is read-only under
+  bubblewrap and Seatbelt, so an agent cannot add an included file there.
+- Low: a task agent can write `objects/info/alternates`, which makes git
+  read objects from another folder. It names no program to run; it can make
+  the repository's history depend on files outside it.
 - Files it reads from a worktree (the brief, areas, skills, mirrored files,
   merge resolutions) must not be symbolic links on any part of their path,
   nor (on Linux and macOS) hard links, and are capped in size (1 MiB unless
@@ -151,17 +182,20 @@ The daemon treats an agent's worktree as hostile input:
 
 #### Git settings an agent can write
 
-Under Landlock, on Windows and in container mode, an agent working in the
-person's own checkout (no task, or `worktree = false`) can write that
-checkout's `.git/config`, hooks and info. The daemon's own git commands do
-not run what it writes, except filter and merge drivers when the daemon
-checks status, commits or fast-forwards there, and any other setting that
-names a program and is not listed above. The person's own git commands in
-that checkout run all of it. Under those mechanisms,
-use tasks (each in its own worktree, whose git directory the agent cannot
-write) or bubblewrap and Seatbelt. Files in the working copy itself remain
-writable everywhere, including a hooks folder that a repository's
-`core.hooksPath` points into the working copy.
+Under Landlock, on Windows and in container mode, the mounts above are not
+enforced. An agent working in the person's own checkout (no task, or
+`worktree = false`) can write that checkout's `.git`: its config, hooks,
+info and a `commondir` file. The daemon then refuses to run git in that
+checkout while a `commondir` file is there, never looks inside submodules,
+and fetches and pushes it with the overrides above, but a filter or merge
+driver in that config still runs when the daemon checks status, commits or
+fast-forwards there, as does any other setting that names a program and is
+not listed above. The person's own git commands in that checkout run all of
+it. The agent starts with a warning saying so. Under those mechanisms, use
+tasks (each in its own worktree, outside the shared `.git`, which the agent
+cannot write there) or bubblewrap and Seatbelt. Files in the working copy
+itself remain writable everywhere, including a hooks folder that a
+repository's `core.hooksPath` points into the working copy.
 
 ### A lost phone
 
