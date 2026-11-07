@@ -120,11 +120,11 @@ pub fn scan(root: &Path) -> (HashMap<String, Hash>, Vec<String>) {
     let mut files = HashMap::new();
     let mut big = vec![];
     for f in found {
-        match std::fs::read(root.join(&f)) {
-            Ok(d) if d.len() <= MAX_FILE => {
+        match polyph_plugins::read_under(root, Path::new(&f), MAX_FILE as u64) {
+            Ok(d) => {
                 files.insert(f, hash(&d));
             }
-            Ok(_) => big.push(f),
+            Err(e) if e.kind() == std::io::ErrorKind::FileTooLarge => big.push(f),
             Err(_) => {}
         }
     }
@@ -179,7 +179,7 @@ pub fn handle(ctx: &mut RoomCtx, shared: &Shared, from: DeviceId, msg: MirrorMsg
                 if !m.files.contains_key(&p) {
                     continue;
                 }
-                let Ok(data) = std::fs::read(m.root.join(&p)) else { continue };
+                let Ok(data) = polyph_plugins::read_under(&m.root, Path::new(&p), MAX_FILE as u64) else { continue };
                 if size + data.len() > CHUNK && !batch.is_empty() {
                     out.push(MirrorMsg::Files { files: std::mem::take(&mut batch) });
                     size = 0;
@@ -310,10 +310,11 @@ fn local_change(ctx: &mut RoomCtx, path: &str, agent: Option<AgentRef>) -> Optio
             .map(|c| c.owner)
     });
     let m = ctx.mirror.as_mut()?;
-    let data = std::fs::read(m.root.join(path));
+    let data = polyph_plugins::read_under(&m.root, Path::new(path), MAX_FILE as u64);
     let (data, deleted) = match data {
-        Ok(d) if d.len() <= MAX_FILE => (d, false),
-        Ok(_) => return None,
+        Ok(d) => (d, false),
+        Err(e) if e.kind() == std::io::ErrorKind::FileTooLarge => return None,
+        // Gone, or now a link the mirror must not follow.
         Err(_) => (vec![], true),
     };
     let new = (!deleted).then(|| hash(&data));

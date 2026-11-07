@@ -62,12 +62,20 @@ pub fn parse(text: &str) -> Option<(String, String, String)> {
     Some((name?, desc, body.trim_start_matches(['\r', '\n']).to_string()))
 }
 
-fn scan(dir: &Path, source: Source) -> Vec<Skill> {
+/// A skill file; under the agent's `worktree` it must not be a link (SEC-16).
+fn read_file(worktree: Option<&Path>, path: &Path) -> std::io::Result<String> {
+    match worktree.and_then(|w| path.strip_prefix(w).ok().map(|rel| (w, rel))) {
+        Some((w, rel)) => crate::read_text_under(w, rel),
+        None => std::fs::read_to_string(path),
+    }
+}
+
+fn scan(dir: &Path, source: Source, worktree: Option<&Path>) -> Vec<Skill> {
     let Ok(rd) = std::fs::read_dir(dir) else { return vec![] };
     rd.flatten()
         .filter(|e| e.path().join(FILE).is_file())
         .filter_map(|e| {
-            let text = std::fs::read_to_string(e.path().join(FILE)).ok()?;
+            let text = read_file(worktree, &e.path().join(FILE)).ok()?;
             let (name, description, _) = parse(&text)?;
             valid_name(&name).then(|| Skill { name, description, source: source.clone(), dir: e.path() })
         })
@@ -76,8 +84,8 @@ fn scan(dir: &Path, source: Source) -> Vec<Skill> {
 
 /// Skills for an agent working in `worktree`, with the person's own ones.
 pub fn discover(worktree: Option<&Path>, personal: &Path) -> Vec<Skill> {
-    let mut out = worktree.map(|w| scan(&w.join(PROJECT_DIR), Source::Project)).unwrap_or_default();
-    for s in scan(personal, Source::Personal) {
+    let mut out = worktree.map(|w| scan(&w.join(PROJECT_DIR), Source::Project, Some(w))).unwrap_or_default();
+    for s in scan(personal, Source::Personal, None) {
         if !out.iter().any(|p| p.name == s.name) {
             out.push(s);
         }
@@ -92,7 +100,7 @@ pub fn read(worktree: Option<&Path>, personal: &Path, name: &str) -> Result<(Ski
         .into_iter()
         .find(|s| s.name == name)
         .ok_or_else(|| Error::NotFound(format!("no skill named {name}; list them with list_skills")))?;
-    let text = std::fs::read_to_string(s.dir.join(FILE))?;
+    let text = read_file(worktree, &s.dir.join(FILE))?;
     let (_, _, mut body) = parse(&text).ok_or_else(|| Error::Invalid(format!("{name}: bad front matter")))?;
     if body.len() > MAX_SKILL_BYTES {
         let mut cut = MAX_SKILL_BYTES;
@@ -152,5 +160,17 @@ mod tests {
         let added = add_to_project(&home.path().join("review"), repo.path()).unwrap();
         assert_eq!(added.source, Source::Project);
         assert!(add_to_project(&home.path().join("review"), repo.path()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_project_skills_are_skipped() {
+        let repo = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        skill(home.path(), "secret", "outside the repo", "x");
+        std::fs::create_dir_all(repo.path().join(PROJECT_DIR)).unwrap();
+        std::os::unix::fs::symlink(home.path().join("secret"), repo.path().join(PROJECT_DIR).join("secret")).unwrap();
+        let all = discover(Some(repo.path()), tempfile::tempdir().unwrap().path());
+        assert!(all.is_empty(), "{all:?}");
     }
 }

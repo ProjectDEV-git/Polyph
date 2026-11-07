@@ -200,7 +200,7 @@ async fn claim_and_allow(
 fn symbol_targets(worktree: &Path, path: &Path, new: &str) -> Option<Vec<ClaimTarget>> {
     let rel = path.strip_prefix(worktree).ok()?.to_string_lossy().replace('\\', "/");
     let lang = polyph_merge::symbols::Lang::from_path(&rel)?;
-    let old = std::fs::read_to_string(path).ok()?;
+    let old = polyph_plugins::read_text_under(worktree, path.strip_prefix(worktree).ok()?).ok()?;
     let names = polyph_merge::symbols::changed_symbols(&old, new, lang)?;
     if names.is_empty() {
         return None;

@@ -9,6 +9,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 
 use serde::Serialize;
 
@@ -65,11 +66,76 @@ pub enum MergeOutcome {
 #[derive(Debug, Clone)]
 pub struct Repo {
     root: PathBuf,
+    /// For an agent's worktree: the main `.git/worktrees`, which its `.git`
+    /// file must point into before every command.
+    worktrees: Option<PathBuf>,
+}
+
+/// `-c` settings that win over a repository's own config wherever it names
+/// a program to run. Agents write their worktree and could write `.git`
+/// (SEC-13); the daemon runs git with the person's rights.
+fn guard_args() -> &'static [String] {
+    static ARGS: OnceLock<Vec<String>> = OnceLock::new();
+    ARGS.get_or_init(|| {
+        // A file, so `<hooksPath>/<hook>` never exists.
+        let hooks = if cfg!(windows) {
+            std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "NUL".into())
+        } else {
+            "/dev/null".into()
+        };
+        // shortcut: only the global value is kept (GIT_SSH and system config are not), read those too if someone needs them.
+        let ssh = global_config("core.sshCommand").unwrap_or_else(|| "ssh".into());
+        let askpass = global_config("core.askPass").unwrap_or_default();
+        [
+            "core.fsmonitor=".to_string(),
+            format!("core.hooksPath={hooks}"),
+            format!("core.sshCommand={ssh}"),
+            format!("core.askPass={askpass}"),
+            "core.pager=cat".into(),
+            "protocol.ext.allow=never".into(),
+            "commit.gpgSign=false".into(),
+        ]
+        .into_iter()
+        .flat_map(|kv| ["-c".to_string(), kv])
+        .collect()
+    })
+}
+
+/// The person's own setting for `key`, from their global config only.
+fn global_config(key: &str) -> Option<String> {
+    let out = Command::new("git")
+        .args(["config", "--global", "--includes", "--get", key])
+        .current_dir(std::env::temp_dir())
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !v.is_empty()).then_some(v)
+}
+
+/// Refuses a worktree whose `.git` file points anywhere but into the main
+/// repository's `.git/worktrees`: an agent could aim it at a repository it
+/// made, with config and hooks of its own (SEC-13).
+fn check_gitdir(root: &Path, worktrees: &Path) -> Result<()> {
+    let bad = |why: String| GitError::Invalid(format!("refusing to run git in {}: {why}", root.display()));
+    let dot = root.join(".git");
+    let m = std::fs::symlink_metadata(&dot).map_err(|e| bad(format!("cannot read .git: {e}")))?;
+    if !m.is_file() || m.len() > 4096 {
+        return Err(bad(".git is not a worktree's link file".into()));
+    }
+    let text = std::fs::read_to_string(&dot).map_err(|e| bad(format!("cannot read .git: {e}")))?;
+    let dir = text.trim_end().strip_prefix("gitdir: ").ok_or_else(|| bad(".git has no gitdir line".into()))?;
+    let dir = canonical(&root.join(dir)).map_err(|e| bad(format!("its gitdir {dir} is missing: {e}")))?;
+    if dir.parent() != Some(worktrees) {
+        return Err(bad(format!("its gitdir {} is not in {}", dir.display(), worktrees.display())));
+    }
+    Ok(())
 }
 
 fn run(dir: &Path, args: &[&str], env: &[(&str, &str)], stdin: Option<&[u8]>) -> Result<(bool, String, String)> {
     let mut c = Command::new("git");
-    c.arg("-C").arg(dir).args(args);
+    c.arg("-C").arg(dir).args(guard_args()).args(args);
     // Never prompt, never use a pager, and keep output stable.
     c.env("GIT_TERMINAL_PROMPT", "0").env("GIT_PAGER", "cat").env("LC_ALL", "C");
     for (k, v) in env {
@@ -99,11 +165,30 @@ impl Repo {
         if !ok {
             return Err(GitError::NotARepo(path.display().to_string()));
         }
-        Ok(Self { root: PathBuf::from(out.trim()) })
+        Ok(Self { root: PathBuf::from(out.trim()), worktrees: None })
+    }
+
+    /// Opens an agent's worktree at `path`, a linked worktree of this
+    /// repository. Every command first checks that its `.git` still points
+    /// into this repository's `.git/worktrees`.
+    pub fn open_worktree(&self, path: &Path) -> Result<Repo> {
+        let common = self.common_dir()?;
+        let worktrees = canonical(&common).map_err(GitError::Spawn)?.join("worktrees");
+        check_gitdir(path, &worktrees)?;
+        let mut r = Repo::open(path)?;
+        r.worktrees = Some(worktrees);
+        Ok(r)
     }
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    fn exec(&self, args: &[&str], env: &[(&str, &str)], stdin: Option<&[u8]>) -> Result<(bool, String, String)> {
+        if let Some(w) = &self.worktrees {
+            check_gitdir(&self.root, w)?;
+        }
+        run(&self.root, args, env, stdin)
     }
 
     fn git(&self, args: &[&str]) -> Result<String> {
@@ -111,7 +196,7 @@ impl Repo {
     }
 
     fn git_env(&self, args: &[&str], env: &[(&str, &str)], stdin: Option<&[u8]>) -> Result<String> {
-        let (ok, out, err) = run(&self.root, args, env, stdin)?;
+        let (ok, out, err) = self.exec(args, env, stdin)?;
         if ok {
             Ok(out)
         } else {
@@ -151,13 +236,13 @@ impl Repo {
         } else {
             self.git(&["worktree", "add", "-b", branch, &p, base])?;
         }
-        Repo::open(path)
+        self.open_worktree(path)
     }
 
     /// Adds a detached worktree at `rev` (for running checks on a merge).
     pub fn add_detached(&self, path: &Path, rev: &str) -> Result<Repo> {
         self.git(&["worktree", "add", "--detach", &path.to_string_lossy(), rev])?;
-        Repo::open(path)
+        self.open_worktree(path)
     }
 
     pub fn remove_worktree(&self, path: &Path) -> Result<()> {
@@ -221,7 +306,7 @@ impl Repo {
     }
 
     pub fn merge_base(&self, a: &str, b: &str) -> Result<Option<String>> {
-        match run(&self.root, &["merge-base", a, b], &[], None)? {
+        match self.exec(&["merge-base", a, b], &[], None)? {
             (true, out, _) => Ok(Some(out.trim().to_string())),
             (false, _, err) if err.trim().is_empty() => Ok(None),
             (false, _, err) => Err(GitError::Failed { cmd: "merge-base".into(), stderr: err.trim().into() }),
@@ -229,18 +314,18 @@ impl Repo {
     }
 
     pub fn is_ancestor(&self, a: &str, b: &str) -> Result<bool> {
-        Ok(run(&self.root, &["merge-base", "--is-ancestor", a, b], &[], None)?.0)
+        Ok(self.exec(&["merge-base", "--is-ancestor", a, b], &[], None)?.0)
     }
 
     /// Files changed on `head` since it forked from `base`.
     pub fn changed_files(&self, base: &str, head: &str) -> Result<Vec<String>> {
-        let out = self.git(&["diff", "--name-only", "-z", &format!("{base}...{head}")])?;
+        let out = self.git(&["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", &format!("{base}...{head}")])?;
         Ok(out.split('\0').filter(|s| !s.is_empty()).map(str::to_string).collect())
     }
 
     /// Unified diff of `head` since it forked from `base`.
     pub fn diff(&self, base: &str, head: &str) -> Result<String> {
-        self.git(&["diff", "--no-color", "--no-ext-diff", &format!("{base}...{head}")])
+        self.git(&["diff", "--no-color", "--no-ext-diff", "--no-textconv", &format!("{base}...{head}")])
     }
 
     /// Commit subjects on `head` since it forked from `base`, oldest first.
@@ -269,12 +354,8 @@ impl Repo {
         if self.is_ancestor(&theirs_c, &ours_c)? {
             return Ok(MergeOutcome::UpToDate);
         }
-        let (clean, out, err) = run(
-            &self.root,
-            &["merge-tree", "--write-tree", "--name-only", "--no-messages", &ours_c, &theirs_c],
-            &[],
-            None,
-        )?;
+        let (clean, out, err) =
+            self.exec(&["merge-tree", "--write-tree", "--name-only", "--no-messages", &ours_c, &theirs_c], &[], None)?;
         let mut lines = out.lines();
         let tree = lines.next().unwrap_or_default().trim().to_string();
         if tree.len() < 40 {
@@ -360,7 +441,8 @@ impl Repo {
         check_branch_name(branch)?;
         for (path, b) in self.worktrees()? {
             if b.as_deref() == Some(branch) {
-                let wt = Repo::open(&path)?;
+                let main = canonical(&path).ok() == canonical(&self.main_root()?).ok();
+                let wt = if main { Repo::open(&path)? } else { self.open_worktree(&path)? };
                 if !wt.dirty_files()?.is_empty() {
                     return Err(GitError::Invalid(format!(
                         "{branch} is checked out with uncommitted changes in {}",
@@ -391,7 +473,15 @@ impl Repo {
 
     /// Files a merge commit brought into its first parent.
     pub fn merged_files(&self, merge_commit: &str) -> Result<Vec<String>> {
-        let out = self.git(&["diff", "--name-only", "-z", &format!("{merge_commit}^1"), merge_commit])?;
+        let out = self.git(&[
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--name-only",
+            "-z",
+            &format!("{merge_commit}^1"),
+            merge_commit,
+        ])?;
         Ok(out.split('\0').filter(|s| !s.is_empty()).map(str::to_string).collect())
     }
 
@@ -478,7 +568,7 @@ impl Repo {
         }
         let input: String = paths.iter().map(|p| format!("{p}\0")).collect();
         // Exit status 1 means "none ignored", so only stdout matters.
-        let (_, out, _) = run(&self.root, &["check-ignore", "-z", "--stdin"], &[], Some(input.as_bytes()))?;
+        let (_, out, _) = self.exec(&["check-ignore", "-z", "--stdin"], &[], Some(input.as_bytes()))?;
         Ok(out.split('\0').filter(|s| !s.is_empty()).map(str::to_string).collect())
     }
 
@@ -580,7 +670,7 @@ pub fn clone_from(url: &str, dir: &Path, branch: Option<&str>, partial: bool) ->
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     // Unlike other calls, cloning may ask for a password in the terminal.
     let mut c = Command::new("git");
-    c.arg("-C").arg(parent).args(&refs).env("GIT_PAGER", "cat");
+    c.arg("-C").arg(parent).args(guard_args()).args(&refs).env("GIT_PAGER", "cat");
     let status = c.status().map_err(GitError::Spawn)?;
     if !status.success() {
         return Err(GitError::Failed { cmd: "clone".into(), stderr: format!("git clone exited with {status}") });
@@ -696,7 +786,7 @@ mod tests {
 
     pub(crate) fn init() -> (tempfile::TempDir, Repo) {
         let d = tempfile::tempdir().unwrap();
-        let r = Repo { root: d.path().to_path_buf() };
+        let r = Repo { root: d.path().to_path_buf(), worktrees: None };
         r.git(&["init", "-q", "-b", "main"]).unwrap();
         // Byte-exact merge results: no CRLF conversion on Windows checkouts.
         r.git(&["config", "core.autocrlf", "false"]).unwrap();
@@ -855,5 +945,64 @@ mod tests {
         assert_eq!(simplify_verbatim(PathBuf::from(r"\\?\UNC\srv\share\x")), PathBuf::from(r"\\srv\share\x"));
         assert_eq!(simplify_verbatim(PathBuf::from(r"\\?\Volume{1}\x")), PathBuf::from(r"\\?\Volume{1}\x"));
         assert_eq!(simplify_verbatim(PathBuf::from("/w/repo")), PathBuf::from("/w/repo"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repository_config_runs_no_programs() {
+        use std::os::unix::fs::PermissionsExt;
+        let (d, r) = init();
+        let m = tempfile::tempdir().unwrap();
+        let marker = m.path().join("ran");
+        let script = m.path().join("evil.sh");
+        std::fs::write(&script, format!("#!/bin/sh\necho \"$0\" >> '{}'\n", marker.display())).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let s = script.to_string_lossy();
+        r.git(&["config", "core.fsmonitor", &s]).unwrap();
+        r.git(&["config", "diff.external", &s]).unwrap();
+        r.git(&["config", "diff.evil.textconv", &s]).unwrap();
+        r.git(&["config", "core.pager", &s]).unwrap();
+        let hooks = r.common_dir().unwrap().join("hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        for h in ["pre-commit", "commit-msg", "post-commit", "post-index-change", "reference-transaction"] {
+            std::fs::copy(&script, hooks.join(h)).unwrap();
+        }
+        // Plain git does run them, so the test can see the difference.
+        Command::new("git").arg("-C").arg(d.path()).args(["status", "--porcelain"]).output().unwrap();
+        assert!(marker.exists(), "plain git status ran no fsmonitor");
+        std::fs::remove_file(&marker).unwrap();
+
+        std::fs::write(d.path().join(".gitattributes"), "*.rs diff=evil\n").unwrap();
+        std::fs::write(d.path().join("lib.rs"), "fn a() { 1 }\n").unwrap();
+        assert!(!r.dirty_files().unwrap().is_empty());
+        r.commit_all("change", &Signature::agent("A", "1")).unwrap().unwrap();
+        assert!(r.diff("HEAD~1", "HEAD").unwrap().contains("+fn a() { 1 }"));
+        assert_eq!(r.changed_files("HEAD~1", "HEAD").unwrap().len(), 2);
+        let wt_dir = tempfile::tempdir().unwrap();
+        let wt = r.add_worktree(&wt_dir.path().join("t1"), "polyph/t1", "main").unwrap();
+        std::fs::write(wt.root().join("n.rs"), "x\n").unwrap();
+        wt.commit_all("n", &Signature::agent("A", "1")).unwrap().unwrap();
+        assert!(!marker.exists(), "ran: {}", std::fs::read_to_string(&marker).unwrap_or_default());
+    }
+
+    #[test]
+    fn forged_gitdir_is_refused() {
+        let (_d, r) = init();
+        let wt_dir = tempfile::tempdir().unwrap();
+        let p = wt_dir.path().join("t1");
+        let wt = r.add_worktree(&p, "polyph/t1", "main").unwrap();
+        assert!(wt.dirty_files().unwrap().is_empty());
+        // The agent points its `.git` at a repository of its own.
+        let evil = wt_dir.path().join("evil.git");
+        run(wt_dir.path(), &["init", "-q", "--bare", &evil.to_string_lossy()], &[], None).unwrap();
+        std::fs::write(p.join(".git"), format!("gitdir: {}\n", evil.display())).unwrap();
+        let e = r.open_worktree(&p).unwrap_err().to_string();
+        assert!(e.contains("refusing to run git"), "{e}");
+        assert!(wt.dirty_files().is_err(), "an open worktree checks again");
+        // A `.git` folder instead of the link file.
+        std::fs::remove_file(p.join(".git")).unwrap();
+        std::fs::create_dir(p.join(".git")).unwrap();
+        assert!(r.open_worktree(&p).is_err());
+        assert!(r.open_worktree(r.root()).is_err(), "the main working copy is not a linked worktree");
     }
 }

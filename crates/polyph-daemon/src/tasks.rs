@@ -690,7 +690,7 @@ async fn resolve_with_agent(
     let mut out = HashMap::new();
     let mut bad = vec![];
     for f in files {
-        match std::fs::read_to_string(wt.join(f)) {
+        match polyph_plugins::read_text_under(&wt, Path::new(f)) {
             Ok(t) if !polyph_merge::has_markers(&t) => {
                 out.insert(f.clone(), t);
             }
