@@ -71,15 +71,22 @@ async fn entry(h: &Harness, i: usize, rid: &str, branch: &str) -> Option<Value> 
     q.as_array().unwrap().iter().rev().find(|e| e["branch"] == branch).cloned()
 }
 
-/// Approves the next merge approval as `who`, once it shows up.
+/// Approves the next merge approval as `who`, once it shows up. The
+/// approval names the branch and the commit queued from it (SEC-13).
 async fn approve_merge(h: &Harness, who: usize, rid: &str, branch: &str) {
     let id = h
         .until_value("merge approval", || async {
+            let head = entry(h, who, rid, branch).await?["head"].as_str()?.chars().take(12).collect::<String>();
             let l = h.nodes[who].call("approvals.list", json!({ "room": rid })).await.unwrap();
             l.as_array()
                 .unwrap()
                 .iter()
-                .find(|a| a["kind"]["t"] == "merge" && a["kind"]["c"]["branch"] == branch)
+                .find(|a| {
+                    a["kind"]["t"] == "merge"
+                        && a["kind"]["c"]["branch"]
+                            .as_str()
+                            .is_some_and(|b| b.starts_with(&format!("{branch} at {head} (")))
+                })
                 .map(|a| a["id"].as_str().unwrap().to_string())
         })
         .await

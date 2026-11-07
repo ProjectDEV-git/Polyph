@@ -162,7 +162,7 @@ mod tests {
         assert!(n.get_envs().any(|(k, v)| k == "GIT_DIR" && v.is_none()));
         assert_eq!(n.get_current_dir(), Some(base.as_path()));
 
-        let p = seatbelt_profile(&[w.clone()], &[ro.clone()]);
+        let p = seatbelt_profile(std::slice::from_ref(&w), std::slice::from_ref(&ro));
         let allow = p.find(&format!("(allow file-write* (subpath \"{}\"))", s(&w))).unwrap();
         let deny = p.find(&format!("(deny file-write* (literal \"{}\"))", s(&ro))).unwrap();
         assert!(p.starts_with("(version 1)\n(allow default)\n(deny file-write*)") && allow < deny, "{p}");

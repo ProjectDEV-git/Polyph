@@ -444,9 +444,10 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
     // It commits only on a branch in its own task's folder,
     // `polyph/<task>/<name>`, into its worktree's own object store.
     let git = {
-        let branch = task_wt.as_ref().map(|w| w.branch.clone()).filter(|b| {
-            task.is_some_and(|t| polyph_git::task_folder(b) == Some(t.short().as_str()))
-        });
+        let branch = task_wt
+            .as_ref()
+            .map(|w| w.branch.clone())
+            .filter(|b| task.is_some_and(|t| polyph_git::task_folder(b) == Some(t.short().as_str())));
         let wt = worktree.clone();
         tokio::task::spawn_blocking(move || polyph_git::sandbox_git(&wt, branch.as_deref())).await.unwrap_or_default()
     };
@@ -705,7 +706,9 @@ async fn run_turn(shared: &Shared, rt: &RoomRuntime, h: &AgentHandle, text: Opti
     // store has for longer than a turn (SEC-13).
     if let Some(wt) = h.task_wt.clone() {
         let took = tokio::task::spawn_blocking(move || {
-            polyph_git::Repo::open(&wt.repo).and_then(|m| m.open_worktree(&wt.path)).and_then(|r| r.import_branch(&wt.branch))
+            polyph_git::Repo::open(&wt.repo)
+                .and_then(|m| m.open_worktree(&wt.path))
+                .and_then(|r| r.import_branch(&wt.branch))
         })
         .await;
         if let Ok(Err(e)) = took {
