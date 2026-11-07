@@ -86,6 +86,13 @@ A `CertChain` is the signed genesis plus certificates `c[0..n]`:
 The member's role is `c[n-1].role`. Clients drop envelopes from any sender
 whose chain they have not verified.
 
+Clients keep one chain per device and replace it only with a chain whose last
+certificate has a later `issued_at` (or the same `issued_at` and no higher
+role), whether it arrives in `Hello`, `RoleChanged` or a snapshot. A role
+change re-issues the certificate of every device of the member, with an
+`issued_at` later than the one it replaces, so a demoted device cannot restore
+its old role by presenting its previous chain.
+
 ### 4.3 Roles
 
 | Role | Can |
@@ -216,6 +223,10 @@ The joiner's `JoinRequest { device, member, display_name, name_salt, surface,
 link_device, capabilities }` travels over that channel. A joiner may name an
 existing member id (a person's phone or agent host joining as another device
 of theirs); it is still a knock that an Owner or Maintainer must approve.
+Until the request can prove it comes from that member, clients refuse to
+approve (by hand or automatically) a knock whose member id already belongs to
+someone in the room, unless the knocking device is already one of that
+member's devices.
 
 Both sides exchange confirmation tags and compare in constant time. Then they
 use an ordered XChaCha20-Poly1305 channel with counter nonces
@@ -244,7 +255,11 @@ The approver issues the certificate; the host forwards it.
 Enforced by the relay, and independently by the host daemon:
 
 - Each `JoinCode` on a code is one attempt. It fails when the host reports
-  `ok = false` or the joiner disconnects before the host reports a result.
+  `ok = false`, the joiner disconnects before the host reports a result, or
+  the host has not reported a result within 2 minutes (the session is ended
+  with `PakeEnded`).
+- A code accepts a new `JoinCode` only while its failures plus attempts still
+  in progress stay under the limit; otherwise the relay answers `RateLimited`.
 - After 5 failures a one-time code is deleted (`CodeClosed::Failed`); a
   reusable code is locked for 10 minutes and the host is told (`CodeLocked`),
   which the daemon shows to the room owner.
@@ -278,7 +293,7 @@ Then:
   subscribers; and buffers it.
 - Buffer: 10 minutes, at most 5,000 envelopes and 2 MiB per room, and 64 MiB
   across all rooms (the room being written to sheds oldest first).
-- `PutSnapshot { epoch, blob }` (writers only): one opaque snapshot per device
+- `PutSnapshot { epoch, blob }` (Member role or above): one opaque snapshot per device
   per room; the 10 newest devices' snapshots are kept. `GetSnapshots` returns
   them newest first. Retention is per plan; unlimited when self-hosted.
 - `RegisterRoom { genesis }` tells the relay the owner device;
@@ -304,6 +319,10 @@ Layouts are in `crates/polyph-proto/src/crdt.rs`.
   the last local client leaves.
 - A member returning when nobody is online fetches snapshots, decrypts the
   newest one it can, merges it, then syncs with peers when they appear.
+- A snapshot gets the checks a live message would: it is dropped if its
+  sender has been removed, cannot write (Viewer), or sealed it under an epoch
+  older than the previous one. Its list of removed devices is applied only
+  if the sender may remove members (Maintainer or Owner).
 
 ### 9.1 Memory notes
 

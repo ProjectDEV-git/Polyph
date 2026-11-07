@@ -77,7 +77,9 @@ relay (no certificate) and by clients. Revoking the link stops new content.
 Online guessing only: each attempt is a full PAKE with the host. With the
 first half known (worst case: the relay is the attacker), 20 bits remain;
 five failures kill a one-time code or lock a reusable one for 10 minutes and
-notify the owner, and approval to join is on by default. Per-IP limits slow
+notify the owner, and approval to join is on by default. A join attempt that
+is abandoned or stalls for 2 minutes counts as a failure, and a code never
+has more attempts in progress than it has failures left. Per-IP limits slow
 spraying across codes. Probability of a correct guess before lockout: about 5
 in 2^20 (≈ 0.0005%) per code.
 

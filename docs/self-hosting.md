@@ -49,7 +49,8 @@ Environment variables override the TOML file given with `--config`.
 Other TOML keys: `buffer_secs` (600), `buffer_max_envelopes` (5000),
 `buffer_max_bytes` (2 MiB per room), `buffer_total_max_bytes` (64 MiB),
 `snapshots_per_room` (10), `join_attempts_per_ip` (20 per 10 min),
-`frames_per_sec` (200), `code_max_failures` (5), `code_lock_secs` (600).
+`frames_per_sec` (200), `code_max_failures` (5), `code_lock_secs` (600),
+`join_handshake_secs` (120).
 
 Endpoints: `/ws` (clients), `/healthz` (JSON status), `/metrics` (opt-in).
 Logs are JSON on stderr and never include content.
