@@ -48,6 +48,21 @@ If no mechanism works, agents do not start. To run agents without a sandbox
 anyway (for example inside a disposable VM), set `[sandbox] mode = "off"` in
 `polyph.toml`.
 
+## Trusting a project file
+
+`polyph.toml` is read from your own checkout, not from an agent's task
+worktree. Its security-relevant sections (`[sandbox]`, `[agents.*]`,
+`checks` and `[policy] preset`) only apply after you run `polyph trust` in
+the repository. That records the file's folder and the SHA-256 of its
+content in `trusted-projects.json` in Polyph's data directory, outside any
+repository, like `direnv allow`. Any edit to the file, including one made by
+an agent or a pulled commit, needs another `polyph trust`. Until then those
+sections are ignored: agents run in the default sandbox with the built-in
+agent definitions, no checks run, and the daemon log, the `project_untrusted`
+event and `polyph agent start` say what was ignored. `polyph trust --revoke`
+removes the record. Other sections, such as `[merge]`, `[planner]` and
+`[prices]`, apply without trust.
+
 ## Autonomy
 
 The sandbox is the outer wall. Inside it, the autonomy preset decides what
