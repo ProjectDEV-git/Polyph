@@ -330,6 +330,9 @@ pub struct RoomCore {
     docs: HashMap<DocName, Doc>,
     pub knocks: BTreeMap<ObjectId, Knock>,
     pending_deliveries: HashMap<DeviceId, Signed<EpochKeyDelivery>>,
+    /// Knocks that arrived through a code this device made for its own member's
+    /// next device. Local only; never sent or persisted.
+    own_device_knocks: std::collections::HashSet<ObjectId>,
     pub approvals: BTreeMap<ObjectId, PendingApproval>,
     pub cursor: Option<u64>,
     pub relay: Option<String>,
@@ -449,6 +452,7 @@ impl RoomCore {
             docs,
             knocks: BTreeMap::new(),
             pending_deliveries: HashMap::new(),
+            own_device_knocks: Default::default(),
             approvals: BTreeMap::new(),
             cursor: None,
             relay: None,
@@ -881,10 +885,13 @@ impl RoomCore {
         }
         let k = self.knocks.get(&knock).cloned().ok_or(RoomError::NotFound("knock"))?;
         // A knock may not claim an existing member's id (it would inherit their
-        // name and standing) unless it is one of that member's own devices re-joining.
+        // name and standing) unless it is one of that member's own devices
+        // re-joining, or it came through a pairing or host code this device made
+        // for its own member (`allow_own_device`).
+        let own_invite = k.member == self.my_member && self.own_device_knocks.contains(&knock);
         let same_device = self.peers.get(&k.device).is_some_and(|p| p.member() == Some(k.member));
         let taken = k.member == self.my_member || self.peers.values().any(|p| p.member() == Some(k.member));
-        if taken && !same_device {
+        if taken && !same_device && !own_invite {
             return Err(RoomError::Invalid("knock claims an existing member's id"));
         }
         let kx: [u8; 32] = k.kx.as_slice().try_into().map_err(|_| RoomError::Invalid("knock has no key"))?;
@@ -915,6 +922,13 @@ impl RoomCore {
         }
         out.extend(self.on_member_added(chain, now));
         Ok(out)
+    }
+
+    /// Marks a knock as arriving through a code this device made to add another
+    /// device of its own member (phone pairing, agent host). Only then may the
+    /// knock claim this member's id, and only a person approves it.
+    pub fn allow_own_device(&mut self, knock: ObjectId) {
+        self.own_device_knocks.insert(knock);
     }
 
     pub fn deny_knock(&mut self, knock: ObjectId) -> Result<Vec<Effect>> {

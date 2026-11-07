@@ -83,6 +83,8 @@ enum HostStage {
 struct HostJoin {
     rendezvous: RendezvousId,
     stage: Option<HostStage>,
+    /// The code was one-time when the joiner arrived (the relay drops it on success).
+    one_time: bool,
 }
 
 /// Resolves with (granted, denied) when the acting host answers a claim request.
@@ -571,9 +573,10 @@ async fn host_join_start(ctx: &mut RoomCtx, rendezvous: RendezvousId, session: u
         }
         return;
     }
+    let one_time = matches!(code.kind, CodeKind::OneTime);
     let p = PakeStart::new(&code.code, PakeRole::Host, &ctx.binding);
     let msg = p.message().to_vec();
-    ctx.joins.insert(session, HostJoin { rendezvous, stage: Some(HostStage::AwaitPake(p)) });
+    ctx.joins.insert(session, HostJoin { rendezvous, stage: Some(HostStage::AwaitPake(p)), one_time });
     if let Some(s) = &ctx.sender {
         let _ = s.send(ClientFrame::Pake { session, data: msg }).await;
     }
@@ -631,7 +634,15 @@ async fn host_join_step(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, se
                 capabilities: req.capabilities.clone(),
             };
             let kid = knock.id;
-            let auto = !ctx.core.require_approval() && ctx.core.role().can_approve_joins();
+            // A one-time code made on this device may be used to add another
+            // device of this same member (phone pairing, agent host). Such a
+            // knock may claim our member id, but a person must approve it:
+            // never automatically. Reusable codes never get this exception.
+            let own = req.member == ctx.core.my_member && j.one_time;
+            if own {
+                ctx.core.allow_own_device(kid);
+            }
+            let auto = !own && !ctx.core.require_approval() && ctx.core.role().can_approve_joins();
             j.stage = Some(HostStage::Knocked { channel: ch, knock: kid });
             ctx.joins.insert(session, j);
             let effects = ctx.core.post_knock(knock);

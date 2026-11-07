@@ -492,3 +492,40 @@ fn knocks_cannot_claim_an_existing_member() {
     net.run(0, out);
     assert!(net.nodes[0].core.approve_knock(k.id, Role::Member, now).is_ok());
 }
+
+#[test]
+fn a_member_can_add_their_own_device_through_a_code_they_made() {
+    let mut net = Net::new("Ann");
+    net.connect(0);
+    let b = net.join("Bo", 0, 0, Role::Member);
+    let (am, bm) = (net.nodes[0].core.my_member, net.nodes[b].core.my_member);
+    let now = net.now;
+    let knock = |member: MemberId, net: &Net| {
+        let id = DeviceIdentity::generate().unwrap();
+        Knock {
+            id: ObjectId::random().unwrap(),
+            display_name: "Ann".into(),
+            member,
+            device: id.device_id(),
+            requested_role: Role::Member,
+            via: net.nodes[0].core.me,
+            at: net.now,
+            kx: id.public().kx.to_vec(),
+            name_salt: vec![7; 16],
+            surface: None,
+            capabilities: vec![],
+        }
+    };
+    // Ann marks the knock that came through her own pairing code: allowed.
+    let k = knock(am, &net);
+    let out = net.nodes[0].core.post_knock(k.clone());
+    net.run(0, out);
+    net.nodes[0].core.allow_own_device(k.id);
+    assert!(net.nodes[0].core.approve_knock(k.id, Role::Member, now).is_ok());
+    // The mark covers only the approver's own member: Bo's id is still refused.
+    let k = knock(bm, &net);
+    let out = net.nodes[0].core.post_knock(k.clone());
+    net.run(0, out);
+    net.nodes[0].core.allow_own_device(k.id);
+    assert!(net.nodes[0].core.approve_knock(k.id, Role::Member, now).is_err());
+}
