@@ -295,6 +295,18 @@ pub fn handle(ctx: &mut RoomCtx, shared: &Shared, from: DeviceId, msg: MirrorMsg
     out
 }
 
+/// The new content of a changed file, or `deleted` when it is gone. A file
+/// the mirror will not read (too large, a symbolic link, unreadable) is
+/// skipped: `None`, so the room keeps its last version rather than losing it.
+fn read_change(root: &Path, path: &str) -> Option<(Vec<u8>, bool)> {
+    use std::io::ErrorKind;
+    match polyph_plugins::read_under(root, Path::new(path), MAX_FILE as u64) {
+        Ok(d) => Some((d, false)),
+        Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => Some((vec![], true)),
+        Err(_) => None,
+    }
+}
+
 /// A local change seen by a watcher. Returns what to send.
 fn local_change(ctx: &mut RoomCtx, path: &str, agent: Option<AgentRef>) -> Option<MirrorMsg> {
     // Agents finish quickly: when none is mid-turn, credit the local agent
@@ -310,13 +322,7 @@ fn local_change(ctx: &mut RoomCtx, path: &str, agent: Option<AgentRef>) -> Optio
             .map(|c| c.owner)
     });
     let m = ctx.mirror.as_mut()?;
-    let data = polyph_plugins::read_under(&m.root, Path::new(path), MAX_FILE as u64);
-    let (data, deleted) = match data {
-        Ok(d) => (d, false),
-        Err(e) if e.kind() == std::io::ErrorKind::FileTooLarge => return None,
-        // Gone, or now a link the mirror must not follow.
-        Err(_) => (vec![], true),
-    };
+    let (data, deleted) = read_change(&m.root, path)?;
     let new = (!deleted).then(|| hash(&data));
     match m.side {
         Side::Host => {
@@ -510,5 +516,24 @@ mod tests {
         assert!(judge(Some(&h), &[], None).is_err(), "a new file that already exists");
         assert!(judge(None, &h, None).unwrap_err().contains("no longer exists"));
         assert_eq!(judge(Some(&h), &h, Some("Ann/claude")).unwrap_err(), "Ann/claude holds this file");
+    }
+
+    #[test]
+    fn unreadable_changes_are_skipped_not_deleted() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("a.rs"), "fn a() {}").unwrap();
+        assert_eq!(read_change(d.path(), "a.rs"), Some((b"fn a() {}".to_vec(), false)));
+        assert_eq!(read_change(d.path(), "gone.rs"), Some((vec![], true)));
+        assert_eq!(read_change(d.path(), "a.rs/under-a-file"), Some((vec![], true)));
+        std::fs::write(d.path().join("big.bin"), vec![0u8; MAX_FILE + 1]).unwrap();
+        assert_eq!(read_change(d.path(), "big.bin"), None);
+        #[cfg(unix)]
+        {
+            let secret = tempfile::tempdir().unwrap();
+            std::fs::write(secret.path().join("key"), "secret").unwrap();
+            std::fs::remove_file(d.path().join("a.rs")).unwrap();
+            std::os::unix::fs::symlink(secret.path().join("key"), d.path().join("a.rs")).unwrap();
+            assert_eq!(read_change(d.path(), "a.rs"), None, "a link is skipped, never sent as deleted");
+        }
     }
 }

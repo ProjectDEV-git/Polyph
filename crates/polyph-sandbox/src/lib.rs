@@ -42,6 +42,11 @@ pub struct Policy {
     pub tmp: Option<PathBuf>,
     /// Paths hidden from the agent entirely where the mechanism allows it.
     pub hidden: Vec<PathBuf>,
+    /// Paths inside the writable ones that stay read-only (the git config,
+    /// hooks and info of the agent's checkout, see
+    /// `polyph_git::protected_paths`). Enforced by bubblewrap and Seatbelt
+    /// only; Landlock, Windows and container mode ignore it.
+    pub read_only: Vec<PathBuf>,
     /// Daemon proxy: loopback TCP address and (Unix) socket path.
     pub proxy_tcp: Option<std::net::SocketAddr>,
     pub proxy_unix: Option<PathBuf>,
@@ -70,6 +75,20 @@ impl Policy {
         v.extend(self.writable.iter().cloned());
         v.extend(self.tmp.iter().cloned());
         v
+    }
+
+    /// The `read_only` paths that exist inside a writable path (others are
+    /// read-only anyway), each with its folder. The folder must not be
+    /// renamed away either, or the agent could put a writable copy in its
+    /// place (`mv .git .old && cp -r .old .git`).
+    fn read_only_inside(&self) -> Vec<(PathBuf, PathBuf)> {
+        let writable = self.writable_all();
+        self.read_only
+            .iter()
+            .filter(|r| writable.iter().any(|w| r.starts_with(w) && *r != w))
+            .filter(|r| std::fs::symlink_metadata(r).is_ok_and(|m| !m.file_type().is_symlink()))
+            .filter_map(|r| Some((r.clone(), r.parent()?.to_path_buf())))
+            .collect()
     }
 
     fn tmp_env(&self) -> Vec<(String, String)> {
@@ -164,6 +183,21 @@ fn wrap_inner(mech: Mechanism, policy: &Policy, program: &str, args: &[String]) 
                     let p = w.to_string_lossy().into_owned();
                     a.extend(["--bind".into(), p.clone(), p]);
                 }
+            }
+            // Each folder bound onto itself is a mount point, which cannot
+            // be renamed or removed; then the read-only paths over it.
+            let ro = policy.read_only_inside();
+            let mut pinned: Vec<&PathBuf> = vec![];
+            for (_, dir) in &ro {
+                if !writable.contains(dir) && !pinned.contains(&dir) {
+                    pinned.push(dir);
+                    let p = dir.to_string_lossy().into_owned();
+                    a.extend(["--bind".into(), p.clone(), p]);
+                }
+            }
+            for (r, _) in &ro {
+                let p = r.to_string_lossy().into_owned();
+                a.extend(["--ro-bind".into(), p.clone(), p]);
             }
             let s = sock.to_string_lossy().into_owned();
             a.extend(["--bind".into(), s.clone(), s.clone()]);
@@ -306,6 +340,25 @@ pub fn seatbelt_profile(policy: &Policy, proxy_port: u16) -> String {
             s.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", sb_quote(&real)));
         }
     }
+    // Later rules win: read-only paths inside the writable ones, and their
+    // folders themselves (not what is in them), so they cannot be renamed.
+    // A writable root's own folder cannot be renamed: its parent is read-only.
+    let writable = policy.writable_all();
+    let mut denied: Vec<String> = vec![];
+    for (r, dir) in policy.read_only_inside() {
+        let filter = if r.is_dir() { "subpath" } else { "literal" };
+        let dir = (!writable.contains(&dir)).then_some(("literal", dir));
+        for (f, p) in std::iter::once((filter, r.clone())).chain(dir) {
+            let real = p.canonicalize().ok().filter(|real| *real != p);
+            for p in std::iter::once(p).chain(real) {
+                let rule = format!("(deny file-write* ({f} \"{}\"))\n", sb_quote(&p));
+                if !denied.contains(&rule) {
+                    s.push_str(&rule);
+                    denied.push(rule);
+                }
+            }
+        }
+    }
     for h in &policy.hidden {
         s.push_str(&format!("(deny file-read* (subpath \"{}\"))\n", sb_quote(h)));
     }
@@ -431,6 +484,7 @@ mod seatbelt_tests {
             writable: vec![],
             tmp: Some(tmp.clone()),
             hidden: vec![],
+            read_only: vec![],
             proxy_tcp: None,
             proxy_unix: None,
             helper: vec![],
@@ -445,5 +499,66 @@ mod seatbelt_tests {
             let real = dir.canonicalize().unwrap();
             assert!(p.contains(&format!("(subpath \"{}\")", sb_quote(&real))), "{p}");
         }
+    }
+
+    fn git_policy(t: &Path) -> (Policy, PathBuf) {
+        let worktree = t.join("worktree");
+        let git = worktree.join(".git");
+        std::fs::create_dir_all(git.join("hooks")).unwrap();
+        std::fs::write(git.join("config"), "").unwrap();
+        let outside = t.join("elsewhere-config");
+        std::fs::write(&outside, "").unwrap();
+        let policy = Policy {
+            worktree: worktree.clone(),
+            writable: vec![],
+            tmp: None,
+            hidden: vec![],
+            // `info` is missing; `elsewhere-config` is not under a writable path.
+            read_only: vec![git.join("config"), git.join("hooks"), git.join("info"), outside],
+            proxy_tcp: None,
+            proxy_unix: Some(t.join("proxy.sock")),
+            helper: vec!["helper".into()],
+            container_image: None,
+        };
+        (policy, git)
+    }
+
+    #[test]
+    fn seatbelt_profile_keeps_git_settings_read_only() {
+        let t = tempfile::tempdir().unwrap();
+        let (policy, git) = git_policy(t.path());
+        let p = seatbelt_profile(&policy, 0);
+        let allow = p.find(&format!("(allow file-write* (subpath \"{}\"))", sb_quote(&policy.worktree))).unwrap();
+        for rule in [
+            format!("(deny file-write* (literal \"{}\"))", sb_quote(&git.join("config"))),
+            format!("(deny file-write* (subpath \"{}\"))", sb_quote(&git.join("hooks"))),
+            // `.git` itself, so it cannot be renamed and replaced.
+            format!("(deny file-write* (literal \"{}\"))", sb_quote(&git)),
+        ] {
+            let at = p.find(&rule).unwrap_or_else(|| panic!("no {rule} in\n{p}"));
+            assert!(at > allow, "a deny must come after the allow it narrows:\n{p}");
+        }
+        assert!(!p.contains("info\""), "{p}");
+        assert!(!p.contains("elsewhere-config"), "{p}");
+        assert!(!p.contains(&format!("(deny file-write* (literal \"{}\"))", sb_quote(&policy.worktree))), "{p}");
+    }
+
+    #[test]
+    fn bubblewrap_keeps_git_settings_read_only() {
+        let t = tempfile::tempdir().unwrap();
+        let (policy, git) = git_policy(t.path());
+        let w = wrap_inner(Mechanism::Bubblewrap, &policy, "true", &[]).unwrap();
+        let s = |p: &Path| p.to_string_lossy().into_owned();
+        let pos = |a: &[&str]| {
+            w.args.windows(a.len()).position(|x| x.iter().zip(a).all(|(x, a)| x == a)).unwrap_or_else(|| {
+                panic!("no {a:?} in {:?}", w.args);
+            })
+        };
+        let wt = pos(&["--bind", &s(&policy.worktree), &s(&policy.worktree)]);
+        let pin = pos(&["--bind", &s(&git), &s(&git)]);
+        let config = pos(&["--ro-bind", &s(&git.join("config")), &s(&git.join("config"))]);
+        let hooks = pos(&["--ro-bind", &s(&git.join("hooks")), &s(&git.join("hooks"))]);
+        assert!(wt < pin && pin < config && pin < hooks, "{:?}", w.args);
+        assert!(!w.args.iter().any(|a| a.ends_with("info") || a.ends_with("elsewhere-config")), "{:?}", w.args);
     }
 }

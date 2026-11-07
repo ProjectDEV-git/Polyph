@@ -461,7 +461,10 @@ async fn push(rt: &RoomRuntime, shared: &Shared, agent: &AgentRef, root: &Path, 
     let kind = ApprovalKind::Push { remote: remote.to_string(), branch: branch.to_string() };
     if let Decision::Approve { .. } = agents::request_approval(rt, shared, agent, kind, None).await {
         let (root, remote2, branch2) = (root.to_path_buf(), remote.to_string(), branch.to_string());
-        let r = blocking(move || Repo::open(&root).and_then(|r| r.push(&remote2, &branch2))).await;
+        let home = shared.paths.home.clone();
+        let r =
+            blocking(move || crate::folders::open_for_network(&home, &root).and_then(|r| r.push(&remote2, &branch2)))
+                .await;
         let ok = matches!(r, Ok(Ok(())));
         shared.emit(crate::events::ApiEvent::room_kind(
             &rt.id,
@@ -730,11 +733,16 @@ async fn run_checks_in(shared: &Arc<Shared>, project: &ProjectConfig, wt: &Path)
     let run_dir = std::env::temp_dir()
         .join(format!("polyph-check-{}", ObjectId::random().map(|o| o.short()).unwrap_or_default()));
     let proxy = polyph_sandbox::proxy::start(allow, deny, Some(run_dir.clone())).await.map_err(|e| e.to_string())?;
+    let read_only = {
+        let wt = wt.to_path_buf();
+        tokio::task::spawn_blocking(move || polyph_git::protected_paths(&wt)).await.unwrap_or_default()
+    };
     let policy = Policy {
         worktree: wt.to_path_buf(),
         writable: vec![],
         tmp: Some(tmp.clone()),
         hidden: Policy::default_hidden(&shared.paths.home),
+        read_only,
         proxy_tcp: Some(proxy.tcp),
         proxy_unix: proxy.unix.clone(),
         helper: shared.opts.sandbox_helper.clone(),

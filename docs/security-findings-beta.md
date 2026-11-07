@@ -382,6 +382,18 @@ Summary:
   before running, and set `GIT_CONFIG_NOSYSTEM`-style protections where
   possible.
 - Wire change: no.
+- Status: partly fixed (KAO-74). Under bubblewrap and Seatbelt the
+  checkout's `.git/config`, `hooks/`, `info/`, a linked worktree's `.git`
+  file and `config.worktree` are read-only and `.git` cannot be renamed
+  (bubblewrap tested by `crates/polyph-sandbox/tests/sandbox.rs`; Seatbelt
+  by a profile unit test only). Task worktrees' `.git` files are verified
+  and git is run with `--git-dir`; the daemon's git commands override the
+  settings listed in `docs/security.md`. Remaining gap: under Landlock,
+  Windows and container mode an agent in its own checkout can still write
+  `.git/config` and hooks; the daemon no longer runs most of what it
+  writes, but filter and merge drivers still run on its status, commit and
+  fast-forward there, and the person's own git runs all of it. Tracked in
+  `STUBS.md`.
 
 ## SEC-14: Host IPC is reachable from the sandbox
 

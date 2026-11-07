@@ -69,55 +69,139 @@ pub struct Repo {
     /// For an agent's worktree: the main `.git/worktrees`, which its `.git`
     /// file must point into before every command.
     worktrees: Option<PathBuf>,
+    /// Whose configuration `fetch` and `push` use. Local commands always
+    /// run with [`guard_args`].
+    network: Trust,
+}
+
+/// Whose configuration a git command may use to run programs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Trust {
+    /// Only the person wrote this repository's config, hooks and info: used
+    /// as they are (per-repository `core.sshCommand`, `includeIf`, hooks
+    /// such as Git LFS's pre-push).
+    Person,
+    /// An agent could have written them: run with [`guard_args`].
+    Agent,
 }
 
 /// `-c` settings that win over a repository's own config wherever it names
-/// a program to run. Agents write their worktree and could write `.git`
-/// (SEC-13); the daemon runs git with the person's rights.
+/// a program to run. Agents write their worktree and, without a task, the
+/// `.git` of the person's own checkout (SEC-13); the daemon runs git with
+/// the person's rights. Settings git keeps the first value of
+/// (`core.gitProxy`, `remote.*.uploadpack`) are handled where the command
+/// is built; settings under names no list can cover (`filter.*`,
+/// `merge.*.driver`) are not handled here: see [`protected_paths`] and
+/// `docs/security.md`.
 fn guard_args() -> &'static [String] {
     static ARGS: OnceLock<Vec<String>> = OnceLock::new();
     ARGS.get_or_init(|| {
-        // A file, so `<hooksPath>/<hook>` never exists.
-        let hooks = if cfg!(windows) {
-            std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "NUL".into())
-        } else {
-            "/dev/null".into()
-        };
-        // shortcut: only the global value is kept (GIT_SSH and system config are not), read those too if someone needs them.
-        let ssh = global_config("core.sshCommand").unwrap_or_else(|| "ssh".into());
-        let askpass = global_config("core.askPass").unwrap_or_default();
-        [
-            "core.fsmonitor=".to_string(),
-            format!("core.hooksPath={hooks}"),
-            format!("core.sshCommand={ssh}"),
-            format!("core.askPass={askpass}"),
-            "core.pager=cat".into(),
-            "protocol.ext.allow=never".into(),
-            "commit.gpgSign=false".into(),
-        ]
-        .into_iter()
-        .flat_map(|kv| ["-c".to_string(), kv])
-        .collect()
+        guard_settings(&|k| std::env::var_os(k), &person_config)
+            .into_iter()
+            .flat_map(|kv| ["-c".to_string(), kv])
+            .collect()
     })
 }
 
-/// The person's own setting for `key`, from their global config only.
-fn global_config(key: &str) -> Option<String> {
-    let out = Command::new("git")
-        .args(["config", "--global", "--includes", "--get", key])
-        .current_dir(std::env::temp_dir())
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (out.status.success() && !v.is_empty()).then_some(v)
+/// The settings behind [`guard_args`], from the daemon's environment
+/// (`env`) and the person's system and global config (`config`, which
+/// returns `git config` output lines for the given arguments).
+fn guard_settings(
+    env: &dyn Fn(&str) -> Option<std::ffi::OsString>,
+    config: &dyn Fn(&[&str]) -> Vec<String>,
+) -> Vec<String> {
+    // A file, so `<hooksPath>/<hook>` never exists.
+    let hooks = if cfg!(windows) {
+        std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "NUL".into())
+    } else {
+        "/dev/null".into()
+    };
+    let mut v = vec![
+        "core.fsmonitor=".to_string(),
+        format!("core.hooksPath={hooks}"),
+        "core.pager=cat".into(),
+        "protocol.ext.allow=never".into(),
+        "commit.gpgSign=false".into(),
+    ];
+    // GIT_SSH_COMMAND wins over any config, so it needs no override.
+    if env("GIT_SSH_COMMAND").is_none() {
+        let ssh = config(&["--get-all", "core.sshCommand"]).pop().or_else(|| {
+            // GIT_SSH ranks below core.sshCommand, so carry it over (quoted:
+            // core.sshCommand goes through the shell, GIT_SSH does not).
+            env("GIT_SSH").map(|p| format!("'{}'", p.to_string_lossy().replace('\'', r"'\''")))
+        });
+        v.push(format!("core.sshCommand={}", ssh.unwrap_or_else(|| "ssh".into())));
+    }
+    // GIT_ASKPASS wins over any config. Otherwise keep the person's value,
+    // or SSH_ASKPASS, which git falls back to when core.askPass is unset.
+    // With neither, the empty value behaves as unset for the person and
+    // still replaces the repository's.
+    if env("GIT_ASKPASS").is_none() {
+        let askpass = config(&["--get-all", "core.askPass"])
+            .pop()
+            .or_else(|| env("SSH_ASKPASS").map(|p| p.to_string_lossy().into_owned()))
+            .unwrap_or_default();
+        v.push(format!("core.askPass={askpass}"));
+    }
+    // An empty helper clears every helper read so far, the repository's
+    // included; then the person's own come back in their order.
+    v.push("credential.helper=".into());
+    for line in config(&["--get-regexp", r"^credential\..*helper$"]) {
+        let (key, value) = line.split_once(' ').unwrap_or((line.as_str(), ""));
+        if key.ends_with(".helper") && !key.contains('=') {
+            v.push(format!("{key}={value}"));
+        }
+    }
+    v
+}
+
+/// `git config <args>` over the person's system and global files, in the
+/// order git reads them. Never a repository's.
+fn person_config(args: &[&str]) -> Vec<String> {
+    let mut v = vec![];
+    for scope in ["--system", "--global"] {
+        let Ok(out) = Command::new("git")
+            .args(["config", scope, "--includes"])
+            .args(args)
+            .current_dir(std::env::temp_dir())
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_CONFIG")
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+        else {
+            continue;
+        };
+        if out.status.success() {
+            v.extend(String::from_utf8_lossy(&out.stdout).lines().map(str::to_string));
+        }
+    }
+    v
+}
+
+/// A `git` command in `dir`. Under [`Trust::Agent`] it carries
+/// [`guard_args`] and no `core.gitProxy`: git takes the first value it reads
+/// for that key, so a `-c` cannot replace the repository's, but an empty
+/// `GIT_PROXY_COMMAND` makes git skip the setting.
+fn git_command(dir: &Path, trust: Trust) -> Command {
+    let mut c = Command::new("git");
+    c.arg("-C").arg(dir);
+    if trust == Trust::Agent {
+        c.args(guard_args());
+        if std::env::var_os("GIT_PROXY_COMMAND").is_none() {
+            c.env("GIT_PROXY_COMMAND", "");
+        }
+    }
+    // Never prompt, never use a pager, and keep output stable.
+    c.env("GIT_TERMINAL_PROMPT", "0").env("GIT_PAGER", "cat").env("LC_ALL", "C");
+    c
 }
 
 /// Refuses a worktree whose `.git` file points anywhere but into the main
 /// repository's `.git/worktrees`: an agent could aim it at a repository it
-/// made, with config and hooks of its own (SEC-13).
-fn check_gitdir(root: &Path, worktrees: &Path) -> Result<()> {
+/// made, with config and hooks of its own (SEC-13). Returns the verified
+/// git directory, which commands then name explicitly.
+fn check_gitdir(root: &Path, worktrees: &Path) -> Result<PathBuf> {
     let bad = |why: String| GitError::Invalid(format!("refusing to run git in {}: {why}", root.display()));
     let dot = root.join(".git");
     let m = std::fs::symlink_metadata(&dot).map_err(|e| bad(format!("cannot read .git: {e}")))?;
@@ -130,14 +214,16 @@ fn check_gitdir(root: &Path, worktrees: &Path) -> Result<()> {
     if dir.parent() != Some(worktrees) {
         return Err(bad(format!("its gitdir {} is not in {}", dir.display(), worktrees.display())));
     }
-    Ok(())
+    Ok(dir)
 }
 
 fn run(dir: &Path, args: &[&str], env: &[(&str, &str)], stdin: Option<&[u8]>) -> Result<(bool, String, String)> {
-    let mut c = Command::new("git");
-    c.arg("-C").arg(dir).args(guard_args()).args(args);
-    // Never prompt, never use a pager, and keep output stable.
-    c.env("GIT_TERMINAL_PROMPT", "0").env("GIT_PAGER", "cat").env("LC_ALL", "C");
+    let mut c = git_command(dir, Trust::Agent);
+    c.args(args);
+    output(c, env, stdin)
+}
+
+fn output(mut c: Command, env: &[(&str, &str)], stdin: Option<&[u8]>) -> Result<(bool, String, String)> {
     for (k, v) in env {
         c.env(k, v);
     }
@@ -165,34 +251,68 @@ impl Repo {
         if !ok {
             return Err(GitError::NotARepo(path.display().to_string()));
         }
-        Ok(Self { root: PathBuf::from(out.trim()), worktrees: None })
+        Ok(Self { root: PathBuf::from(out.trim()), worktrees: None, network: Trust::Agent })
+    }
+
+    /// Opens the working copy containing `path` for a `fetch` or `push` that
+    /// uses the repository's own configuration and hooks as they are. Only
+    /// for repositories no agent could write the config, hooks or info of
+    /// (see [`protected_paths`]).
+    pub fn open_trusted(path: &Path) -> Result<Self> {
+        Ok(Self { network: Trust::Person, ..Self::open(path)? })
     }
 
     /// Opens an agent's worktree at `path`, a linked worktree of this
     /// repository. Every command first checks that its `.git` still points
-    /// into this repository's `.git/worktrees`.
+    /// into this repository's `.git/worktrees`, then names that git
+    /// directory itself, so git never reads the `.git` file the agent can
+    /// rewrite.
     pub fn open_worktree(&self, path: &Path) -> Result<Repo> {
         let common = self.common_dir()?;
         let worktrees = canonical(&common).map_err(GitError::Spawn)?.join("worktrees");
-        check_gitdir(path, &worktrees)?;
-        let mut r = Repo::open(path)?;
-        r.worktrees = Some(worktrees);
-        Ok(r)
+        let root = canonical(path).map_err(GitError::Spawn)?;
+        check_gitdir(&root, &worktrees)?;
+        Ok(Repo { root, worktrees: Some(worktrees), network: Trust::Agent })
     }
 
     pub fn root(&self) -> &Path {
         &self.root
     }
 
-    fn exec(&self, args: &[&str], env: &[(&str, &str)], stdin: Option<&[u8]>) -> Result<(bool, String, String)> {
+    /// The command for `args`, with the verified git directory of an
+    /// agent's worktree named explicitly.
+    fn command(&self, trust: Trust, args: &[&str]) -> Result<Command> {
+        let mut c = git_command(&self.root, trust);
         if let Some(w) = &self.worktrees {
-            check_gitdir(&self.root, w)?;
+            let dir = check_gitdir(&self.root, w)?;
+            let mut g = std::ffi::OsString::from("--git-dir=");
+            g.push(&dir);
+            let mut t = std::ffi::OsString::from("--work-tree=");
+            t.push(&self.root);
+            c.arg(g).arg(t);
         }
-        run(&self.root, args, env, stdin)
+        c.args(args);
+        Ok(c)
+    }
+
+    fn exec(&self, args: &[&str], env: &[(&str, &str)], stdin: Option<&[u8]>) -> Result<(bool, String, String)> {
+        output(self.command(Trust::Agent, args)?, env, stdin)
     }
 
     fn git(&self, args: &[&str]) -> Result<String> {
         self.git_env(args, &[], None)
+    }
+
+    /// `fetch` and `push`: with the repository's own config when it is
+    /// trusted ([`Repo::open_trusted`]).
+    fn git_network(&self, args: &[&str]) -> Result<String> {
+        let (ok, out, err) = output(self.command(self.network, args)?, &[], None)?;
+        if ok {
+            Ok(out)
+        } else {
+            let cmd = args.iter().find(|a| !a.starts_with('-') && !a.contains('=')).copied().unwrap_or_default();
+            Err(GitError::Failed { cmd: cmd.to_string(), stderr: err.trim().into() })
+        }
     }
 
     fn git_env(&self, args: &[&str], env: &[(&str, &str)], stdin: Option<&[u8]>) -> Result<String> {
@@ -469,7 +589,7 @@ impl Repo {
         if remote.starts_with('-') {
             return Err(GitError::Invalid(format!("not a valid remote: {remote}")));
         }
-        self.git(&["push", "--quiet", remote, &format!("refs/heads/{branch}:refs/heads/{branch}")]).map(|_| ())
+        self.git_network(&["push", "--quiet", remote, &format!("refs/heads/{branch}:refs/heads/{branch}")]).map(|_| ())
     }
 
     /// Files a merge commit brought into its first parent.
@@ -496,12 +616,22 @@ impl Repo {
         }
     }
 
-    /// Fetches `remote` (all branches, pruning gone ones) without ever prompting.
+    /// Fetches `remote` (all branches, pruning gone ones) without ever
+    /// prompting. Submodules are not fetched: their git directories stay
+    /// writable for agents. Unless the repository is trusted, the remote's
+    /// `uploadpack` is the plain `git-upload-pack`, whatever its config says
+    /// (git keeps the first `uploadpack` it reads, so this is the command
+    /// line option, not a `-c`).
     pub fn fetch(&self, remote: &str) -> Result<()> {
         if remote.starts_with('-') {
             return Err(GitError::Invalid(format!("not a valid remote: {remote}")));
         }
-        self.git(&["fetch", "--quiet", "--prune", remote]).map(|_| ())
+        let mut args = vec!["fetch", "--quiet", "--prune", "--no-recurse-submodules"];
+        if self.network == Trust::Agent {
+            args.push("--upload-pack=git-upload-pack");
+        }
+        args.push(remote);
+        self.git_network(&args).map(|_| ())
     }
 
     /// Files tracked in the index.
@@ -670,13 +800,50 @@ pub fn clone_from(url: &str, dir: &Path, branch: Option<&str>, partial: bool) ->
     args.extend(["--".into(), url, dir.to_string_lossy().into_owned()]);
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     // Unlike other calls, cloning may ask for a password in the terminal.
+    // A new repository has no config or hooks of its own yet, so the
+    // person's settings apply as they are.
     let mut c = Command::new("git");
-    c.arg("-C").arg(parent).args(guard_args()).args(&refs).env("GIT_PAGER", "cat");
+    c.arg("-C").arg(parent).args(&refs).env("GIT_PAGER", "cat");
     let status = c.status().map_err(GitError::Spawn)?;
     if !status.success() {
         return Err(GitError::Failed { cmd: "clone".into(), stderr: format!("git clone exited with {status}") });
     }
     Repo::open(dir)
+}
+
+/// Paths of the git checkout at `worktree` that an agent working there must
+/// not write, for the sandbox to mount read-only (SEC-13): the shared
+/// `config`, `hooks/` and `info/`, the worktree's own `config.worktree`, and
+/// a linked worktree's `.git` file. Missing `hooks/` and `info/` folders are
+/// created first (as is `config.worktree` when the repository uses one), so
+/// the agent cannot create them. Objects, refs, the index and logs stay
+/// writable: agents commit. Empty outside a git checkout.
+pub fn protected_paths(worktree: &Path) -> Vec<PathBuf> {
+    let Ok(r) = Repo::open(worktree) else { return vec![] };
+    let (Ok(common), Ok(dir)) = (r.common_dir(), r.git(&["rev-parse", "--absolute-git-dir"])) else { return vec![] };
+    let (Ok(common), Ok(dir)) = (canonical(&common), canonical(Path::new(dir.trim()))) else { return vec![] };
+    let mut v = vec![common.join("config")];
+    for d in ["hooks", "info"] {
+        let p = common.join(d);
+        let _ = std::fs::create_dir_all(&p);
+        v.push(p);
+    }
+    let per_worktree = dir.join("config.worktree");
+    let uses = r.git(&["config", "--bool", "--get", "extensions.worktreeConfig"]).is_ok_and(|s| s.trim() == "true");
+    if uses && !per_worktree.exists() {
+        let _ = std::fs::write(&per_worktree, "");
+    }
+    v.push(per_worktree);
+    // The `.git` link file, never a `.git` folder (commits write there).
+    if let Ok(root) = canonical(r.root())
+        && std::fs::symlink_metadata(root.join(".git")).is_ok_and(|m| m.is_file())
+    {
+        v.push(root.join(".git"));
+    }
+    v.retain(|p| p.is_dir() || std::fs::symlink_metadata(p).is_ok_and(|m| m.is_file()));
+    v.sort();
+    v.dedup();
+    v
 }
 
 /// What [`Repo::sync`] did.
@@ -787,7 +954,7 @@ mod tests {
 
     pub(crate) fn init() -> (tempfile::TempDir, Repo) {
         let d = tempfile::tempdir().unwrap();
-        let r = Repo { root: d.path().to_path_buf(), worktrees: None };
+        let r = Repo { root: d.path().to_path_buf(), worktrees: None, network: Trust::Agent };
         r.git(&["init", "-q", "-b", "main"]).unwrap();
         // Byte-exact merge results: no CRLF conversion on Windows checkouts.
         r.git(&["config", "core.autocrlf", "false"]).unwrap();
@@ -1005,5 +1172,203 @@ mod tests {
         std::fs::create_dir(p.join(".git")).unwrap();
         assert!(r.open_worktree(&p).is_err());
         assert!(r.open_worktree(r.root()).is_err(), "the main working copy is not a linked worktree");
+    }
+
+    #[test]
+    fn worktree_commands_name_the_verified_gitdir() {
+        let (_d, r) = init();
+        let wt_dir = tempfile::tempdir().unwrap();
+        let wt = r.add_worktree(&wt_dir.path().join("t1"), "polyph/t1", "main").unwrap();
+        let gitdir = canonical(&r.common_dir().unwrap()).unwrap().join("worktrees").join("t1");
+        let c = wt.command(Trust::Agent, &["status"]).unwrap();
+        let args: Vec<String> = c.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert!(args.contains(&format!("--git-dir={}", gitdir.display())), "{args:?}");
+        assert!(args.contains(&format!("--work-tree={}", wt.root().display())), "{args:?}");
+        let c = r.command(Trust::Agent, &["status"]).unwrap();
+        assert!(!c.get_args().any(|a| a.to_string_lossy().starts_with("--git-dir")), "the main checkout needs none");
+    }
+
+    #[test]
+    fn guard_keeps_the_persons_own_programs() {
+        let none = |_: &str| None;
+        let empty = |_: &[&str]| vec![];
+        let s = guard_settings(&none, &empty);
+        assert!(s.contains(&"core.sshCommand=ssh".to_string()), "{s:?}");
+        assert!(s.contains(&"core.askPass=".to_string()), "nothing to keep, and the repository's must go: {s:?}");
+        assert_eq!(s.iter().filter(|k| k.starts_with("credential.")).count(), 1, "only the reset: {s:?}");
+
+        // GIT_SSH ranks below core.sshCommand, so it is carried over.
+        let env = |k: &str| match k {
+            "GIT_SSH" => Some("/opt/my ssh/plink".into()),
+            "SSH_ASKPASS" => Some("/usr/bin/ksshaskpass".into()),
+            _ => None,
+        };
+        let s = guard_settings(&env, &empty);
+        assert!(s.contains(&"core.sshCommand='/opt/my ssh/plink'".to_string()), "{s:?}");
+        assert!(s.contains(&"core.askPass=/usr/bin/ksshaskpass".to_string()), "{s:?}");
+
+        // The person's config wins over GIT_SSH, as in git; helpers come back after the reset.
+        let config = |a: &[&str]| match a.last().copied() {
+            Some("core.sshCommand") => vec!["ssh -i ~/.ssh/a".into(), "ssh -i ~/.ssh/b".into()],
+            Some("core.askPass") => vec!["/usr/lib/ssh/x11-ssh-askpass".into()],
+            Some(r"^credential\..*helper$") => {
+                vec![
+                    "credential.helper osxkeychain".into(),
+                    "credential.https://github.com.helper !gh auth git-credential".into(),
+                ]
+            }
+            _ => vec![],
+        };
+        let s = guard_settings(&env, &config);
+        assert!(s.contains(&"core.sshCommand=ssh -i ~/.ssh/b".to_string()), "the last value wins: {s:?}");
+        assert!(s.contains(&"core.askPass=/usr/lib/ssh/x11-ssh-askpass".to_string()), "{s:?}");
+        let cred: Vec<&String> = s.iter().filter(|k| k.starts_with("credential.")).collect();
+        assert_eq!(
+            cred,
+            [
+                "credential.helper=",
+                "credential.helper=osxkeychain",
+                "credential.https://github.com.helper=!gh auth git-credential"
+            ]
+        );
+
+        // Variables that win over any config need no override.
+        let env = |k: &str| matches!(k, "GIT_SSH_COMMAND" | "GIT_ASKPASS").then(|| "x".into());
+        let s = guard_settings(&env, &config);
+        assert!(!s.iter().any(|k| k.starts_with("core.sshCommand") || k.starts_with("core.askPass")), "{s:?}");
+    }
+
+    /// A script that notes each run in `ran` and fails.
+    #[cfg(unix)]
+    fn tattler(dir: &Path, name: &str) -> (PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let (script, marker) = (dir.join(name), dir.join(format!("{name}.ran")));
+        std::fs::write(&script, format!("#!/bin/sh\necho \"$0 $*\" >> '{}'\nexit 1\n", marker.display())).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (script, marker)
+    }
+
+    /// Plain git, as the person would run it.
+    fn plain_git(dir: &Path, args: &[&str]) {
+        let _ = Command::new("git").arg("-C").arg(dir).args(args).env("GIT_TERMINAL_PROMPT", "0").output().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agent_writable_fetch_runs_no_repository_programs() {
+        let (src, _r) = init();
+        let bare = tempfile::tempdir().unwrap();
+        let bare_path = bare.path().join("origin.git");
+        run(src.path(), &["clone", "-q", "--bare", ".", &bare_path.to_string_lossy()], &[], None).unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let mine = clone_from(&bare_path.to_string_lossy(), &out.path().join("mine"), None, false).unwrap();
+        let t = tempfile::tempdir().unwrap();
+        let s = |p: &Path| p.to_string_lossy().into_owned();
+
+        // remote.<name>.uploadpack, run by fetch over a local path or SSH.
+        let (pack, pack_ran) = tattler(t.path(), "uploadpack");
+        mine.git(&["config", "remote.origin.uploadpack", &s(&pack)]).unwrap();
+        plain_git(mine.root(), &["fetch", "origin"]);
+        assert!(pack_ran.exists(), "plain git fetch ran no uploadpack, so the test shows nothing");
+        std::fs::remove_file(&pack_ran).unwrap();
+        mine.fetch("origin").unwrap();
+        mine.sync("origin").unwrap();
+        assert!(!pack_ran.exists(), "ran: {}", std::fs::read_to_string(&pack_ran).unwrap_or_default());
+        // A trusted repository keeps its own settings.
+        assert!(Repo::open_trusted(mine.root()).unwrap().fetch("origin").is_err());
+        assert!(pack_ran.exists(), "a trusted fetch uses the repository's config");
+
+        // credential.helper, asked for a password by an HTTP remote.
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            for mut c in l.incoming().flatten() {
+                let _ = c.read(&mut [0u8; 8192]);
+                let _ = c.write_all(b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"x\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            }
+        });
+        let (helper, helper_ran) = tattler(t.path(), "helper");
+        mine.git(&["remote", "add", "web", &format!("http://127.0.0.1:{port}/r.git")]).unwrap();
+        mine.git(&["config", "credential.helper", &format!("!{}", s(&helper))]).unwrap();
+        mine.git(&["config", &format!("credential.http://127.0.0.1:{port}.helper"), &format!("!{}", s(&helper))])
+            .unwrap();
+        plain_git(mine.root(), &["fetch", "web"]);
+        assert!(helper_ran.exists(), "plain git fetch asked no credential helper, so the test shows nothing");
+        std::fs::remove_file(&helper_ran).unwrap();
+        assert!(mine.fetch("web").is_err());
+        assert!(!helper_ran.exists(), "ran: {}", std::fs::read_to_string(&helper_ran).unwrap_or_default());
+
+        // core.gitProxy, for git:// remotes. Git keeps the first value it
+        // reads, so this needs GIT_PROXY_COMMAND rather than a `-c`.
+        let (proxy, proxy_ran) = tattler(t.path(), "gitproxy");
+        mine.git(&["remote", "add", "daemon", "git://127.0.0.1:1/r.git"]).unwrap();
+        mine.git(&["config", "core.gitProxy", &s(&proxy)]).unwrap();
+        plain_git(mine.root(), &["fetch", "daemon"]);
+        assert!(proxy_ran.exists(), "plain git fetch ran no gitProxy, so the test shows nothing");
+        std::fs::remove_file(&proxy_ran).unwrap();
+        assert!(mine.fetch("daemon").is_err());
+        assert!(!proxy_ran.exists(), "ran: {}", std::fs::read_to_string(&proxy_ran).unwrap_or_default());
+
+        // core.sshCommand, for SSH remotes.
+        let (ssh, ssh_ran) = tattler(t.path(), "ssh");
+        mine.git(&["remote", "add", "far", "ssh://git@127.0.0.1:1/r.git"]).unwrap();
+        mine.git(&["config", "core.sshCommand", &s(&ssh)]).unwrap();
+        assert!(mine.fetch("far").is_err());
+        assert!(!ssh_ran.exists(), "ran: {}", std::fs::read_to_string(&ssh_ran).unwrap_or_default());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn trusted_push_keeps_the_repositorys_ssh_command_and_hooks() {
+        let (d, r) = init();
+        let t = tempfile::tempdir().unwrap();
+        // A per-repository SSH command (a deploy key, say).
+        let (ssh, ssh_ran) = tattler(t.path(), "ssh");
+        r.git(&["remote", "add", "far", "ssh://git@example.invalid/r.git"]).unwrap();
+        r.git(&["config", "core.sshCommand", &ssh.to_string_lossy()]).unwrap();
+        assert!(Repo::open_trusted(d.path()).unwrap().push("far", "main").is_err());
+        let ran = std::fs::read_to_string(&ssh_ran).unwrap_or_default();
+        assert!(ran.contains("example.invalid"), "the repository's core.sshCommand did not run: {ran:?}");
+
+        // A pre-push hook (Git LFS installs one).
+        let bare = t.path().join("origin.git");
+        run(d.path(), &["init", "-q", "--bare", &bare.to_string_lossy()], &[], None).unwrap();
+        r.git(&["remote", "add", "origin", &bare.to_string_lossy()]).unwrap();
+        let hooks = r.common_dir().unwrap().join("hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        let marker = t.path().join("pre-push.ran");
+        std::fs::write(hooks.join("pre-push"), format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(hooks.join("pre-push"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        r.push("origin", "main").unwrap();
+        assert!(!marker.exists(), "a repository an agent can write runs no hooks");
+        // Something to push again (git runs no pre-push when up to date).
+        run(&bare, &["update-ref", "-d", "refs/heads/main"], &[], None).unwrap();
+        Repo::open_trusted(d.path()).unwrap().push("origin", "main").unwrap();
+        assert!(marker.exists(), "the trusted push skipped the repository's pre-push hook");
+    }
+
+    #[test]
+    fn protected_paths_cover_config_hooks_and_info() {
+        let (d, r) = init();
+        let common = canonical(&r.common_dir().unwrap()).unwrap();
+        std::fs::remove_dir_all(common.join("hooks")).ok();
+        let p = protected_paths(d.path());
+        assert_eq!(p, vec![common.join("config"), common.join("hooks"), common.join("info")]);
+        assert!(common.join("hooks").is_dir(), "created so the agent cannot");
+
+        // A linked worktree: also its `.git` file and, when used, its config.worktree.
+        r.git(&["config", "extensions.worktreeConfig", "true"]).unwrap();
+        let wt_dir = tempfile::tempdir().unwrap();
+        let wt = r.add_worktree(&wt_dir.path().join("t1"), "polyph/t1", "main").unwrap();
+        let p = protected_paths(wt.root());
+        let own = common.join("worktrees").join("t1").join("config.worktree");
+        assert!(p.contains(&own) && own.is_file(), "{p:?}");
+        assert!(p.contains(&wt.root().join(".git")), "{p:?}");
+        assert!(p.contains(&common.join("config")), "{p:?}");
+        assert!(protected_paths(tempfile::tempdir().unwrap().path()).is_empty());
     }
 }

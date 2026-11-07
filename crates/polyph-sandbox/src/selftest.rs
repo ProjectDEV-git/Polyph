@@ -60,6 +60,7 @@ pub async fn run_all(helper: Vec<String>) -> anyhow::Result<Vec<MechanismReport>
         writable: vec![],
         tmp: Some(base.join("tmp")),
         hidden: vec![],
+        read_only: vec![],
         proxy_tcp: Some(proxy.tcp),
         proxy_unix: proxy.unix.clone(),
         helper: helper.clone(),

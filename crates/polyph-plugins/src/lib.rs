@@ -68,13 +68,17 @@ pub fn read_under(root: &Path, rel: &Path, max: u64) -> std::io::Result<Vec<u8>>
         return Err(too_big());
     }
     let f = std::fs::File::open(&path)?;
-    // A link swapped in after the checks above opens some other file.
+    // A link swapped in after the checks above opens some other file. A
+    // hard link is another name for a file that may lie outside the root.
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
         let o = f.metadata()?;
         if (o.dev(), o.ino()) != (m.dev(), m.ino()) {
             return Err(refuse(format!("{} changed while being read", path.display())));
+        }
+        if o.nlink() > 1 {
+            return Err(refuse(format!("{} is a hard link", path.display())));
         }
     }
     // shortcut: Windows has no swap check after the link checks; add one (file IDs) if agents run unsandboxed there.
@@ -123,6 +127,10 @@ mod tests {
             std::fs::remove_dir_all(root.join(".polyph")).unwrap();
             symlink(&outside, root.join(".polyph")).unwrap();
             assert!(read_text_under(&root, Path::new(".polyph/brief.md")).is_err());
+            // A hard link to a file outside.
+            std::fs::hard_link(outside.join("brief.md"), root.join("hard.md")).unwrap();
+            let e = read_text_under(&root, Path::new("hard.md")).unwrap_err();
+            assert_eq!(e.kind(), std::io::ErrorKind::InvalidInput, "{e}");
         }
     }
 }

@@ -436,11 +436,28 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
     let proxy = polyph_sandbox::proxy::start_with(allow, decider, Some(internal), Some(tmp.join("run"))).await?;
     let writable: Vec<PathBuf> =
         def.config.writable.iter().map(|w| registry::expand(w)).filter(|p| p.exists()).collect();
+    // The git config, hooks and info of the checkout stay read-only where
+    // the sandbox can do that (SEC-13). Where it cannot, and the agent works
+    // in the person's own checkout, the daemon stops trusting that
+    // checkout's settings for its own fetches and pushes. (With no sandbox
+    // the agent runs as the person anyway.)
+    let read_only = {
+        let wt = worktree.clone();
+        tokio::task::spawn_blocking(move || polyph_git::protected_paths(&wt)).await.unwrap_or_default()
+    };
+    if task_wt.is_none()
+        && !read_only.is_empty()
+        && !matches!(mech, Mechanism::Bubblewrap | Mechanism::Seatbelt | Mechanism::None)
+        && let Ok(r) = polyph_git::Repo::open(&worktree)
+    {
+        crate::folders::mark_git_exposed(&shared.paths.home, r.root())?;
+    }
     let policy = Policy {
         worktree: worktree.clone(),
         writable,
         tmp: Some(tmp.join("tmp")),
         hidden: Policy::default_hidden(&shared.paths.home),
+        read_only,
         proxy_tcp: Some(proxy.tcp),
         proxy_unix: proxy.unix.clone(),
         helper: shared.opts.sandbox_helper.clone(),

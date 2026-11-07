@@ -50,6 +50,14 @@ lists notes and agents write them.
 - **seccomp.** The Landlock fallback restricts files and TCP connects but adds
   no seccomp filter (for example against raw sockets or UDP). bubblewrap mode
   isolates the network with a namespace instead.
+- **Agents' git settings (SEC-13) outside bubblewrap and Seatbelt.**
+  bubblewrap and Seatbelt keep the git `config`, `hooks/` and `info/` of an
+  agent's own checkout read-only; Landlock, Windows (low integrity) and
+  container mode do not, so an agent working without a task there can plant
+  config and hooks that the person's git, and the daemon's filter and merge
+  drivers, run. The daemon then fetches and pushes that checkout with
+  guarded settings (`folders::mark_git_exposed`). The Seatbelt rules have a
+  profile unit test but have not run on a Mac. See `docs/security.md`.
 - **Sandbox mechanisms on macOS and Windows** run only in CI. macOS CI found
   that the Seatbelt profile let agents write to the shared temp folders; that
   was fixed in M11 (only the agent's own TMPDIR is writable) and is covered

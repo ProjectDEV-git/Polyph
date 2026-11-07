@@ -114,17 +114,54 @@ given machine. See `docs/sandbox.md` (M3).
 
 The daemon treats an agent's worktree as hostile input:
 
-- Every git command it runs overrides the settings a repository could use to
-  run programs (`core.fsmonitor`, `core.hooksPath`, `core.sshCommand`,
-  `core.askPass`, `core.pager`, `protocol.ext.allow`, `commit.gpgSign`), and
-  diffs pass `--no-ext-diff --no-textconv`. Before each command in a task
-  worktree it checks that the worktree's `.git` file points into the main
-  repository's `.git/worktrees/`, and refuses otherwise. Filter and merge
-  drivers, `credential.helper` and `remote.*.uploadpack` cannot be overridden
-  this way; they rely on `.git` being read-only inside the sandbox.
+- Under bubblewrap and Seatbelt, the git `config`, `hooks/` and `info/` of
+  the agent's checkout (and a linked worktree's `.git` file and
+  `config.worktree`) are read-only inside the sandbox, and `.git` cannot be
+  renamed or replaced. The rest of `.git` stays writable so agents can
+  commit. Seatbelt's rules are covered by a unit test of the profile, not
+  yet run on a Mac. Landlock, Windows and container mode do not enforce
+  this; see "Git settings an agent can write" below.
+- In a task worktree, the daemon checks before each git command that the
+  worktree's `.git` file points into the main repository's
+  `.git/worktrees/`, refuses otherwise, and then names that git directory
+  itself (`--git-dir`), so git never reads the `.git` file again.
+- Every local git command the daemon runs (status, commit, diff, merge)
+  overrides `core.fsmonitor`, `core.hooksPath`, `core.pager`,
+  `protocol.ext.allow`, `commit.gpgSign`, `core.sshCommand` and
+  `core.askPass` (with the person's own system or global value, `GIT_SSH`
+  or `SSH_ASKPASS` carried over), and resets `credential.helper` to the
+  person's system and global helpers. Diffs pass `--no-ext-diff
+  --no-textconv`. `core.gitProxy` is disabled with an empty
+  `GIT_PROXY_COMMAND`, because git keeps the first value it reads.
+- Fetches and pushes use those overrides, plus `--upload-pack=git-upload-pack`
+  on fetch, only for a checkout an agent ran in without a task under
+  Landlock, Windows or container mode. Any other checkout is fetched and
+  pushed with its own settings, so per-repository `core.sshCommand`,
+  `includeIf` and pre-push hooks (Git LFS) keep working. Fetches never
+  recurse into submodules, whose git directories stay writable.
+- Filter drivers (`filter.*`) and merge drivers cannot be overridden by
+  setting names; pointing `core.attributesFile` elsewhere does not stop them
+  either, since `.gitattributes` in the worktree and `.git/info/attributes`
+  still apply. They rely on the read-only `config` and `info/` above.
 - Files it reads from a worktree (the brief, areas, skills, mirrored files,
-  merge resolutions) must not be symbolic links on any part of their path and
-  are capped in size (1 MiB unless the caller sets less).
+  merge resolutions) must not be symbolic links on any part of their path,
+  nor (on Linux and macOS) hard links, and are capped in size (1 MiB unless
+  the caller sets less). The hosted-mode mirror skips such a file; it
+  reports a file as deleted only when it is gone.
+
+#### Git settings an agent can write
+
+Under Landlock, on Windows and in container mode, an agent working in the
+person's own checkout (no task, or `worktree = false`) can write that
+checkout's `.git/config`, hooks and info. The daemon's own git commands do
+not run what it writes, except filter and merge drivers when the daemon
+checks status, commits or fast-forwards there, and any other setting that
+names a program and is not listed above. The person's own git commands in
+that checkout run all of it. Under those mechanisms,
+use tasks (each in its own worktree, whose git directory the agent cannot
+write) or bubblewrap and Seatbelt. Files in the working copy itself remain
+writable everywhere, including a hooks folder that a repository's
+`core.hooksPath` points into the working copy.
 
 ### A lost phone
 

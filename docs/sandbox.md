@@ -7,7 +7,12 @@ agents doctor` shows the mechanism in use.
 
 ## What each agent gets
 
-- Its **worktree**: readable and writable.
+- Its **worktree**: readable and writable. Under bubblewrap and Seatbelt,
+  the git `config`, `hooks/` and `info/` of the checkout, a linked
+  worktree's `.git` file and its `config.worktree` stay read-only, and `.git`
+  cannot be renamed or removed; objects, refs, the index and logs stay
+  writable, so the agent can still commit. Landlock, Windows and container
+  mode do not do this (see `docs/security.md`).
 - Its own **config/cache directory** (for example `~/.claude` for Claude Code),
   so it can keep its login and session files.
 - A **private temp directory**, exported as `TMPDIR`. The shared `/tmp` is

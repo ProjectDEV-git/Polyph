@@ -67,6 +67,36 @@ pub fn unlink(home: &Path, room: Option<&str>, dir: Option<&Path>) -> std::io::R
     Ok(n)
 }
 
+fn exposed_file(home: &Path) -> PathBuf {
+    home.join("agent-writable-git.json")
+}
+
+/// Records that an agent ran in the checkout at `root` with a sandbox that
+/// does not keep its git config, hooks and info read-only (Landlock,
+/// Windows, container mode), so they may be the agent's now (SEC-13).
+pub fn mark_git_exposed(home: &Path, root: &Path) -> std::io::Result<()> {
+    let root = polyph_git::canonical(root).unwrap_or_else(|_| root.to_path_buf());
+    let mut v: Vec<PathBuf> =
+        std::fs::read(exposed_file(home)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    if v.contains(&root) {
+        return Ok(());
+    }
+    v.push(root);
+    crate::paths::write_private(&exposed_file(home), &serde_json::to_vec_pretty(&v).unwrap_or_default())
+}
+
+/// Opens the checkout at `dir` for a fetch or push. One an agent may have
+/// written the git settings of (see [`mark_git_exposed`]) runs with the
+/// guarded settings; any other with its own, so per-repository SSH
+/// commands, `includeIf` and hooks such as Git LFS's keep working.
+pub fn open_for_network(home: &Path, dir: &Path) -> polyph_git::Result<polyph_git::Repo> {
+    let r = polyph_git::Repo::open(dir)?;
+    let root = polyph_git::canonical(r.root()).unwrap_or_else(|_| r.root().to_path_buf());
+    let exposed: Vec<PathBuf> =
+        std::fs::read(exposed_file(home)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    if exposed.contains(&root) { Ok(r) } else { polyph_git::Repo::open_trusted(dir) }
+}
+
 /// The room linked to `dir` or to the nearest folder above it.
 pub fn room_for(home: &Path, dir: &Path) -> Option<Link> {
     let dir = polyph_git::canonical(dir).unwrap_or_else(|_| dir.to_path_buf());
@@ -93,5 +123,35 @@ mod tests {
         assert!(room_for(home.path(), home.path()).is_none());
         assert_eq!(unlink(home.path(), Some("r2"), None).unwrap(), 1);
         assert!(load(home.path()).is_empty());
+    }
+
+    /// A checkout an agent could write the git settings of is fetched with
+    /// the guarded settings; any other with its own.
+    #[cfg(unix)]
+    #[test]
+    fn exposed_checkouts_fetch_without_their_own_programs() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::tempdir().unwrap();
+        let t = tempfile::tempdir().unwrap();
+        let git = |dir: &Path, args: &[&str]| {
+            let out = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        };
+        let (origin, repo) = (t.path().join("origin"), t.path().join("repo"));
+        git(t.path(), &["init", "-q", "--bare", &origin.to_string_lossy()]);
+        git(t.path(), &["init", "-q", &repo.to_string_lossy()]);
+        git(&repo, &["remote", "add", "origin", &origin.to_string_lossy()]);
+        let (script, ran) = (t.path().join("pack.sh"), t.path().join("ran"));
+        std::fs::write(&script, format!("#!/bin/sh\ntouch '{}'\nexit 1\n", ran.display())).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        git(&repo, &["config", "remote.origin.uploadpack", &script.to_string_lossy()]);
+
+        assert!(open_for_network(home.path(), &repo).unwrap().fetch("origin").is_err());
+        assert!(ran.exists(), "a checkout no agent could write keeps its own settings");
+        std::fs::remove_file(&ran).unwrap();
+        mark_git_exposed(home.path(), &repo).unwrap();
+        mark_git_exposed(home.path(), &repo).unwrap();
+        open_for_network(home.path(), &repo.join(".git").join("..")).unwrap().fetch("origin").unwrap();
+        assert!(!ran.exists(), "an exposed checkout ran its uploadpack");
     }
 }
