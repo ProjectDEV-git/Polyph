@@ -693,7 +693,7 @@ fn forge(
     let cert = MembershipCert {
         room: target.room,
         member: target.member,
-        device: target.device.clone(),
+        device: target.device,
         name_commit: target.name_commit,
         role,
         issued_at: at,
