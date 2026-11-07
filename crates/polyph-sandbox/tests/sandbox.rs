@@ -75,7 +75,13 @@ fn git(dir: &std::path::Path, args: &[&str]) -> String {
 /// Runs `script` with `sh` under bubblewrap in `worktree`, with the git
 /// mounts `polyph_git::sandbox_git` gives it; returns what it printed.
 #[cfg(target_os = "linux")]
-async fn run_in_bwrap(helper: Vec<String>, base: &std::path::Path, worktree: &std::path::Path, commits: bool, script: &str) -> String {
+async fn run_in_bwrap(
+    helper: Vec<String>,
+    base: &std::path::Path,
+    worktree: &std::path::Path,
+    commits: bool,
+    script: &str,
+) -> String {
     use std::sync::Arc;
 
     use polyph_sandbox::proxy::{Allowlist, Decider};

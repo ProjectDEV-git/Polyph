@@ -241,10 +241,17 @@ fn git_dirs(root: &Path) -> Result<(PathBuf, PathBuf)> {
         .map_err(|e| bad(format!("{} names a missing folder: {e}", commondir.display())))?;
     let expected = gitdir.parent().filter(|w| w.file_name() == Some("worktrees".as_ref())).and_then(Path::parent);
     if expected != Some(common.as_path()) {
-        return Err(bad(format!("{} names {}, not the repository it belongs to", commondir.display(), common.display())));
+        return Err(bad(format!(
+            "{} names {}, not the repository it belongs to",
+            commondir.display(),
+            common.display()
+        )));
     }
     if std::fs::symlink_metadata(common.join("commondir")).is_ok() {
-        return Err(bad(format!("{} has a commondir file; a main git directory must not name another", common.display())));
+        return Err(bad(format!(
+            "{} has a commondir file; a main git directory must not name another",
+            common.display()
+        )));
     }
     Ok((gitdir, common))
 }
@@ -409,10 +416,7 @@ impl Repo {
         if ok {
             Ok(out)
         } else {
-            Err(GitError::Failed {
-                cmd: subcommand(args).to_string(),
-                stderr: err.trim().into(),
-            })
+            Err(GitError::Failed { cmd: subcommand(args).to_string(), stderr: err.trim().into() })
         }
     }
 
@@ -524,7 +528,8 @@ impl Repo {
     fn check_nested(&self, what: &str) -> Result<()> {
         use std::collections::BTreeSet;
         let refuse = |why: String| GitError::Invalid(format!("refusing to {what} {}: {why}", self.root.display()));
-        let z = |out: String| -> Vec<String> { out.split('\0').filter(|s| !s.is_empty()).map(str::to_string).collect() };
+        let z =
+            |out: String| -> Vec<String> { out.split('\0').filter(|s| !s.is_empty()).map(str::to_string).collect() };
         let has_head = self.rev_parse("HEAD").is_ok();
         let mut submodules = BTreeSet::new();
         let mut head_links = BTreeSet::new();

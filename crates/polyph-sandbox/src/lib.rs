@@ -104,11 +104,7 @@ impl Policy {
 
     /// The `git_writable` folders that exist and are not links.
     fn git_writable_dirs(&self) -> Vec<PathBuf> {
-        self.git_writable
-            .iter()
-            .filter(|g| std::fs::symlink_metadata(g).is_ok_and(|m| m.is_dir()))
-            .cloned()
-            .collect()
+        self.git_writable.iter().filter(|g| std::fs::symlink_metadata(g).is_ok_and(|m| m.is_dir())).cloned().collect()
     }
 
     fn tmp_env(&self) -> Vec<(String, String)> {
@@ -686,7 +682,13 @@ mod seatbelt_tests {
         assert!(!p.contains(&format!("(allow file-write* (subpath \"{}\"))", sb_quote(&common))), "{p}");
 
         // Mechanisms that cannot narrow a writable folder never open them.
-        let l = wrap_inner(Mechanism::Landlock, &Policy { proxy_tcp: Some(([127, 0, 0, 1], 1).into()), ..policy }, "true", &[]).unwrap();
+        let l = wrap_inner(
+            Mechanism::Landlock,
+            &Policy { proxy_tcp: Some(([127, 0, 0, 1], 1).into()), ..policy },
+            "true",
+            &[],
+        )
+        .unwrap();
         assert!(!l.args.iter().any(|a| a.contains(".git")), "{:?}", l.args);
     }
 }
