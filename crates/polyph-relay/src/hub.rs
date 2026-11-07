@@ -82,6 +82,8 @@ struct Buffered {
 struct Sub {
     conn: Arc<Conn>,
     writer: bool,
+    /// Role may store snapshots (Member and up); Viewers publish but never snapshot.
+    snapshots: bool,
 }
 
 #[derive(Debug, Default)]
@@ -224,7 +226,7 @@ impl Hub {
                     self.send(conn, &error(ErrorCode::TooLarge, "snapshot too large"));
                     return;
                 }
-                if !self.is_subscribed(conn, &room, true) {
+                if !self.can_snapshot(conn, &room) {
                     self.send(conn, &error(ErrorCode::NotMember, "subscribe as a member before storing snapshots"));
                     return;
                 }
@@ -269,6 +271,11 @@ impl Hub {
         g.rooms.get(room).and_then(|r| r.subs.get(&conn.id)).is_some_and(|s| s.writer || !writer)
     }
 
+    fn can_snapshot(&self, conn: &Conn, room: &RoomId) -> bool {
+        let g = self.inner.lock();
+        g.rooms.get(room).and_then(|r| r.subs.get(&conn.id)).is_some_and(|s| s.snapshots)
+    }
+
     async fn subscribe(
         &self,
         conn: &Arc<Conn>,
@@ -278,6 +285,7 @@ impl Hub {
         after: Option<u64>,
     ) {
         let mut writer = false;
+        let mut snapshots = false;
         if let Some(chain) = chain {
             let verified = match chain.verify(unix_now(), &|_| false) {
                 Ok(v) => v,
@@ -306,10 +314,11 @@ impl Hub {
                 }
             }
             writer = true;
+            snapshots = verified.role.can_write();
         }
         let mut g = self.inner.lock();
         let r = g.rooms.entry(room).or_default();
-        r.subs.insert(conn.id, Sub { conn: conn.clone(), writer });
+        r.subs.insert(conn.id, Sub { conn: conn.clone(), writer, snapshots });
         let oldest = r.buffer.front().map(|b| b.cursor);
         let last = r.last_cursor;
         self.send(conn, &RelayFrame::Subscribed { room, writer, cursor: last });
@@ -457,10 +466,20 @@ impl Hub {
             return;
         }
         inc(&self.metrics.join_attempts_total);
+        // Every unconfirmed session may still become a failure, so never allow
+        // more in flight than the failures left before the code locks.
+        let in_flight = g.sessions.values().filter(|s| s.rendezvous == rendezvous && !s.resolved).count() as u32;
         let host = match g.codes.get(&rendezvous) {
             Some(c) if c.expires_at > now => {
                 if c.locked_until.is_some_and(|u| u > now) {
                     self.send(conn, &error(ErrorCode::CodeLocked, "this code is locked after failed attempts"));
+                    return;
+                }
+                if c.failures + in_flight >= self.cfg.code_max_failures {
+                    self.send(
+                        conn,
+                        &error(ErrorCode::RateLimited, "too many joins in progress for this code; try again"),
+                    );
                     return;
                 }
                 c.host.clone()
@@ -636,12 +655,22 @@ impl Hub {
         for r in expired {
             self.close_code(&mut g, &r, CodeClosed::Expired);
         }
-        let stale: Vec<u64> =
-            g.sessions.iter().filter(|(_, s)| s.started.elapsed() > SESSION_TTL).map(|(id, _)| *id).collect();
+        let handshake = Duration::from_secs(self.cfg.join_handshake_secs);
+        let stale: Vec<u64> = g
+            .sessions
+            .iter()
+            .filter(|(_, s)| s.started.elapsed() > SESSION_TTL || (!s.resolved && s.started.elapsed() >= handshake))
+            .map(|(id, _)| *id)
+            .collect();
         for id in stale {
+            // record_failure may already have ended this session by locking its code.
             if let Some(s) = g.sessions.remove(&id) {
                 self.send(&s.joiner, &RelayFrame::PakeEnded { session: id, ok: false });
                 self.send(&s.host, &RelayFrame::PakeEnded { session: id, ok: false });
+                // A join abandoned mid-handshake is a guess the host never confirmed.
+                if !s.resolved {
+                    self.record_failure(&mut g, &s.rendezvous);
+                }
             }
         }
         for r in g.rooms.values_mut() {

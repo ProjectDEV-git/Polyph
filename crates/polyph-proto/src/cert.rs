@@ -152,6 +152,8 @@ pub struct VerifiedMember {
     pub device: DevicePublic,
     pub role: Role,
     pub name_commit: [u8; 32],
+    /// When the leaf certificate was issued; newer certificates supersede older ones.
+    pub issued_at: i64,
     pub expires_at: Option<i64>,
     pub capabilities: Vec<String>,
     pub owner: DeviceId,
@@ -233,6 +235,7 @@ impl CertChain {
             device: c.device,
             role: c.role,
             name_commit: c.name_commit,
+            issued_at: c.issued_at,
             expires_at: c.expires_at,
             capabilities: c.capabilities,
             owner: genesis.owner.sign,
