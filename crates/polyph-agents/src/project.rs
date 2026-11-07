@@ -2,8 +2,8 @@
 //! sandbox and router settings for a project.
 //!
 //! The security-relevant parts (`[sandbox]`, `[agents.*]`, `checks`,
-//! `[policy] preset`, `[merge] approval` and `run_checks`, `[prices]`) are
-//! only honored once a person has trusted that exact file content with
+//! `[policy] preset`, `[merge] approval`, `run_checks`, `via` and `remote`,
+//! `[prices]`) are only honored once a person has trusted that exact file content with
 //! `polyph trust`; see [`TrustStore`].
 
 use std::collections::BTreeMap;
@@ -166,6 +166,16 @@ impl ProjectConfig {
             self.merge.run_checks = None;
             ignored.push("merge.run_checks");
         }
+        // Pushing branches and opening pull requests sends the work to a remote
+        // the file names; untrusted, tasks merge locally (the default).
+        if self.merge.via.as_deref().is_some_and(|v| v != "queue") {
+            self.merge.via = None;
+            ignored.push("merge.via");
+        }
+        if self.merge.remote.is_some() {
+            self.merge.remote = None;
+            ignored.push("merge.remote");
+        }
         // Prices decide what budgets count; a file must not zero them.
         if !self.prices.0.is_empty() {
             self.prices = PriceTable::default();
@@ -175,24 +185,24 @@ impl ProjectConfig {
     }
 
     /// The settings `polyph trust` lets apply, as TOML, for a person to review
-    /// before trusting; empty when the file sets none of them.
+    /// before trusting; empty when the file sets none of them. A section that
+    /// cannot be shown becomes a `# could not show` line, never a silent gap.
     pub fn security_toml(&self) -> String {
         let mut t = toml::Table::new();
-        let mut put = |k: &str, v: Option<toml::Value>| {
-            if let Some(v) = v {
-                t.insert(k.into(), v);
-            }
-        };
+        let mut errors: Vec<String> = vec![];
         if !self.checks.is_empty() {
-            put("checks", toml::Value::try_from(&self.checks).ok());
+            section(&mut t, &mut errors, "checks", toml::Value::try_from(&self.checks));
         }
         if self.sandbox != SandboxConfig::default() {
-            put("sandbox", toml::Value::try_from(&self.sandbox).ok());
+            section(&mut t, &mut errors, "sandbox", toml::Value::try_from(&self.sandbox));
         }
         if self.policy.preset != Preset::default() {
-            let mut p = toml::Table::new();
-            p.insert("preset".into(), toml::Value::try_from(self.policy.preset).unwrap_or(toml::Value::from("")));
-            put("policy", Some(toml::Value::Table(p)));
+            let p = toml::Value::try_from(self.policy.preset).map(|v| {
+                let mut p = toml::Table::new();
+                p.insert("preset".into(), v);
+                toml::Value::Table(p)
+            });
+            section(&mut t, &mut errors, "policy", p);
         }
         let mut m = toml::Table::new();
         if let Some(a) = self.merge.approval {
@@ -201,17 +211,30 @@ impl ProjectConfig {
         if let Some(c) = self.merge.run_checks {
             m.insert("run_checks".into(), c.into());
         }
+        if let Some(v) = &self.merge.via {
+            m.insert("via".into(), v.clone().into());
+        }
+        if let Some(r) = &self.merge.remote {
+            m.insert("remote".into(), r.clone().into());
+        }
         if !m.is_empty() {
-            put("merge", Some(toml::Value::Table(m)));
+            t.insert("merge".into(), toml::Value::Table(m));
         }
         if !self.agents.is_empty() {
-            put("agents", toml::Value::try_from(&self.agents).ok());
+            section(&mut t, &mut errors, "agents", toml::Value::try_from(&self.agents));
         }
         if !self.prices.0.is_empty() {
             let sorted: BTreeMap<_, _> = self.prices.0.iter().collect();
-            put("prices", toml::Value::try_from(sorted).ok());
+            section(&mut t, &mut errors, "prices", toml::Value::try_from(sorted));
         }
-        if t.is_empty() { String::new() } else { toml::to_string(&t).unwrap_or_default() }
+        let mut out: String = errors.concat();
+        if !t.is_empty() {
+            match toml::to_string(&t) {
+                Ok(s) => out.push_str(&s),
+                Err(e) => out.push_str(&could_not_show("settings", &e)),
+            }
+        }
+        out
     }
 
     pub fn auto_claim(&self) -> bool {
@@ -225,6 +248,21 @@ impl ProjectConfig {
     pub fn watch(&self) -> bool {
         self.claims.watch.unwrap_or(true)
     }
+}
+
+/// Adds `name` to the review table, or an error line when it cannot be shown.
+fn section<E: std::fmt::Display>(t: &mut toml::Table, errors: &mut Vec<String>, name: &str, v: Result<toml::Value, E>) {
+    match v {
+        Ok(v) => {
+            t.insert(name.into(), v);
+        }
+        Err(e) => errors.push(could_not_show(name, &e)),
+    }
+}
+
+fn could_not_show(name: &str, e: &dyn std::fmt::Display) -> String {
+    let e = e.to_string().replace('\n', " ");
+    format!("# could not show [{name}]: {e}. Read it in the file itself before trusting.\n")
 }
 
 /// A project file as loaded: the settings, where they came from, and the
@@ -457,6 +495,40 @@ output = 0.0
 
         assert!(store.revoke(&f.dir).unwrap());
         assert!(!store.revoke(&f.dir).unwrap());
+    }
+
+    #[test]
+    fn a_section_that_cannot_be_shown_is_an_error_line_not_a_gap() {
+        let mut t = toml::Table::new();
+        let mut errors = vec![];
+        section(&mut t, &mut errors, "agents", Err::<toml::Value, _>("unsupported value"));
+        section(&mut t, &mut errors, "checks", Ok::<_, &str>(toml::Value::from("x")));
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].starts_with("# could not show [agents]: unsupported value"), "{}", errors[0]);
+        assert!(t.contains_key("checks") && !t.contains_key("agents"));
+    }
+
+    #[test]
+    fn untrusted_file_cannot_send_tasks_to_a_remote() {
+        let text = "[merge]\nvia = \"github\"\nremote = \"fork\"\nreviewer = \"codex\"\n";
+        let (d, store) = setup(text);
+        let l = ProjectConfig::load_trusted(&d.path().join("repo"), &store).unwrap();
+        assert_eq!(l.config.merge.via, None);
+        assert_eq!(l.config.merge.remote, None);
+        assert_eq!(l.ignored, vec!["merge.via", "merge.remote"]);
+        assert_eq!(l.config.merge.reviewer.as_deref(), Some("codex"));
+        // The review lists them; the explicit default needs no trust.
+        let t: ProjectConfig = toml::from_str(text).unwrap();
+        let review = t.security_toml();
+        assert!(review.contains("via = \"github\"") && review.contains("remote = \"fork\""), "{review}");
+        let (d, store) = setup("[merge]\nvia = \"queue\"\n");
+        assert!(ProjectConfig::load_trusted(&d.path().join("repo"), &store).unwrap().ignored.is_empty());
+
+        let (d, store) = setup(text);
+        store.trust(&ProjectFile::find(&d.path().join("repo")).unwrap().unwrap()).unwrap();
+        let l = ProjectConfig::load_trusted(&d.path().join("repo"), &store).unwrap();
+        assert_eq!(l.config.merge.via.as_deref(), Some("github"));
+        assert_eq!(l.config.merge.remote.as_deref(), Some("fork"));
     }
 
     #[test]

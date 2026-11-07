@@ -11,7 +11,7 @@ use polyph_agents::policy::{self, Action, ClaimState, Preset, Verdict};
 use polyph_agents::project::{Loaded, ProjectConfig, TrustStore};
 use polyph_agents::registry::{self, AgentConfig, AgentDef};
 use polyph_agents::supervisor::{AgentProcess, Answer, CommandWrapper, Output, Request};
-use polyph_agents::usage::{Budget, BudgetState, Ledger};
+use polyph_agents::usage::{Budget, BudgetState, Ledger, Limit};
 use polyph_agents::wire::{EnvVariable, McpServerStdio};
 use polyph_core::docs::{self, UsageRecord};
 use polyph_core::{Effect, RoomEvent};
@@ -39,6 +39,9 @@ pub struct AgentHandle {
     pub task: Option<ObjectId>,
     pub worktree: PathBuf,
     pub project: ProjectConfig,
+    /// The project file's `[prices]`, when they were ignored as untrusted:
+    /// dollar budgets cannot be counted, so they stop the agent.
+    pub untrusted_prices: Option<Loaded>,
     pub mechanism: Mechanism,
     pub state: Mutex<AgentState>,
     /// Commands and paths approved "for this task".
@@ -379,6 +382,17 @@ pub fn untrusted_text(l: &polyph_i18n::Localizer, key: &str, loaded: &Loaded) ->
     ))
 }
 
+/// `loaded` narrowed to the ignored `sections`, for a message about just
+/// those; None when none of them was ignored.
+pub fn only_ignored(loaded: &Loaded, sections: &[&str]) -> Option<Loaded> {
+    let ignored: Vec<&'static str> = loaded.ignored.iter().copied().filter(|s| sections.contains(s)).collect();
+    (!ignored.is_empty() && loaded.file.is_some()).then(|| Loaded {
+        config: ProjectConfig::default(),
+        file: loaded.file.clone(),
+        ignored,
+    })
+}
+
 /// Adds the "run `polyph trust`" hint to an agent start error when the
 /// project file had settings that were ignored, since they may be the cause.
 fn with_untrusted_hint(l: &polyph_i18n::Localizer, loaded: &Loaded, e: ApiError) -> ApiError {
@@ -403,13 +417,36 @@ fn check_data_dir(
     writable: &[PathBuf],
 ) -> Result<(), ApiError> {
     use polyph_i18n::FluentValue;
-    let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    let home = canon(home);
-    let wt = canon(worktree);
+    // A path that cannot be resolved cannot be compared: refuse rather than
+    // compare the raw path, which a symlink could make look harmless.
+    let canon = |p: &Path| {
+        std::fs::canonicalize(p).map_err(|e| {
+            ApiError::BadRequest(l.t_args(
+                "agent-path-unresolved",
+                &[("path", FluentValue::from(p.display().to_string())), ("error", FluentValue::from(e.to_string()))],
+            ))
+        })
+    };
+    let home = canon(home)?;
+    let wt = canon(worktree)?;
     let bad = if home.starts_with(&wt) || wt.starts_with(&home) {
         Some(wt)
     } else {
-        writable.iter().map(|w| canon(w)).find(|w| home.starts_with(w))
+        let mut found = None;
+        for w in writable {
+            // A writable path that does not exist is never mounted (`start`
+            // drops it), so it cannot expose anything. A dangling link exists
+            // as a link and is refused below.
+            if std::fs::symlink_metadata(w).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+                continue;
+            }
+            let w = canon(w)?;
+            if home.starts_with(&w) {
+                found = Some(w);
+                break;
+            }
+        }
+        found
     };
     match bad {
         None => Ok(()),
@@ -424,7 +461,7 @@ fn check_data_dir(
 }
 
 /// What an untrusted project file had ignored, for the person to act on.
-fn untrusted_json(loaded: &Loaded) -> Option<serde_json::Value> {
+pub(crate) fn untrusted_json(loaded: &Loaded) -> Option<serde_json::Value> {
     let file = loaded.file.as_ref().filter(|_| !loaded.ignored.is_empty())?;
     let dir = file.parent().unwrap_or(file);
     let message = format!(
@@ -603,6 +640,7 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
         task,
         worktree: worktree.clone(),
         project,
+        untrusted_prices: only_ignored(&loaded, &["prices"]),
         mechanism: mech,
         state: Mutex::new(AgentState::Idle),
         approved: Mutex::new(HashSet::new()),
@@ -681,6 +719,31 @@ pub async fn ledger(rt: &RoomRuntime, prices: &polyph_agents::usage::PriceTable)
     (l, budgets)
 }
 
+/// Whether `member` may run another turn under `budgets`. A dollar budget
+/// cannot be counted when the project file's prices were ignored as untrusted
+/// (every turn would cost $0), so it stops the agent until `polyph trust`.
+fn budget_allows(
+    l: &polyph_i18n::Localizer,
+    budgets: &[Budget],
+    ledger: &Ledger,
+    member: &str,
+    untrusted_prices: Option<&Loaded>,
+) -> Result<(), String> {
+    let mine = || budgets.iter().filter(|b| b.applies_to(member));
+    if mine().any(|b| b.state(ledger) == BudgetState::Exceeded) {
+        return Err(
+            "the budget for this room or member is used up; a Maintainer can raise it with `polyph budget set`".into(),
+        );
+    }
+    if let Some(u) = untrusted_prices
+        && mine().any(|b| matches!(b.limit, Limit::Dollars(_)))
+        && let Some(why) = untrusted_text(l, "budget-prices-untrusted", u)
+    {
+        return Err(why);
+    }
+    Ok(())
+}
+
 /// Runs turns when other agents write to this one, within the loop guard.
 async fn wake_loop(
     mut rx: mpsc::UnboundedReceiver<()>,
@@ -716,11 +779,9 @@ pub async fn prompt(shared: &Shared, rt: &RoomRuntime, h: &AgentHandle, text: &s
 async fn run_turn(shared: &Shared, rt: &RoomRuntime, h: &AgentHandle, text: Option<&str>) -> ApiResult {
     let member = h.agent.member.to_hex();
     let (l, budgets) = ledger(rt, &h.project.prices).await;
-    if budgets.iter().filter(|b| b.applies_to(&member)).any(|b| b.state(&l) == BudgetState::Exceeded) {
+    if let Err(why) = budget_allows(&localizer(shared), &budgets, &l, &member, h.untrusted_prices.as_ref()) {
         set_state(h, rt, shared, AgentState::Blocked, Some("budget".into())).await;
-        return Err(ApiError::Forbidden(
-            "the budget for this room or member is used up; a Maintainer can raise it with `polyph budget set`".into(),
-        ));
+        return Err(ApiError::Forbidden(why));
     }
     let _busy = h.busy.lock().await;
     let (mut extra, hops) = {
@@ -908,5 +969,50 @@ mod tests {
         // A writable path that holds it.
         assert!(check_data_dir(&en, &home, &repo, &[t.path().join("user/.local")]).is_err());
         assert!(check_data_dir(&en, &home, &repo, &[t.path().join("user/.claude")]).is_ok());
+    }
+
+    #[test]
+    fn a_path_that_cannot_be_resolved_is_refused_not_compared_raw() {
+        let en = polyph_i18n::Localizer::new("en");
+        let t = tempfile::tempdir().unwrap();
+        let home = t.path().join("home/polyph");
+        let repo = t.path().join("code/app");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&repo).unwrap();
+        let gone = t.path().join("gone");
+        let e = check_data_dir(&en, &home, &gone, &[]).unwrap_err();
+        assert!(e.to_string().contains("cannot resolve") && e.to_string().contains("gone"), "{e}");
+        assert!(check_data_dir(&en, &gone, &repo, &[]).is_err());
+        // A writable entry that is a dangling link cannot be checked either.
+        #[cfg(unix)]
+        {
+            let link = t.path().join("dangling");
+            std::os::unix::fs::symlink(t.path().join("nowhere"), &link).unwrap();
+            assert!(check_data_dir(&en, &home, &repo, &[link]).is_err());
+        }
+    }
+
+    #[test]
+    fn untrusted_prices_stop_dollar_budgets_but_not_token_budgets() {
+        use polyph_agents::usage::BudgetScope;
+        let en = polyph_i18n::Localizer::new("en");
+        let loaded = Loaded {
+            config: ProjectConfig::default(),
+            file: Some(PathBuf::from("/repo/polyph.toml")),
+            ignored: vec!["agents", "prices"],
+        };
+        let prices = only_ignored(&loaded, &["prices"]);
+        assert_eq!(prices.as_ref().unwrap().ignored, vec!["prices"]);
+        let dollars = Budget { scope: BudgetScope::Room, limit: Limit::Dollars(5.0) };
+        let tokens = Budget { scope: BudgetScope::Room, limit: Limit::Tokens(1000) };
+        let l = Ledger::default();
+        let why = budget_allows(&en, std::slice::from_ref(&dollars), &l, "m1", prices.as_ref()).unwrap_err();
+        assert!(why.contains("dollar budget") && why.contains("`polyph trust` in /repo"), "{why}");
+        assert!(budget_allows(&en, std::slice::from_ref(&tokens), &l, "m1", prices.as_ref()).is_ok());
+        // Trusted prices, or a dollar budget for someone else: no block.
+        assert!(budget_allows(&en, std::slice::from_ref(&dollars), &l, "m1", None).is_ok());
+        let other = Budget { scope: BudgetScope::Member("m2".into()), limit: Limit::Dollars(5.0) };
+        assert!(budget_allows(&en, &[other], &l, "m1", prices.as_ref()).is_ok());
+        assert!(only_ignored(&Loaded { ignored: vec!["agents"], ..loaded }, &["prices"]).is_none());
     }
 }

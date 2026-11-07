@@ -172,7 +172,8 @@ pub async fn finish(daemon: Arc<Daemon>, h: Arc<AgentHandle>, message: Option<St
     let summary = msg.clone();
     let sig = Signature::agent(&h.agent.label, &h.agent.id.short());
     let (path, branch, base) = (wt.path.clone(), wt.branch.clone(), wt.base.clone());
-    let project = agents::main_checkout_project(&daemon.shared, &wt.repo).unwrap_or_default().config;
+    let loaded = agents::main_checkout_project(&daemon.shared, &wt.repo).unwrap_or_default();
+    let project = loaded.config.clone();
     let into = project.merge.into.clone().unwrap_or(base);
     let (head, ahead) = {
         let (into, branch) = (into.clone(), branch.clone());
@@ -199,7 +200,10 @@ pub async fn finish(daemon: Arc<Daemon>, h: Arc<AgentHandle>, message: Option<St
         member: h.agent.member.to_hex(),
         agent: Some(h.agent.label.clone()),
         state: MergeState::Queued,
-        detail: None,
+        // An untrusted file's push and pull request settings were dropped:
+        // say so on the entry, which then merges locally.
+        detail: agents::only_ignored(&loaded, &["merge.via", "merge.remote"])
+            .and_then(|u| agents::untrusted_text(&agents::localizer(&daemon.shared), "merge-via-untrusted", &u)),
         resolved: vec![],
         merge_commit: None,
         pr: None,
@@ -223,7 +227,8 @@ pub async fn finish(daemon: Arc<Daemon>, h: Arc<AgentHandle>, message: Option<St
         let fx = ctx.core.release_claims(&mine);
         apply(&rt, &mut ctx, &daemon.shared, fx).await;
     }
-    let out = json!({ "entry": entry.id, "branch": branch, "into": entry.into, "commits": ahead });
+    let out =
+        json!({ "entry": entry.id, "branch": branch, "into": entry.into, "commits": ahead, "notice": entry.detail });
     let agent = h.agent.clone();
     let repo = wt.repo.clone();
     let via_github = project.merge.via.as_deref() == Some("github");
@@ -277,6 +282,20 @@ async fn process(
         None => None,
     };
     let theirs_intent = intent_of(card.as_ref(), &e.branch);
+
+    // 0. Checks the untrusted file asked for were dropped; merging without
+    // them would skip them silently, so stop and say how to fix it, before a
+    // reviewer or a person spends time on a merge that cannot finish.
+    if project.merge.run_checks.unwrap_or(true)
+        && loaded.ignored.contains(&"checks")
+        && let Some(why) = agents::untrusted_text(&agents::localizer(&shared), "merge-checks-untrusted", &loaded)
+    {
+        set_state(rt, &shared, e, MergeState::Failed, Some(why)).await;
+        if let Some(c) = &e.card {
+            update_card(rt, &shared, c, Some("in_progress"), &[]).await;
+        }
+        return Ok(());
+    }
 
     // 1. Review.
     if let Some(kind) = project.merge.reviewer.clone() {
@@ -413,18 +432,6 @@ async fn process(
             }
         };
         e.resolved = resolved;
-        // Checks the untrusted file asked for were dropped; merging without
-        // them would skip them silently, so stop and say how to fix it.
-        if project.merge.run_checks.unwrap_or(true)
-            && loaded.ignored.contains(&"checks")
-            && let Some(why) = agents::untrusted_text(&agents::localizer(&shared), "merge-checks-untrusted", &loaded)
-        {
-            set_state(rt, &shared, e, MergeState::Failed, Some(why)).await;
-            if let Some(c) = &e.card {
-                update_card(rt, &shared, c, Some("in_progress"), &[]).await;
-            }
-            return Ok(());
-        }
         // Checks on the merged result, in the sandbox.
         if project.merge.run_checks.unwrap_or(true) && !project.checks.is_empty() {
             set_state(rt, &shared, e, MergeState::Checking, None).await;

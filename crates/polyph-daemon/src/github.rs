@@ -207,7 +207,8 @@ pub async fn open_pr(
     agent: &AgentRef,
 ) -> Result<(), ApiError> {
     let shared = d.shared.clone();
-    let project = ProjectConfig::load(root).unwrap_or_default();
+    // `[merge] remote` needs trust, like `via` that brought the task here.
+    let project = crate::agents::main_checkout_project(&shared, root).unwrap_or_default().config;
     let a = account(&shared)?;
     let repo = slug(&project, root)?;
     let remote = project.merge.remote.clone().unwrap_or_else(|| "origin".into());

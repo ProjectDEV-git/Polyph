@@ -1833,17 +1833,18 @@ impl Daemon {
                 }
                 let p: P = param(&params)?;
                 let rt = self.find(&p.room).await?;
-                let prices = p
+                // The same trusted load agents enforce budgets with, so the
+                // costs shown are the costs counted.
+                let loaded = p
                     .cwd
                     .as_deref()
-                    .map(polyph_agents::project::ProjectConfig::load)
+                    .map(|d| crate::agents::main_checkout_project(&self.shared, d))
                     .transpose()?
-                    .unwrap_or_default()
-                    .prices;
-                let (l, budgets) = crate::agents::ledger(&rt, &prices).await;
+                    .unwrap_or_default();
+                let (l, budgets) = crate::agents::ledger(&rt, &loaded.config.prices).await;
                 let states: Vec<Value> =
                     budgets.iter().map(|b| json!({ "budget": b, "used": b.used(&l), "state": b.state(&l) })).collect();
-                ok(json!({ "ledger": l, "budgets": states }))
+                ok(json!({ "ledger": l, "budgets": states, "untrusted": crate::agents::untrusted_json(&loaded) }))
             }
             "budget.set" => {
                 #[derive(Deserialize)]
