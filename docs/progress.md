@@ -28,7 +28,24 @@ Done:
   such agent").
 - Dispatched three rust-engineer workers, one per PR branch.
 
-Dispatch count this session: 4.
+Dispatch count this session: 6 at the first checkpoint (05:30 UTC; ccusage:
+70k output tokens, $109 in the block, 4h40m to reset).
+
+Results checked:
+- #16: worker fixed a race in the m4 test (poll before the agent
+  replicated). Checked: `cargo test -p polyph-testkit --test m4` passed 3 of
+  3 runs. Architect review: CHANGES REQUESTED (own-checkout `.git/config`
+  still writable, doc claims a read-only `.git` that does not exist,
+  `sshCommand` and `hooksPath` overrides break trusted pushes and LFS,
+  mirror deletes symlinked files on peers). Sent back to an Opus
+  rust-engineer (sandbox rule) with the lead's decision: read-only
+  `.git/config`, `hooks`, `info` under bwrap and Seatbelt; SEC-13 stays
+  partly open for Landlock and Windows.
+- #15: worker allows a member's own new device only through a one-time code
+  that member's daemon made, with a person's approval. Checked:
+  `cargo test -p polyph-core` (32 passed), `--test m8` (2), `--test m9` (3).
+  Phone e2e not run locally; CI runs it. Next: architect and security
+  review.
 
 Dogfood setup (`polyph` built from `Main` at 448f203, `POLYPH_KEYSTORE=file`,
 home `/root/dogfood-home`): `polyph start --name polyph-beta --yes
