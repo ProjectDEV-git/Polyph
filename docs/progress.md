@@ -207,6 +207,20 @@ and #17.
 #15 cf4b47e verified by the lead (all pass); architect re-review
 dispatched. 14:46 UTC: ccusage 75% (misaligned block), plan shows no
 five-hour flag.
+- #15 cf4b47e: architect APPROVE, security SIGN-OFF on SEC-1..SEC-4. Needs
+  CI green ("TypeScript and translations" failed on an earlier head) and
+  the i18n reviewer for new ja/th/zh-Hans strings. Lows: STUBS.md:100 and
+  protocol.md 4.2 wording, docs/security.md downgrade sentence.
+- #16 82ce0e7: security NO SIGN-OFF, two new highs (object swap under the
+  same hash; symlink race between the guard and git's write) plus the
+  `polyph/` branch gap. Fourth Opus rework dispatched: per-task object dir
+  imported with fsck, daemon git writes in a sandbox, per-task ref folders,
+  approval shows commit and diff stat.
+- #17 4c8a9d6: security SIGN-OFF; macOS Rust CI red. Lows: strip control
+  characters from relay errors, docs line.
+- CI triage (Haiku) reading #14 Windows, #17 macOS, #15 TypeScript jobs.
+  The first triage worker hung on a Bash permission prompt and was stopped;
+  briefs for log reading now say Grep/Read only.
 
 ### Next after the pause
 
