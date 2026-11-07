@@ -656,3 +656,39 @@ async fn the_watcher_catches_edits_outside_the_protocol() {
     let cl = h.nodes[0].call("claims.list", json!({ "room": rid })).await.unwrap();
     assert!(!cl.as_array().unwrap().iter().any(|c| c["target"]["path"] == "src/person.rs"), "{cl}");
 }
+
+/// SEC-13, defense in depth: `main` written without git (as an agent that
+/// could write `refs/` would) is not merged into; the entry fails and says
+/// why, and the merge queue leaves `main` where it found it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_base_changed_without_git_is_not_merged_into() {
+    let (h, rid, repo, _s) = setup(
+        vec![("fake-a", json!({ "turns": [[ { "write": { "path": "src/lib.rs", "content": with(REFUND) } } ]] }))],
+        "[merge]\napproval = false\n",
+    )
+    .await;
+    let r = repo.path();
+    let c = add_card(&h, &rid, "Add refunds", "").await;
+    let (aid, abr) = start_task(&h, 0, &rid, "fake-a", r, &c).await;
+    h.nodes[0].call("agent.prompt", json!({ "agent": aid, "text": "refunds" })).await.unwrap();
+    // An unreviewed commit put on main by writing the ref file.
+    let tree = git(r, &["rev-parse", "main^{tree}"]);
+    let evil = git(r, &["commit-tree", tree.trim(), "-p", "main", "-m", "unreviewed"]);
+    std::fs::write(r.join(".git/refs/heads/main"), &evil).unwrap();
+    h.nodes[0].call("task.finish", json!({ "agent": aid })).await.unwrap();
+    let mut last = Value::Null;
+    for _ in 0..400 {
+        if let Some(e) = entry(&h, 0, &rid, &abr).await
+            && (e["state"] == "failed" || e["state"] == "merged")
+        {
+            last = e;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(last["state"], "failed", "{last}");
+    let detail = last["detail"].as_str().unwrap_or_default();
+    assert!(detail.contains("refusing to merge into main") && detail.contains("reflog"), "{detail}");
+    assert_eq!(git(r, &["rev-parse", "main"]), evil, "the merge queue moved main");
+    assert_eq!(std::fs::read_to_string(r.join("src/lib.rs")).unwrap(), LIB);
+}

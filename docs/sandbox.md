@@ -10,10 +10,17 @@ agents doctor` shows the mechanism in use.
 - Its **worktree**: readable and writable. Under bubblewrap and Seatbelt,
   the checkout's `.git` stays read-only and cannot be renamed or removed.
   An agent in your own checkout (no task) can run read-only git commands
-  but not commit. A task agent can also write `objects/`, `refs/`, `logs/`
-  and its own `.git/worktrees/<name>/` folder, so it can commit in its
-  worktree; the `commondir`, `gitdir` and `config.worktree` files there stay
-  read-only. Landlock, Windows and container mode do not do this (see
+  but not commit. A task agent can also write `objects/` (not
+  `objects/info/`), the folder in `refs/heads/` that holds its task branch
+  (`refs/heads/polyph/` for `polyph/<name>`) and the matching folder in
+  `logs/refs/heads/`, and its own `.git/worktrees/<name>/` folder, so it
+  can commit on its task branch; the other branches and reflogs in those
+  folders when it starts, and the `commondir`, `gitdir` and
+  `config.worktree` files in its own folder, stay read-only. Every other
+  ref, `main` included, and every other reflog are read-only. A task
+  branch with no `/` in its name gets no commits from the agent (its
+  folder holds every branch); the daemon commits the work when the task
+  finishes. Landlock, Windows and container mode do not do this (see
   `docs/security.md`).
 - Its own **config/cache directory** (for example `~/.claude` for Claude Code),
   so it can keep its login and session files.

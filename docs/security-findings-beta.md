@@ -386,11 +386,35 @@ Summary:
   and container mode (KAO-74). Fixed:
   - Without a task, the whole `.git` of the person's checkout is read-only
     inside the sandbox and cannot be renamed; the agent runs read-only git
-    but cannot commit. A task agent writes only `objects/`, `refs/`,
-    `logs/` and its own `worktrees/<name>/`, whose `commondir`, `gitdir`
-    and `config.worktree` stay read-only, as do other worktrees' folders
-    (bubblewrap: `crates/polyph-sandbox/tests/sandbox.rs`, both cases;
-    Seatbelt: profile unit tests only, not run on a Mac).
+    but cannot commit. A task agent writes only `objects/` (not
+    `objects/info/`), its task branch's folder in `refs/heads/` and in
+    `logs/refs/heads/` (`polyph/` for `polyph/<name>`; the other branches
+    and reflogs there at its start stay read-only), and its own
+    `worktrees/<name>/`, whose `commondir`, `gitdir` and `config.worktree`
+    stay read-only, as do other worktrees' folders. `main`, every other
+    ref and reflog, and `objects/info/alternates` are read-only
+    (bubblewrap: `crates/polyph-sandbox/tests/sandbox.rs`,
+    `bubblewrap_lets_a_task_agent_move_only_its_own_branch` and the two
+    earlier cases; Seatbelt: profile unit tests only, not run on a Mac).
+  - Writable `refs/` let a task agent move `main` (high, found in review):
+    narrowed as above. The daemon commits a task's work onto the task
+    branch itself, never through the worktree's HEAD the agent writes
+    (`polyph-git` test `task_commits_go_to_the_task_branch_only`), and
+    refuses to merge into or move a branch whose tip is not the last
+    entry of its reflog (`a_branch_changed_without_git_is_not_merged_into`;
+    `polyph-testkit` `m4_merge::a_base_changed_without_git_is_not_merged_into`).
+  - Linked reflogs (high, found in review: `logs/HEAD` linked to
+    `~/.profile`, the daemon's commit appends to it): `logs/` narrowed as
+    above, and before every git command that writes, one shared guard
+    (`check_links`) refuses any symbolic link, or hard-linked file outside
+    `objects/`, under `logs/`, `refs/`, `worktrees/`, `objects/info/` and
+    `info/`, naming the path (`polyph-git` test
+    `links_in_the_git_directory_stop_writes`; bubblewrap test
+    `a_linked_reflog_stops_the_daemons_commit`, the auditor's repro).
+  - `objects/info/alternates` (medium, found in review): `objects/info/` is
+    read-only to task agents, and the daemon refuses to run git while an
+    `alternates` or `http-alternates` file exists, since it never creates
+    one (`polyph-git` test `alternates_are_refused`).
   - The `commondir` redirect found in review: the daemon names the git
     directory and `GIT_COMMON_DIR` on every command, refuses a `commondir`
     file in a main git directory and any `commondir` in a worktree's folder
@@ -407,9 +431,12 @@ Summary:
   checkout can still write `.git/config` and hooks; the daemon warns at
   start, no longer runs most of what it writes and refuses a `commondir`,
   but filter and merge drivers still run on its status, commit and
-  fast-forward there, and the person's own git runs all of it. Low, by
-  design: a task agent can move any branch through `refs/`, and can write
-  `objects/info/alternates`. Tracked in `STUBS.md`.
+  fast-forward there, and the person's own git runs all of it. Low: the
+  `refs/heads/polyph/` folder is shared by all task branches, so a task
+  agent can create a `polyph/` branch or move one created after it
+  started (each still merges only through its own review and approval);
+  a person's repository cloned with `--reference` is refused until
+  repacked. Tracked in `STUBS.md`.
 
 ## SEC-14: Host IPC is reachable from the sandbox
 

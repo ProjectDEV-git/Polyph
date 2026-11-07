@@ -761,8 +761,10 @@ impl Repo {
         let env = sig_env(who);
         let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
         let text = format!("{}\n", message.trim());
-        let commit =
-            self.git_env(&["commit-tree", &tree, "-p", &parent, "-F", "-"], &env, Some(text.as_bytes()))?.trim().to_string();
+        let commit = self
+            .git_env(&["commit-tree", &tree, "-p", &parent, "-F", "-"], &env, Some(text.as_bytes()))?
+            .trim()
+            .to_string();
         let subject = text.lines().next().unwrap_or_default();
         self.git(&["update-ref", "-m", &format!("commit: {subject}"), &full, &commit, &parent])?;
         Ok(Some(commit))

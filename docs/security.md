@@ -119,14 +119,44 @@ The daemon treats an agent's worktree as hostile input:
   be renamed, removed or replaced. It can edit files and run read-only git
   commands (`git status`, `git diff`, `git log`); it cannot commit, change
   the config, hooks or info, or add a `commondir` file. A task agent gets
-  the shared `.git` read-only too, except `objects/`, `refs/`, `logs/` and
-  its own `.git/worktrees/<name>/` folder, so it can run `git add` and
-  `git commit` in its worktree. Inside that folder the `commondir`, `gitdir`
-  and `config.worktree` files stay read-only (the daemon creates an empty
-  `config.worktree` first), as do its worktree's `.git` file and the
-  folders of other worktrees, their `config.worktree` included. Because
-  `refs/` is writable, a task agent can move any branch of the repository,
-  not only its own; the merge queue still merges only through the daemon.
+  the shared `.git` read-only too, except `objects/` (but not
+  `objects/info/`), the folder in `refs/heads/` that holds its task branch
+  and the matching folder in `logs/refs/heads/` (`refs/heads/polyph/` and
+  `logs/refs/heads/polyph/` for `polyph/<name>`), and its own
+  `.git/worktrees/<name>/` folder (its HEAD, index, reflog and per-worktree
+  refs), so it can run `git add` and `git commit` on its task branch. The
+  other branches and reflogs in those two folders when it starts stay
+  read-only; so do `main` and every other ref and reflog. Inside its own
+  folder the `commondir`, `gitdir` and `config.worktree` files stay
+  read-only (the daemon creates an empty `config.worktree`, the branch
+  folders and `objects/info/` first), as do its worktree's `.git` file and
+  the folders of other worktrees, their `config.worktree` included. What
+  is left: the folder is shared by all `polyph/` branches, so the agent
+  can create a branch there, or move a `polyph/` branch created after it
+  started; that branch's own merge still goes through review and approval.
+  A task branch with no `/` in its name shares its folder with `main`, so
+  that agent cannot commit at all; the daemon commits its work at finish.
+- The daemon commits a task's work (on finish and hand-off) onto the task
+  branch itself (`commit-tree` on the branch's tip, then `update-ref`),
+  never through the worktree's HEAD, which the agent writes; if HEAD names
+  another branch it refuses. Before merging into a branch, and again
+  before moving it, it checks that the branch points where the last entry
+  of its reflog says git set it; a branch written without git (as an
+  agent with `refs/` writable would) is refused with an error naming the
+  reflog. A branch without a reflog is not checked.
+- Before every git command that writes (commit, add, update-ref, merge,
+  fetch, push, worktree, branch and the like) and before it adds a line
+  to `info/exclude`, the daemon walks `logs/`, `refs/`, `worktrees/`,
+  `objects/info/` and `info/` of the shared git directory, and the
+  worktree's git directory, and refuses if any entry is a symbolic link
+  or (Linux and macOS, outside `objects/`) a file with more than one hard
+  link, with an error naming the path: git appends to reflogs through
+  links, so a linked `logs/HEAD` would let an agent append a line of its
+  choosing to any file the person can write. Before every git command it
+  refuses an `objects/info/alternates` or `http-alternates` file; Polyph
+  never creates one, so a repository cloned with `--reference` or
+  `--shared` must be repacked (`git repack -a -d`) and the file removed
+  before Polyph works in it.
   Bubblewrap is tested by `crates/polyph-sandbox/tests/sandbox.rs`;
   Seatbelt's rules by a unit test of the profile only, not yet run on a
   Mac. Landlock, Windows and container mode do not enforce any of this;
@@ -171,9 +201,6 @@ The daemon treats an agent's worktree as hostile input:
   They rely on `.git` being read-only, as above. A relative `include.path`
   in `.git/config` resolves inside `.git/`, which is read-only under
   bubblewrap and Seatbelt, so an agent cannot add an included file there.
-- Low: a task agent can write `objects/info/alternates`, which makes git
-  read objects from another folder. It names no program to run; it can make
-  the repository's history depend on files outside it.
 - Files it reads from a worktree (the brief, areas, skills, mirrored files,
   merge resolutions) must not be symbolic links on any part of their path,
   nor (on Linux and macOS) hard links, and are capped in size (1 MiB unless

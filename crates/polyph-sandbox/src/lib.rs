@@ -48,10 +48,11 @@ pub struct Policy {
     /// container mode ignore it.
     pub read_only: Vec<PathBuf>,
     /// Folders of the shared git directory a task agent writes to commit
-    /// (`objects/`, `refs/`, `logs/`, its own `worktrees/<name>/`), each
-    /// mounted writable over `read_only`, with the `read_only` paths inside
-    /// them read-only again. Bubblewrap and Seatbelt only; elsewhere the
-    /// agent cannot commit.
+    /// (`objects/`, its branch's folders in `refs/heads/` and
+    /// `logs/refs/heads/`, its own `worktrees/<name>/`), each mounted
+    /// writable over `read_only`, with the `read_only` paths inside them
+    /// (`objects/info/`, other branches) read-only again. Bubblewrap and
+    /// Seatbelt only; elsewhere the agent cannot commit.
     pub git_writable: Vec<PathBuf>,
     /// Daemon proxy: loopback TCP address and (Unix) socket path.
     pub proxy_tcp: Option<std::net::SocketAddr>,
@@ -621,8 +622,11 @@ mod seatbelt_tests {
         let common = t.join("repo").join(".git");
         let own = common.join("worktrees").join("t1");
         std::fs::create_dir_all(&own).unwrap();
-        for d in ["objects", "refs", "logs"] {
+        for d in ["objects/info", "refs/heads/polyph", "logs/refs/heads/polyph"] {
             std::fs::create_dir_all(common.join(d)).unwrap();
+        }
+        for f in ["refs/heads/main", "refs/heads/polyph/t1", "refs/heads/polyph/t2", "logs/refs/heads/polyph/t2"] {
+            std::fs::write(common.join(f), "").unwrap();
         }
         for f in ["commondir", "gitdir", "config.worktree"] {
             std::fs::write(own.join(f), "").unwrap();
@@ -631,9 +635,12 @@ mod seatbelt_tests {
         let worktree = t.join("repo").join(".polyph").join("t1");
         std::fs::create_dir_all(&worktree).unwrap();
         std::fs::write(worktree.join(".git"), "").unwrap();
-        let mut read_only = vec![common.clone(), worktree.join(".git")];
+        // As `polyph_git::sandbox_git` gives them for branch `polyph/t1`.
+        let mut read_only = vec![common.clone(), worktree.join(".git"), common.join("objects/info")];
         read_only.extend(["commondir", "gitdir", "config.worktree"].iter().map(|f| own.join(f)));
-        let mut git_writable: Vec<PathBuf> = ["objects", "refs", "logs"].iter().map(|d| common.join(d)).collect();
+        read_only.extend([common.join("refs/heads/polyph/t2"), common.join("logs/refs/heads/polyph/t2")]);
+        let mut git_writable: Vec<PathBuf> =
+            ["objects", "refs/heads/polyph", "logs/refs/heads/polyph"].iter().map(|d| common.join(d)).collect();
         git_writable.push(own.clone());
         let policy = Policy {
             worktree,
@@ -668,6 +675,19 @@ mod seatbelt_tests {
         let gitdir = pos(&["--ro-bind", &s(&own.join("gitdir")), &s(&own.join("gitdir"))]);
         let link = pos(&["--ro-bind", &s(&policy.worktree.join(".git")), &s(&policy.worktree.join(".git"))]);
         assert!(own_rw < commondir && own_rw < gitdir && objects < commondir && link < own_rw, "{:?}", w.args);
+        // Only the task branch's folders, with the other branches and
+        // `objects/info` read-only again after them.
+        let (refs, logs) = (common.join("refs/heads/polyph"), common.join("logs/refs/heads/polyph"));
+        let refs_rw = pos(&["--bind", &s(&refs), &s(&refs)]);
+        let logs_rw = pos(&["--bind", &s(&logs), &s(&logs)]);
+        for p in [refs.join("t2"), logs.join("t2")] {
+            assert!(pos(&["--ro-bind", &s(&p), &s(&p)]) > refs_rw.max(logs_rw), "{:?}", w.args);
+        }
+        let info = common.join("objects/info");
+        assert!(pos(&["--ro-bind", &s(&info), &s(&info)]) > objects, "{:?}", w.args);
+        for p in [common.join("refs"), common.join("logs"), common.join("refs/heads"), refs.join("t1")] {
+            assert!(!w.args.iter().any(|a| *a == s(&p)), "{p:?} in {:?}", w.args);
+        }
         // The shared directory is outside the worktree: read-only already, and
         // never bound over the commit folders.
         assert!(!w.args.iter().any(|a| *a == s(&common)), "{:?}", w.args);
@@ -677,7 +697,15 @@ mod seatbelt_tests {
         let allow = at(format!("(allow file-write* (subpath \"{}\"))", sb_quote(&own)));
         let pin = at(format!("(deny file-write* (literal \"{}\"))", sb_quote(&own)));
         let deny = at(format!("(deny file-write* (literal \"{}\"))", sb_quote(&own.join("commondir"))));
-        at(format!("(allow file-write* (subpath \"{}\"))", sb_quote(&common.join("refs"))));
+        let refs_allow = at(format!("(allow file-write* (subpath \"{}\"))", sb_quote(&refs)));
+        at(format!("(allow file-write* (subpath \"{}\"))", sb_quote(&logs)));
+        for d in [refs.join("t2"), logs.join("t2")] {
+            assert!(at(format!("(deny file-write* (literal \"{}\"))", sb_quote(&d))) > refs_allow, "{p}");
+        }
+        at(format!("(deny file-write* (subpath \"{}\"))", sb_quote(&info)));
+        for d in [common.join("refs"), common.join("logs"), common.join("refs/heads")] {
+            assert!(!p.contains(&format!("(allow file-write* (subpath \"{}\"))", sb_quote(&d))), "{p}");
+        }
         assert!(allow < pin && pin < deny, "{p}");
         assert!(!p.contains(&format!("(allow file-write* (subpath \"{}\"))", sb_quote(&common))), "{p}");
 
