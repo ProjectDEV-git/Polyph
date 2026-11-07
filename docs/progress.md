@@ -119,7 +119,13 @@ rate-limit fields and prints CONTINUE, PAUSE or WAIT_UNTIL.
 
 Reading at 06:00 UTC with the 62M limit: 49.3M tokens, 79%. Resets 09:40
 UTC (Kao's figure; ccusage says 10:00). Hourly checks: 06:48 UTC 50.0M
-(80%), 07:48 UTC 50.7M (81%). Still paused.
+(80%), 07:48 UTC 50.7M (81%), 08:18 UTC 51.3M (82%).
+
+Resumed 09:41 UTC. get_session showed a new five-hour window (`five_hour`,
+`allowed`, resets 14:40 UTC); ccusage still showed its old block (83%) until
+10:00. The #14 and #16 Opus workers had stopped at about 05:46 UTC with no
+report: #14 left 14 uncommitted files, #16 left nothing. Both dispatched
+again (#14 resumes the uncommitted work). #15 checks running locally.
 
 ### Next after the pause
 

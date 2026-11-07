@@ -31,6 +31,16 @@ bugs belong in Linear (or `STUBS.md` for unfinished work), not here.
 
 ## Workers
 
+- Background workers can stop without a notification (two Opus workers did
+  around a context compaction). After a pause, check each worktree's
+  `git status` and file times before waiting on a worker. Briefs for long
+  work should ask for WIP commits so an interruption keeps the work.
+- A background `sleep` without `timeout` is killed after 30 minutes. Pass
+  `timeout` (up to 7200000 ms) for hourly checks.
+- After a reset, ccusage keeps showing its own block until that block's end
+  time. `get_session` `rate_limit_info` (`five_hour`, `allowed`, `resetsAt`)
+  shows the new window first.
+
 - Reviewers have checked out PR branches in the main checkout
   (`/home/user/Polyph`), leaving it on a detached HEAD. Briefs must say: use
   `git diff origin/Main...origin/<branch>` or `git show`, or a worktree under
