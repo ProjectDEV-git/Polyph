@@ -24,6 +24,16 @@ impl std::fmt::Debug for Node {
 }
 
 impl Node {
+    /// Records this node's trust in the `polyph.toml` found from `dir`, the way
+    /// a person does with `polyph trust`. Without it the daemon drops the
+    /// file's `checks`, `[sandbox]`, `[agents.*]` and `[policy] preset`.
+    pub fn trust_project(&self, dir: &std::path::Path) -> anyhow::Result<()> {
+        use polyph_agents::project::{ProjectFile, TrustStore};
+        let file =
+            ProjectFile::find(dir)?.ok_or_else(|| anyhow::anyhow!("no polyph.toml at or above {}", dir.display()))?;
+        TrustStore::at(Paths::at(self._dir.path()).trusted_projects()).trust(&file)
+    }
+
     pub async fn call(&self, method: &str, params: Value) -> anyhow::Result<Value> {
         self.daemon.call(method, params).await.map_err(|e| anyhow::anyhow!("{} {method}: {e}", self.name))
     }
@@ -178,6 +188,12 @@ impl Harness {
             .await?;
         let res = handle.await?.map_err(|e| anyhow::anyhow!("join failed: {e}"))?;
         Ok(res["id"].as_str().unwrap_or_default().to_string())
+    }
+
+    /// Trusts the project file at `dir` on every node. Call it after the
+    /// file's final content is written; any later edit invalidates the record.
+    pub fn trust_project(&self, dir: &std::path::Path) -> anyhow::Result<()> {
+        self.nodes.iter().try_for_each(|n| n.trust_project(dir))
     }
 
     /// Polls `f` until it returns true or ten seconds pass.

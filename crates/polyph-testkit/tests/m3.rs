@@ -86,8 +86,18 @@ async fn scripted_task_completes_and_teammates_see_it() {
         { "usage": { "input": 100, "output": 20 } }
     ]] });
     let dir = worktree(script, "checks = [\"sh -c 'echo 3 passed, 0 failed'\"]\n");
+    // `checks` only apply once a person trusts the file, as `polyph trust` does.
+    h.trust_project(dir.path()).unwrap();
     let id = start_agent(&h, b, &rid, dir.path(), "default").await;
-    let r = h.nodes[b].call("agent.prompt", json!({ "agent": id, "text": "add a login function" })).await.unwrap();
+    // A check that is not honored waits for an approval nobody answers; fail
+    // with that explanation instead of hanging.
+    let r = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        h.nodes[b].call("agent.prompt", json!({ "agent": id, "text": "add a login function" })),
+    )
+    .await
+    .expect("agent.prompt did not finish in 60s: the run is probably waiting for an approval (is polyph.toml trusted?)")
+    .unwrap();
     assert_eq!(r["stop_reason"], "end_turn");
     assert_eq!(
         std::fs::read_to_string(dir.path().join("src/login.rs")).unwrap(),

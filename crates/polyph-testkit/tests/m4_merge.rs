@@ -164,6 +164,7 @@ async fn two_tasks_merge_keeping_both_intents() {
     .unwrap();
     git(r, &["add", "-A"]);
     git(r, &["commit", "-q", "-m", "initial"]);
+    h.trust_project(r).unwrap();
 
     let card = |title: &'static str| {
         let (h, rid) = (&h, rid.clone());
@@ -278,6 +279,7 @@ async fn setup(kinds: Vec<(&str, Value)>, toml: &str) -> (Harness, String, tempf
     std::fs::write(r.join("polyph.toml"), toml).unwrap();
     git(r, &["add", "-A"]);
     git(r, &["commit", "-q", "-m", "initial"]);
+    h.trust_project(r).unwrap();
     (h, rid, repo, scripts)
 }
 
