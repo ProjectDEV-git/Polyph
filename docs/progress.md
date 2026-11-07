@@ -56,9 +56,11 @@ Results checked:
 - #16 rework (577e9ff): all 8 findings fixed; push stays guarded where an
   agent ran outside bwrap/Seatbelt (accepted). Checked: polyph-git 14,
   plugins 8, sandbox 6+2 (real bwrap), m4 4, m4_merge 7, fmt clean.
-  Security auditor sign-off review running; architect re-review next.
+  Security auditor: NO SIGN-OFF (commondir redirect and nested-repo
+  filters are critical, toml link read is high). Sent back to Opus with the
+  read-only `.git` decision.
 
-Dispatch count: 11.
+Dispatch count: 12 (05:55 UTC).
 
 Dogfood setup (`polyph` built from `Main` at 448f203, `POLYPH_KEYSTORE=file`,
 home `/root/dogfood-home`): `polyph start --name polyph-beta --yes

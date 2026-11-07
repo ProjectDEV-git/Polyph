@@ -58,3 +58,15 @@ architecture decisions stay in `DECISIONS.md` at the root.
   fails the merge entry with "run `polyph trust`" instead of skipping
   checks. One assertion in `polyph-agents` that encoded the old rule is
   replaced, approved by the lead as a rule change.
+- **Read-only `.git` for agents (PR #16, after the security auditor's
+  NO SIGN-OFF).** The auditor reproduced two critical escapes under bwrap
+  (`.git/commondir` redirect; nested-repo filter drivers on the daemon's
+  `add -A`) and one high (toml parse errors echo hidden files). Lead's call:
+  agents without a task get the whole `.git` read-only and cannot commit in
+  the person's checkout (a known limit in `docs/beta.md`); task agents get a
+  read-only main `.git` with `objects/`, `refs/`, `logs/` and their own
+  `worktrees/<name>/` writable and its `commondir`/`gitdir` pinned
+  read-only. The daemon sets `GIT_COMMON_DIR`, verifies the common dir before
+  network commands and refuses nested repositories. Landlock and Windows
+  stay open for SEC-13 with a warning at agent start. Not a hard stop: no
+  wire change, and it narrows what agents can do.
