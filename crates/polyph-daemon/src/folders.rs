@@ -85,6 +85,42 @@ pub fn mark_git_exposed(home: &Path, root: &Path) -> std::io::Result<()> {
     crate::paths::write_private(&exposed_file(home), &serde_json::to_vec_pretty(&v).unwrap_or_default())
 }
 
+fn branches_file(home: &Path) -> PathBuf {
+    home.join("task-branches.json")
+}
+
+/// Task branches the daemon created, per repository (the main checkout).
+type Created = std::collections::BTreeMap<PathBuf, Vec<String>>;
+
+fn created(home: &Path) -> Created {
+    std::fs::read(branches_file(home)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+/// One read-and-write of the record at a time.
+static BRANCHES: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+/// Records that the daemon created `branch` in the repository at `root` for
+/// a task, so it may give it to a later agent on that task (SEC-13).
+pub fn record_task_branch(home: &Path, root: &Path, branch: &str) -> std::io::Result<()> {
+    let _g = BRANCHES.lock();
+    let root = polyph_git::canonical(root).unwrap_or_else(|_| root.to_path_buf());
+    let mut all = created(home);
+    let v = all.entry(root).or_default();
+    if v.iter().any(|b| b == branch) {
+        return Ok(());
+    }
+    v.push(branch.to_string());
+    crate::paths::write_private(&branches_file(home), &serde_json::to_vec_pretty(&all).unwrap_or_default())
+}
+
+/// Whether the daemon created `branch` in the repository at `root`
+/// ([`record_task_branch`]).
+pub fn created_task_branch(home: &Path, root: &Path, branch: &str) -> bool {
+    let _g = BRANCHES.lock();
+    let root = polyph_git::canonical(root).unwrap_or_else(|_| root.to_path_buf());
+    created(home).get(&root).is_some_and(|v| v.iter().any(|b| b == branch))
+}
+
 /// Opens the checkout at `dir` for a fetch or push. One an agent may have
 /// written the git settings of (see [`mark_git_exposed`]) runs with the
 /// guarded settings; any other with its own, so per-repository SSH

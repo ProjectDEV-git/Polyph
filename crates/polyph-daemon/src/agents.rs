@@ -374,7 +374,7 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
             let branch = card.as_ref().and_then(|c| c.branch.clone()).unwrap_or_else(|| {
                 polyph_git::task_branch(card.as_ref().map(|c| c.title.as_str()).unwrap_or(""), &t.short())
             });
-            Some(crate::tasks::prepare_worktree(cwd.clone(), branch, None).await?)
+            Some(crate::tasks::prepare_worktree(shared.paths.home.clone(), cwd.clone(), branch, None).await?)
         }
         _ => None,
     };
@@ -441,8 +441,13 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
     // Where it cannot, and the agent works in the person's own checkout, the
     // daemon stops trusting that checkout's settings for its own fetches and
     // pushes, and says so. (With no sandbox the agent runs as the person.)
+    // It commits only on a branch in its own task's folder,
+    // `polyph/<task>/<name>`, into its worktree's own object store.
     let git = {
-        let (wt, branch) = (worktree.clone(), task_wt.as_ref().map(|w| w.branch.clone()));
+        let branch = task_wt.as_ref().map(|w| w.branch.clone()).filter(|b| {
+            task.is_some_and(|t| polyph_git::task_folder(b) == Some(t.short().as_str()))
+        });
+        let wt = worktree.clone();
         tokio::task::spawn_blocking(move || polyph_git::sandbox_git(&wt, branch.as_deref())).await.unwrap_or_default()
     };
     let enforced = git_mounts_enforced(mech);
@@ -468,11 +473,18 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
     let command = registry::resolve_command(&def.config.command)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|| def.config.command.clone());
+    let git_env = if enforced { git.env } else { vec![] };
     let mut wrapped = polyph_sandbox::wrap(mech, &policy, &command, &def.config.args)?;
+    wrapped.env.extend(git_env.iter().cloned());
     wrapped.env.extend(def.config.env.iter().map(|(k, v)| (k.clone(), v.clone())));
     let wrap: CommandWrapper = {
         let policy = policy.clone();
-        Arc::new(move |prog: &str, args: &[String]| polyph_sandbox::wrap(mech, &policy, prog, args))
+        Arc::new(move |prog: &str, args: &[String]| {
+            polyph_sandbox::wrap(mech, &policy, prog, args).map(|mut w| {
+                w.env.extend(git_env.iter().cloned());
+                w
+            })
+        })
     };
     // The Polyph MCP server runs inside the sandbox and reaches the daemon
     // through this agent's proxy, at the address the sandbox exports.
@@ -688,6 +700,18 @@ async fn run_turn(shared: &Shared, rt: &RoomRuntime, h: &AgentHandle, text: Opti
     publish(rt, shared, &h.agent, AgentEventKind::Prompt { text: text.to_string(), from: h.agent.member }).await;
     set_state(h, rt, shared, AgentState::Running, None).await;
     let r = h.proc.prompt(text).await;
+    // Commits the agent made in its turn go into the shared object store
+    // now, so the repository's refs never point at objects only its task's
+    // store has for longer than a turn (SEC-13).
+    if let Some(wt) = h.task_wt.clone() {
+        let took = tokio::task::spawn_blocking(move || {
+            polyph_git::Repo::open(&wt.repo).and_then(|m| m.open_worktree(&wt.path)).and_then(|r| r.import_branch(&wt.branch))
+        })
+        .await;
+        if let Ok(Err(e)) = took {
+            warn!(error = %e, "could not take the task's commits into the shared object store");
+        }
+    }
     let resp = match r {
         Ok(r) => r,
         Err(e) => {

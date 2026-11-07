@@ -50,10 +50,28 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> 
 }
 
 /// Creates (or reuses) the worktree for a task in the repository at `cwd`.
-pub async fn prepare_worktree(cwd: PathBuf, branch: String, base: Option<String>) -> Result<TaskWorktree, ApiError> {
+/// An existing branch is given to an agent only if this daemon created it
+/// for a task (recorded in `home`): a card's branch is shared room data,
+/// and naming `main` or another task's branch there must not hand that
+/// branch to an agent (SEC-13).
+pub async fn prepare_worktree(
+    home: PathBuf,
+    cwd: PathBuf,
+    branch: String,
+    base: Option<String>,
+) -> Result<TaskWorktree, ApiError> {
     blocking(move || -> Result<TaskWorktree, ApiError> {
         let repo = Repo::open(&cwd).map_err(git_err)?;
         let main = Repo::open(&repo.main_root().map_err(git_err)?).map_err(git_err)?;
+        polyph_git::check_branch_name(&branch).map_err(git_err)?;
+        let existed = main.branch_exists(&branch);
+        if existed && !crate::folders::created_task_branch(&home, main.root(), &branch) {
+            return Err(ApiError::BadRequest(format!(
+                "refusing to give branch {branch} to an agent: Polyph did not create it for a task in {}. \
+                 Clear the card's branch so the task gets a new one, or rename that branch",
+                main.root().display()
+            )));
+        }
         let base = match base {
             Some(b) => b,
             None => repo.current_branch().ok_or_else(|| {
@@ -72,6 +90,9 @@ pub async fn prepare_worktree(cwd: PathBuf, branch: String, base: Option<String>
         main.exclude("/.polyph/").map_err(git_err)?;
         std::fs::create_dir_all(main.root().join(WORKTREES))?;
         main.add_worktree(&path, &branch, &base).map_err(git_err)?;
+        if !existed {
+            crate::folders::record_task_branch(&home, main.root(), &branch)?;
+        }
         Ok(TaskWorktree { repo: main.root().to_path_buf(), path, branch, base })
     })
     .await?
@@ -305,10 +326,12 @@ async fn process(
         e.detail = Some(notes);
     }
 
-    // 2. A person approves the merge.
+    // 2. A person approves the merge: of the commit queued, which they see.
     if project.merge.approval.unwrap_or(true) {
         set_state(rt, &shared, e, MergeState::AwaitingApproval, None).await;
-        let kind = ApprovalKind::Merge { branch: e.branch.clone(), into: e.into.clone() };
+        let (r2, into, head) = (repo_root.to_path_buf(), e.into.clone(), e.head.clone());
+        let stat = blocking(move || Repo::open(&r2).and_then(|r| r.diff_stat(&into, &head))).await?.map_err(git_err)?;
+        let kind = merge_approval(&e.branch, &e.head, &e.into, &stat);
         let task = e.card.as_deref().and_then(|c| ObjectId::from_hex(c).ok());
         if let Decision::Deny { note } = agents::request_approval(rt, &shared, agent, kind, task).await {
             let why = note.map(|n| format!(": {n}")).unwrap_or_default();
@@ -457,6 +480,17 @@ async fn process(
     }
     set_state(rt, &shared, e, MergeState::Failed, Some(format!("{} kept moving; queue it again", e.into))).await;
     Ok(())
+}
+
+/// The approval for merging `head` (queued from `branch`) into `into`. The
+/// wire format has only a branch and a target, so the commit and its diff
+/// stat go in the branch text every client shows: "polyph/1a2b3c4d/login at
+/// 0123456789ab (2 files changed, 5 insertions(+))". The merge queue merges
+/// that commit, whatever the branch points at by then.
+pub(crate) fn merge_approval(branch: &str, head: &str, into: &str, stat: &str) -> ApprovalKind {
+    let short: String = head.chars().take(12).collect();
+    let stat = if stat.trim().is_empty() { "no changes" } else { stat.trim() };
+    ApprovalKind::Merge { branch: format!("{branch} at {short} ({stat})"), into: into.to_string() }
 }
 
 async fn push(rt: &RoomRuntime, shared: &Shared, agent: &AgentRef, root: &Path, remote: &str, branch: &str) {
@@ -943,4 +977,76 @@ pub async fn handoff(
         }
     }
     Ok(json!({ "brief": brief, "next": started }))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    fn git(dir: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=a", "-c", "user.email=a@b", "-c", "commit.gpgSign=false"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    }
+
+    /// SEC-13: a card's branch is shared room data. The daemon gives an
+    /// agent a branch that exists only if it created it for a task; a new
+    /// one it creates and records, and a later agent on the task gets it.
+    #[tokio::test]
+    async fn only_branches_the_daemon_created_are_reused() {
+        let home = tempfile::tempdir().unwrap();
+        let d = tempfile::tempdir().unwrap();
+        git(d.path(), &["init", "-q", "-b", "main"]);
+        git(d.path(), &["commit", "-q", "--allow-empty", "-m", "first"]);
+        git(d.path(), &["branch", "polyph/ab12cd34/planted"]);
+        let (h, r) = (home.path().to_path_buf(), d.path().to_path_buf());
+        let main = Some("main".to_string());
+        for b in ["main", "polyph/ab12cd34/planted"] {
+            let e = prepare_worktree(h.clone(), r.clone(), b.into(), main.clone()).await.unwrap_err().to_string();
+            assert!(e.contains(&format!("refusing to give branch {b} to an agent")), "{e}");
+        }
+        assert!(!d.path().join(WORKTREES).join("main").exists());
+
+        let b = polyph_git::task_branch("Add login", "ab12cd34");
+        let wt = prepare_worktree(h.clone(), r.clone(), b.clone(), main.clone()).await.unwrap();
+        assert_eq!(wt.branch, "polyph/ab12cd34/add-login");
+        assert!(crate::folders::created_task_branch(&h, &r, &b));
+        // The next agent on the task, with the worktree there or gone.
+        prepare_worktree(h.clone(), r.clone(), b.clone(), main.clone()).await.unwrap();
+        let m = Repo::open(&r).unwrap();
+        m.remove_worktree(&wt.path).unwrap();
+        let again = prepare_worktree(h.clone(), r.clone(), b.clone(), main.clone()).await.unwrap();
+        assert_eq!(Repo::open(&r).unwrap().open_worktree(&again.path).unwrap().current_branch(), Some(b));
+        // Another daemon home never created it.
+        let other = tempfile::tempdir().unwrap();
+        let e = prepare_worktree(other.path().to_path_buf(), r, wt.branch, main).await.unwrap_err();
+        assert!(e.to_string().contains("did not create it"), "{e}");
+    }
+
+    /// SEC-13: the merge approval names the commit the queue merges and
+    /// what it changes, not only the branch, which its agent can still move.
+    #[test]
+    fn merge_approval_shows_the_commit_and_its_stat() {
+        let head = "0123456789abcdef0123456789abcdef01234567";
+        let k = merge_approval("polyph/ab12cd34/login", head, "main", " 2 files changed, 5 insertions(+)\n");
+        assert_eq!(
+            k,
+            ApprovalKind::Merge {
+                branch: "polyph/ab12cd34/login at 0123456789ab (2 files changed, 5 insertions(+))".into(),
+                into: "main".into()
+            }
+        );
+        assert_eq!(
+            polyph_core::room::approval_title(&k),
+            "Merge polyph/ab12cd34/login at 0123456789ab (2 files changed, 5 insertions(+)) into main"
+        );
+        let ApprovalKind::Merge { branch, .. } = merge_approval("b", head, "main", "") else { panic!() };
+        assert_eq!(branch, "b at 0123456789ab (no changes)");
+    }
 }

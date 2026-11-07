@@ -48,11 +48,12 @@ pub struct Policy {
     /// container mode ignore it.
     pub read_only: Vec<PathBuf>,
     /// Folders of the shared git directory a task agent writes to commit
-    /// (`objects/`, its branch's folders in `refs/heads/` and
-    /// `logs/refs/heads/`, its own `worktrees/<name>/`), each mounted
-    /// writable over `read_only`, with the `read_only` paths inside them
-    /// (`objects/info/`, other branches) read-only again. Bubblewrap and
-    /// Seatbelt only; elsewhere the agent cannot commit.
+    /// (its task's folders in `refs/heads/polyph/` and
+    /// `logs/refs/heads/polyph/`, and its own `worktrees/<name>/`, which
+    /// holds its own object store; the shared `objects/` stays read-only),
+    /// each mounted writable over `read_only`, with the `read_only` paths
+    /// inside them (its store's `info/`, other branches) read-only again.
+    /// Bubblewrap and Seatbelt only; elsewhere the agent cannot commit.
     pub git_writable: Vec<PathBuf>,
     /// Daemon proxy: loopback TCP address and (Unix) socket path.
     pub proxy_tcp: Option<std::net::SocketAddr>,

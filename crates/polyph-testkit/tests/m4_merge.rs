@@ -197,7 +197,8 @@ async fn two_tasks_merge_keeping_both_intents() {
         .unwrap();
     let (aid, bid) = (sa["id"].as_str().unwrap().to_string(), sb["id"].as_str().unwrap().to_string());
     let (abr, bbr) = (sa["branch"].as_str().unwrap().to_string(), sb["branch"].as_str().unwrap().to_string());
-    assert!(abr.starts_with("polyph/add-refunds-") && bbr.starts_with("polyph/add-invoices-"), "{abr} {bbr}");
+    assert!(abr.starts_with("polyph/") && abr.ends_with("/add-refunds"), "{abr}");
+    assert!(bbr.starts_with("polyph/") && bbr.ends_with("/add-invoices"), "{bbr}");
     assert_ne!(sa["worktree"], sb["worktree"]);
 
     // Ann's agent edits lib.rs; Bo's agent is stopped by the claim.

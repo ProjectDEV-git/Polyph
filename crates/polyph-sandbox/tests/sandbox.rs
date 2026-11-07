@@ -72,6 +72,22 @@ fn git(dir: &std::path::Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// The daemon takes the commits of `branch` from the task worktree at
+/// `worktree` into the shared object store.
+#[cfg(target_os = "linux")]
+fn take_in(repo: &std::path::Path, worktree: &std::path::Path, branch: &str) {
+    polyph_git::Repo::open(repo).unwrap().open_worktree(worktree).unwrap().import_branch(branch).unwrap();
+}
+
+/// A task worktree for `branch` at `<repo>/.polyph/worktrees/<name>`, made
+/// by the daemon's own code (with its own object store).
+#[cfg(target_os = "linux")]
+fn task_worktree(repo: &std::path::Path, name: &str, branch: &str) -> std::path::PathBuf {
+    let p = repo.join(".polyph").join("worktrees").join(name);
+    polyph_git::Repo::open(repo).unwrap().add_worktree(&p, branch, "main").unwrap();
+    p
+}
+
 /// Runs `script` with `sh` under bubblewrap in `worktree`, with the git
 /// mounts `polyph_git::sandbox_git` gives it (committing on `branch`, if
 /// any); returns what it printed.
@@ -103,7 +119,9 @@ async fn run_in_bwrap(
         helper,
         container_image: None,
     };
-    let w = polyph_sandbox::wrap(Mechanism::Bubblewrap, &policy, "sh", &["-c".into(), script.into()]).unwrap();
+    let mut w = polyph_sandbox::wrap(Mechanism::Bubblewrap, &policy, "sh", &["-c".into(), script.into()]).unwrap();
+    // As the daemon sets them for a task agent: its own object store.
+    w.env.extend(g.env);
     let out = std::process::Command::new(&w.program)
         .args(&w.args)
         .current_dir(&w.cwd)
@@ -171,8 +189,8 @@ async fn bubblewrap_lets_a_task_agent_commit_and_nothing_more() {
     let wts = repo.join(".polyph").join("worktrees");
     std::fs::create_dir_all(&wts).unwrap();
     let (t1, t2) = (wts.join("t1"), wts.join("t2"));
-    git(&repo, &["worktree", "add", "-q", "-b", "polyph/t1", &t1.to_string_lossy(), "main"]);
-    git(&repo, &["worktree", "add", "-q", "-b", "polyph/t2", &t2.to_string_lossy(), "main"]);
+    git(&repo, &["worktree", "add", "-q", "-b", "polyph/t1/a", &t1.to_string_lossy(), "main"]);
+    git(&repo, &["worktree", "add", "-q", "-b", "polyph/t2/b", &t2.to_string_lossy(), "main"]);
     let common = repo.join(".git");
     let (own, other) = (common.join("worktrees/t1"), common.join("worktrees/t2"));
     let config = std::fs::read(common.join("config")).unwrap();
@@ -192,11 +210,13 @@ async fn bubblewrap_lets_a_task_agent_commit_and_nothing_more() {
         own = own.display(),
         other = other.display(),
     );
-    let said = run_in_bwrap(helper, &base, &t1, Some("polyph/t1"), &script).await;
+    let said = run_in_bwrap(helper, &base, &t1, Some("polyph/t1/a"), &script).await;
 
     assert!(said.contains("committed"), "a task agent must be able to commit: {said}");
     assert!(said.contains("status-ok"), "{said}");
-    assert_eq!(git(&repo, &["log", "--format=%s", "polyph/t1"]).lines().collect::<Vec<_>>(), ["agent", "first"]);
+    // The agent's objects are in its own store until the daemon takes them in.
+    take_in(&repo, &t1, "polyph/t1/a");
+    assert_eq!(git(&repo, &["log", "--format=%s", "polyph/t1/a"]).lines().collect::<Vec<_>>(), ["agent", "first"]);
     assert!(!common.join("commondir").exists(), "the agent wrote .git/commondir: {said}");
     assert_eq!(std::fs::read_to_string(own.join("commondir")).unwrap().trim(), "../..", "{said}");
     assert_eq!(std::fs::read_to_string(other.join("commondir")).unwrap().trim(), "../..", "{said}");
@@ -225,12 +245,12 @@ async fn bubblewrap_lets_a_task_agent_move_only_its_own_branch() {
     let wts = repo.join(".polyph").join("worktrees");
     std::fs::create_dir_all(&wts).unwrap();
     let (t1, t2) = (wts.join("t1"), wts.join("t2"));
-    git(&repo, &["worktree", "add", "-q", "-b", "polyph/t1", &t1.to_string_lossy(), "main"]);
-    git(&repo, &["worktree", "add", "-q", "-b", "polyph/t2", &t2.to_string_lossy(), "main"]);
+    git(&repo, &["worktree", "add", "-q", "-b", "polyph/t1/a", &t1.to_string_lossy(), "main"]);
+    git(&repo, &["worktree", "add", "-q", "-b", "polyph/t2/b", &t2.to_string_lossy(), "main"]);
     let common = repo.join(".git");
     let main = git(&repo, &["rev-parse", "main"]);
     let main_log = std::fs::read(common.join("logs/refs/heads/main")).unwrap();
-    let t2_log = std::fs::read(common.join("logs/refs/heads/polyph/t2")).unwrap();
+    let t2_log = std::fs::read(common.join("logs/refs/heads/polyph/t2/b")).unwrap();
     let outside = base.join("profile");
     std::fs::write(&outside, "export PATH\n").unwrap();
 
@@ -239,26 +259,31 @@ async fn bubblewrap_lets_a_task_agent_move_only_its_own_branch() {
          c=$(git rev-parse HEAD); \
          git update-ref refs/heads/main $c && echo moved-main; \
          echo $c > {common}/refs/heads/main && echo wrote-main; \
-         git update-ref refs/heads/polyph/t2 $c && echo moved-t2; \
-         rm -f {common}/refs/heads/polyph/t2 && echo removed-t2; \
+         git update-ref refs/heads/polyph/t2/b $c && echo moved-t2; \
+         rm -f {common}/refs/heads/polyph/t2/b && echo removed-t2; \
+         git update-ref refs/heads/polyph/t1-other $c && echo made-polyph-other; \
+         mkdir {common}/refs/heads/polyph/t3 && echo made-t3-folder; \
          git branch other $c && echo made-other; \
          echo x >> {common}/logs/refs/heads/main && echo wrote-main-log; \
-         ln -sf {outside} {common}/logs/refs/heads/polyph/t2 && echo linked-t2-log; \
+         ln -sf {outside} {common}/logs/refs/heads/polyph/t2/b && echo linked-t2-log; \
          echo {base} > {common}/objects/info/alternates && echo wrote-alternates; \
          rm -rf {common}/objects/info && echo removed-info; true",
         common = common.display(),
         outside = outside.display(),
         base = base.display(),
     );
-    let said = run_in_bwrap(helper, &base, &t1, Some("polyph/t1"), &script).await;
+    let said = run_in_bwrap(helper, &base, &t1, Some("polyph/t1/a"), &script).await;
 
     assert!(said.contains("committed"), "a task agent must be able to commit on its branch: {said}");
-    assert_eq!(git(&repo, &["log", "--format=%s", "polyph/t1"]).lines().collect::<Vec<_>>(), ["agent", "first"]);
+    take_in(&repo, &t1, "polyph/t1/a");
+    assert_eq!(git(&repo, &["log", "--format=%s", "polyph/t1/a"]).lines().collect::<Vec<_>>(), ["agent", "first"]);
     for bad in [
         "moved-main",
         "wrote-main",
         "moved-t2",
         "removed-t2",
+        "made-polyph-other",
+        "made-t3-folder",
         "made-other",
         "wrote-main-log",
         "linked-t2-log",
@@ -268,10 +293,11 @@ async fn bubblewrap_lets_a_task_agent_move_only_its_own_branch() {
         assert!(!said.contains(bad), "{bad}: {said}");
     }
     assert_eq!(git(&repo, &["rev-parse", "main"]), main, "main moved: {said}");
-    assert_eq!(git(&repo, &["rev-parse", "polyph/t2"]), main, "another task's branch moved: {said}");
+    assert_eq!(git(&repo, &["rev-parse", "polyph/t2/b"]), main, "another task's branch moved: {said}");
     assert!(!common.join("refs/heads/other").exists(), "{said}");
     assert_eq!(std::fs::read(common.join("logs/refs/heads/main")).unwrap(), main_log, "{said}");
-    assert_eq!(std::fs::read(common.join("logs/refs/heads/polyph/t2")).unwrap(), t2_log, "{said}");
+    assert_eq!(std::fs::read(common.join("logs/refs/heads/polyph/t2/b")).unwrap(), t2_log, "{said}");
+    assert!(!common.join("refs/heads/polyph/t1-other").exists() && !common.join("refs/heads/polyph/t3").exists());
     assert!(!common.join("objects/info/alternates").exists(), "{said}");
     assert_eq!(std::fs::read_to_string(&outside).unwrap(), "export PATH\n");
 }
@@ -289,24 +315,100 @@ async fn a_linked_reflog_stops_the_daemons_commit() {
     let wts = repo.join(".polyph").join("worktrees");
     std::fs::create_dir_all(&wts).unwrap();
     let t1 = wts.join("t1");
-    git(&repo, &["worktree", "add", "-q", "-b", "polyph/t1", &t1.to_string_lossy(), "main"]);
+    git(&repo, &["worktree", "add", "-q", "-b", "polyph/t1/a", &t1.to_string_lossy(), "main"]);
     let common = repo.join(".git");
     let outside = base.join("profile");
     std::fs::write(&outside, "export PATH\n").unwrap();
 
     let script = format!(
-        "ln -sf {outside} {common}/logs/refs/heads/polyph/t1 && echo linked-branch-log; \
+        "ln -sf {outside} {common}/logs/refs/heads/polyph/t1/a && echo linked-branch-log; \
          ln -sf {outside} {common}/worktrees/t1/logs/HEAD && echo linked-head-log; echo work > work.txt",
         common = common.display(),
         outside = outside.display(),
     );
-    let said = run_in_bwrap(helper, &base, &t1, Some("polyph/t1"), &script).await;
+    let said = run_in_bwrap(helper, &base, &t1, Some("polyph/t1/a"), &script).await;
     assert!(said.contains("linked-branch-log") && said.contains("linked-head-log"), "{said}");
 
     let wt = polyph_git::Repo::open(&repo).unwrap().open_worktree(&t1).unwrap();
     let who = polyph_git::Signature::agent("Ann/test", "0");
-    let err = wt.commit_task("polyph/t1", "agent work", &who).unwrap_err().to_string();
-    assert!(err.contains("logs/refs/heads/polyph/t1") || err.contains("logs/HEAD"), "{err}");
+    let err = wt.commit_task("polyph/t1/a", "agent work", &who).unwrap_err().to_string();
+    assert!(err.contains("logs/refs/heads/polyph/t1/a") || err.contains("logs/HEAD"), "{err}");
     assert_eq!(std::fs::read_to_string(&outside).unwrap(), "export PATH\n");
-    assert_eq!(git(&repo, &["log", "--format=%s", "polyph/t1"]).lines().collect::<Vec<_>>(), ["first"]);
+    assert_eq!(git(&repo, &["log", "--format=%s", "polyph/t1/a"]).lines().collect::<Vec<_>>(), ["first"]);
+}
+
+/// Every file under `dir` with its content, for comparing before and after.
+#[cfg(target_os = "linux")]
+fn snapshot(dir: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
+    let mut v = vec![];
+    let mut todo = vec![dir.to_path_buf()];
+    while let Some(d) = todo.pop() {
+        for e in std::fs::read_dir(&d).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                todo.push(p);
+            } else {
+                v.push((p.clone(), std::fs::read(&p).unwrap()));
+            }
+        }
+    }
+    v.sort();
+    v
+}
+
+/// SEC-13: a task agent commits into its worktree's own object store. The
+/// shared `objects/` is read-only to it: it cannot replace, add or delete a
+/// loose object or a pack there, or commit into it directly. The daemon
+/// then takes the agent's commits in.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn bubblewrap_keeps_the_shared_object_store_read_only() {
+    let Some(helper) = bubblewrap() else { return };
+    let t = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let base = t.path().canonicalize().unwrap();
+    let repo = repo(&base);
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&repo, &["add", "a.txt"]);
+    git(&repo, &["commit", "-q", "-m", "second"]);
+    git(&repo, &["repack", "-q"]);
+    std::fs::write(repo.join("b.txt"), "loose\n").unwrap();
+    git(&repo, &["add", "b.txt"]);
+    git(&repo, &["commit", "-q", "-m", "third"]);
+    let t1 = task_worktree(&repo, "t1", "polyph/t1/a");
+    let objects = repo.join(".git").join("objects");
+    let before = snapshot(&objects);
+    assert!(before.iter().any(|(p, _)| p.to_string_lossy().ends_with(".pack")), "no pack to attack");
+
+    let script = format!(
+        "echo work > work.txt && git add work.txt && git commit -q -m agent && echo committed; \
+         for f in {o}/??/*; do echo evil > $f && echo replaced-object; rm -f $f && echo removed-object; done; \
+         for f in {o}/pack/*; do echo evil > $f && echo replaced-pack; rm -f $f && echo removed-pack; done; \
+         echo x > {o}/pack/pack-0000000000000000000000000000000000000000.pack && echo added-pack; \
+         mkdir {o}/zz && echo added-folder; \
+         env -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES git commit -q --allow-empty -m shared \
+           && echo committed-shared; \
+         git -c gc.auto=0 prune && echo pruned; true",
+        o = objects.display(),
+    );
+    let said = run_in_bwrap(helper, &base, &t1, Some("polyph/t1/a"), &script).await;
+
+    assert!(said.contains("committed"), "a task agent must be able to commit: {said}");
+    for bad in [
+        "replaced-object",
+        "removed-object",
+        "replaced-pack",
+        "removed-pack",
+        "added-pack",
+        "added-folder",
+        "committed-shared",
+    ] {
+        assert!(!said.contains(bad), "{bad}: {said}");
+    }
+    assert!(snapshot(&objects) == before, "the shared object store changed: {said}");
+    take_in(&repo, &t1, "polyph/t1/a");
+    assert_eq!(
+        git(&repo, &["log", "--format=%s", "polyph/t1/a"]).lines().collect::<Vec<_>>(),
+        ["agent", "third", "second", "first"]
+    );
+    assert_eq!(git(&repo, &["show", "polyph/t1/a:work.txt"]), "work\n");
 }
