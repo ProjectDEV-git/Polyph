@@ -39,3 +39,17 @@ architecture decisions stay in `DECISIONS.md` at the root.
   and agent hosts (m8, m9 and the phone e2e failed). The worker brief keeps
   the stranger case blocked and allows the member's own new device without a
   wire change.
+- **Own-device joins (PR #15).** The architect reviewer showed that any
+  one-time code is enough for a stranger to take the inviter's member id.
+  Decision: only codes minted by `phone.pair` and `host.invite`, recorded
+  locally for the member who made them, allow a knock under an existing
+  member id, and such knocks always need a person. m8's paired-phone setup
+  may switch from `room.invite` to the real pairing call; its assertions do
+  not change. This is a setup fix to match the user flow, not a weakened
+  test.
+- **`.git` in the agent's own checkout (PR #16).** Read-only `.git/config`,
+  `.git/hooks` and `.git/info` under bubblewrap and Seatbelt, not the whole
+  `.git`, so agents can still commit. Landlock and Windows keep SEC-13
+  partly open and say so.
+- **Opus for sandbox and certificate work.** Both reworks touch the sandbox
+  or certificate checks, so they run on Opus per the routing rule.
