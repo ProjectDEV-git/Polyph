@@ -67,18 +67,34 @@ pub fn read_under(root: &Path, rel: &Path, max: u64) -> std::io::Result<Vec<u8>>
     if m.len() > max {
         return Err(too_big());
     }
-    let f = std::fs::File::open(&path)?;
-    // A link swapped in after the checks above opens some other file. A
-    // hard link is another name for a file that may lie outside the root.
+    // Never through a link swapped in after the checks above, and never
+    // waiting on a pipe swapped in for the file.
+    let mut open = std::fs::OpenOptions::new();
+    open.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        open.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let f = open.open(&path)?;
+    // What was opened: a regular file, the one checked above, with no other
+    // name (a hard link is another name for a file that may lie outside the
+    // root), and not over `max`.
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
         let o = f.metadata()?;
+        if !o.is_file() {
+            return Err(refuse(format!("{} is not a file", path.display())));
+        }
         if (o.dev(), o.ino()) != (m.dev(), m.ino()) {
             return Err(refuse(format!("{} changed while being read", path.display())));
         }
         if o.nlink() > 1 {
             return Err(refuse(format!("{} is a hard link", path.display())));
+        }
+        if o.len() > max {
+            return Err(too_big());
         }
     }
     // shortcut: Windows has no swap check after the link checks; add one (file IDs) if agents run unsandboxed there.
@@ -131,6 +147,10 @@ mod tests {
             std::fs::hard_link(outside.join("brief.md"), root.join("hard.md")).unwrap();
             let e = read_text_under(&root, Path::new("hard.md")).unwrap_err();
             assert_eq!(e.kind(), std::io::ErrorKind::InvalidInput, "{e}");
+            // A pipe is refused, never waited on.
+            let fifo = root.join("pipe");
+            assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+            assert!(read_text_under(&root, Path::new("pipe")).is_err());
         }
     }
 }
