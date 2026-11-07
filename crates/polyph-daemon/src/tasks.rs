@@ -733,16 +733,18 @@ async fn run_checks_in(shared: &Arc<Shared>, project: &ProjectConfig, wt: &Path)
     let run_dir = std::env::temp_dir()
         .join(format!("polyph-check-{}", ObjectId::random().map(|o| o.short()).unwrap_or_default()));
     let proxy = polyph_sandbox::proxy::start(allow, deny, Some(run_dir.clone())).await.map_err(|e| e.to_string())?;
-    let read_only = {
+    // Checks read the repository; they commit nothing.
+    let git = {
         let wt = wt.to_path_buf();
-        tokio::task::spawn_blocking(move || polyph_git::protected_paths(&wt)).await.unwrap_or_default()
+        tokio::task::spawn_blocking(move || polyph_git::sandbox_git(&wt, false)).await.unwrap_or_default()
     };
     let policy = Policy {
         worktree: wt.to_path_buf(),
         writable: vec![],
         tmp: Some(tmp.clone()),
         hidden: Policy::default_hidden(&shared.paths.home),
-        read_only,
+        read_only: git.read_only,
+        git_writable: vec![],
         proxy_tcp: Some(proxy.tcp),
         proxy_unix: proxy.unix.clone(),
         helper: shared.opts.sandbox_helper.clone(),

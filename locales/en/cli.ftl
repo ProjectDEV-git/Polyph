@@ -162,6 +162,7 @@ help-budget = Manage budgets.
 help-budget-set = Set a budget for the room or one member.
 
 agent-started = Started { $label } (sandbox: { $sandbox }).
+agent-warning-git-unprotected = Warning: the { $sandbox } sandbox does not protect this checkout's git settings from the agent. It can change the config and hooks git runs here. Polyph no longer uses this checkout's own git settings for its fetches and pushes. To avoid this, give the agent a task (`polyph agent start --task ...`) or use bubblewrap.
 agent-stopped = Stopped.
 agents-empty = No agents are running in this room.
 agent-line = { $label }  { $state }
