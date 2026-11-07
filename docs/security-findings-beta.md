@@ -386,16 +386,63 @@ Summary:
   and container mode (KAO-74). Fixed:
   - Without a task, the whole `.git` of the person's checkout is read-only
     inside the sandbox and cannot be renamed; the agent runs read-only git
-    but cannot commit. A task agent writes only `objects/` (not
-    `objects/info/`), its task branch's folder in `refs/heads/` and in
-    `logs/refs/heads/` (`polyph/` for `polyph/<name>`; the other branches
-    and reflogs there at its start stay read-only), and its own
-    `worktrees/<name>/`, whose `commondir`, `gitdir` and `config.worktree`
-    stay read-only, as do other worktrees' folders. `main`, every other
-    ref and reflog, and `objects/info/alternates` are read-only
-    (bubblewrap: `crates/polyph-sandbox/tests/sandbox.rs`,
+    but cannot commit. A task agent's branch is `polyph/<task id>/<name>`;
+    it writes only its task's folder in `refs/heads/polyph/` and in
+    `logs/refs/heads/polyph/` (other entries there at its start stay
+    read-only) and its own `worktrees/<name>/`, whose `commondir`, `gitdir`,
+    `config.worktree` and `objects/info/` stay read-only, as do other
+    worktrees' folders. The shared `objects/`, `main`, every other ref and
+    reflog, and `objects/info/alternates` are read-only (bubblewrap:
+    `crates/polyph-sandbox/tests/sandbox.rs`,
     `bubblewrap_lets_a_task_agent_move_only_its_own_branch` and the two
     earlier cases; Seatbelt: profile unit tests only, not run on a Mac).
+  - Writable `objects/` (high, found in review: an agent replaced a loose
+    object or added a pack under an existing hash, so later checkouts and
+    the fast-forward of the person's checkout wrote its content, and could
+    delete objects): the shared `objects/` is read-only to task agents.
+    Each task worktree has its own object store, `worktrees/<name>/objects`,
+    which the daemon names in the agent's environment
+    (`GIT_OBJECT_DIRECTORY`, with the shared store as
+    `GIT_ALTERNATE_OBJECT_DIRECTORIES`; no `alternates` file, and the
+    daemon refuses one in either store). The daemon takes a task's commits
+    into the shared store at the end of every agent turn, on finish and on
+    handoff, through `git pack-objects` from the task's store into
+    `git index-pack --strict` in the shared one, which names every object
+    by hashing its content and checks every object it names; the merge,
+    checkouts and the fast-forward read the shared store only
+    (`polyph-git` test `swapped_task_objects_never_reach_the_shared_store`:
+    a swapped blob fails the copy before it, and changes nothing after it;
+    bubblewrap test `bubblewrap_keeps_the_shared_object_store_read_only`:
+    no object or pack replaced, added or deleted).
+  - Race between the link check and git's write (high, found in review:
+    the agent flips its branch's reflog between a file and a link to
+    `~/.bashrc` while the daemon runs `update-ref`): every daemon git
+    command that writes, except `fetch`, `pull` and `push`, runs in a
+    sandbox (bubblewrap on Linux, Seatbelt on macOS) where only the
+    folders it writes are writable: for a task worktree the worktree, its
+    own `worktrees/<name>/` (not its `commondir`, `gitdir`,
+    `config.worktree` or `objects/info/`) and, for an `update-ref`, its
+    branch's folders: what its agent writes anyway. For the person's
+    checkout, the checkout and `.git` except `config`, `hooks/` and
+    `info/`. The person's home and everything else are read-only, so a
+    link leads nowhere git can write. The link check stays as a second
+    layer (`polyph-git` test `a_racing_reflog_link_never_writes_outside`,
+    150 commits against a flipping link; without the sandbox it writes the
+    file within a few runs). Where neither exists (Landlock, Windows,
+    container mode, or bubblewrap that cannot create namespaces), the
+    daemon's git runs unconfined; there, task agents cannot write the
+    shared git directory at all, so only an agent in the person's own
+    checkout can plant links, which the start warning covers.
+  - One shared `polyph/` folder (medium, found in review: an agent could
+    plant or move other tasks' branches, and `add_worktree` reused any
+    existing branch): one folder per task as above; the agent commits only
+    on a branch in its own task's folder, and the daemon gives an agent an
+    existing branch only if it created it for a task (recorded in
+    `task-branches.json` in the Polyph home), so a card whose branch names
+    `main` or a branch someone planted is refused (`polyph-daemon` test
+    `tasks::only_branches_the_daemon_created_are_reused`). The merge
+    approval names the commit the queue merges and its diff stat, in the
+    branch text (`tasks::merge_approval_shows_the_commit_and_its_stat`).
   - Writable `refs/` let a task agent move `main` (high, found in review):
     narrowed as above. The daemon commits a task's work onto the task
     branch itself, never through the worktree's HEAD the agent writes
@@ -431,11 +478,15 @@ Summary:
   checkout can still write `.git/config` and hooks; the daemon warns at
   start, no longer runs most of what it writes and refuses a `commondir`,
   but filter and merge drivers still run on its status, commit and
-  fast-forward there, and the person's own git runs all of it. Low: the
-  `refs/heads/polyph/` folder is shared by all task branches, so a task
-  agent can create a `polyph/` branch or move one created after it
-  started (each still merges only through its own review and approval);
-  a person's repository cloned with `--reference` is refused until
+  fast-forward there, and the person's own git runs all of it; there the
+  daemon's own git writes also run without a sandbox. Low: the reflog
+  check (`check_branch_logged`) proves nothing for a base branch inside a
+  task folder, whose reflog its agent writes along with the ref; it only
+  covers bases outside `refs/heads/polyph/`. While an agent has commits it
+  made itself in a turn that has not ended, the branch points at objects
+  only its task's store has, and the person's `git fetch`, `git gc` and
+  `git log --all` in that repository fail with "bad object" until the turn
+  ends. A person's repository cloned with `--reference` is refused until
   repacked. Tracked in `STUBS.md`.
 
 ## SEC-14: Host IPC is reachable from the sandbox

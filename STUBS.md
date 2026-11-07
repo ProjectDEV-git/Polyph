@@ -52,19 +52,25 @@ lists notes and agents write them.
   isolates the network with a namespace instead.
 - **Agents' git settings (SEC-13) open on Landlock and Windows.**
   bubblewrap and Seatbelt keep an agent's checkout's `.git` read-only (task
-  agents write only `objects/` without `objects/info/`, their branch's
-  folder in `refs/heads/` and `logs/refs/heads/`, and their own worktree
-  folder); Landlock, Windows (low integrity) and container mode do not, so
-  an agent working without a task there can plant config and hooks that
-  the person's git, and the daemon's filter and merge drivers, run. The
-  agent starts with a warning, and the daemon then fetches and pushes that
-  checkout with guarded settings (`folders::mark_git_exposed`). The
-  Seatbelt rules have a profile unit test but have not run on a Mac. A task
-  agent whose branch is `polyph/<name>` can still create branches in
-  `refs/heads/polyph/` and move a `polyph/` branch created after it
-  started (the folder is shared; other branches there at its start are
-  read-only); it cannot move `main` or any branch outside that folder. See
-  `docs/security.md`.
+  agents write only their task's folder in `refs/heads/polyph/` and
+  `logs/refs/heads/polyph/` and their own worktree folder, with their own
+  object store there); Landlock, Windows (low integrity) and container
+  mode do not, so an agent working without a task there can plant config
+  and hooks that the person's git, and the daemon's filter and merge
+  drivers, run. The agent starts with a warning, and the daemon then
+  fetches and pushes that checkout with guarded settings
+  (`folders::mark_git_exposed`). There the daemon's own git writes also
+  run without a sandbox (bubblewrap or Seatbelt confine them elsewhere).
+  The Seatbelt rules, for agents and for the daemon's git writes, have
+  profile unit tests but have not run on a Mac. While an agent has commits
+  it made itself in a turn that has not ended, its branch points at
+  objects only its task's store has, so the person's `git fetch`, `git
+  gc` and `git log --all` in that repository fail with "bad object" until
+  the turn ends. The reflog check on the branch merged into proves nothing
+  for a branch inside a task folder. Tasks started before task branches
+  moved to `polyph/<task id>/<name>` keep a branch the daemon did not
+  record; it refuses to hand that branch to a new agent until the card's
+  branch is cleared. See `docs/security.md`.
 - **Worktree reads on Windows (SEC-16).** `read_under` refuses links and
   checks the opened file with `fstat` on Linux and macOS; on Windows it does
   not check that the file it opened is the one it checked (a link swapped in

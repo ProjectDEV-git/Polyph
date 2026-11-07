@@ -5,6 +5,18 @@ GitHub release page.
 
 ## Unreleased
 
+- **Task branches are `polyph/<task id>/<name>`** (they were
+  `polyph/<name>-<task id>`), one folder per task, and a task agent can
+  write only its own task's folder. Polyph gives an agent an existing
+  branch only if it created that branch for a task, so tasks started with
+  an older version need their card's branch cleared before a new agent
+  picks them up.
+- **Task agents commit into an object store of their own.** The shared
+  `.git/objects` is read-only to them; Polyph copies a task's commits in
+  at the end of each turn and when the task finishes, checking every
+  object's hash. Polyph's own git writes in a task's folders run in the
+  sandbox (bubblewrap or Seatbelt). Merge approvals name the commit to be
+  merged and its diff stat.
 - **`polyph feedback`.** Opens a prefilled GitHub issue with your Polyph
   version, OS, architecture, Linux distro, surface and whether the daemon
   runs. It leaves out room names, paths, chat, code, user and host names and
