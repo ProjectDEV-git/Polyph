@@ -391,3 +391,104 @@ fn save_and_load_round_trip() {
     assert_eq!(core.peers.len(), 1);
     assert_eq!(core.role(), Role::Owner);
 }
+
+#[test]
+fn snapshots_get_the_same_role_revocation_and_epoch_checks_as_live_messages() {
+    let mut net = Net::new("Ann");
+    net.connect(0);
+    let b = net.join("Bo", 0, 0, Role::Member);
+    let c = net.join("Chai", 0, 0, Role::Member);
+    let d = net.join("Dao", 0, 0, Role::Member);
+    let v = net.join("Vee", 0, 0, Role::Viewer);
+    let now = net.now;
+    // A viewer cannot write live, so its snapshot is refused too.
+    let (_, viewer_snap) = net.nodes[v].core.relay_snapshot().unwrap();
+    assert!(!net.nodes[b].core.apply_relay_snapshot(&viewer_snap, now));
+    // A member may share docs but not removals: a forged revocation is ignored.
+    let ann = net.nodes[0].core.me;
+    net.nodes[b].core.revoked.insert(ann);
+    let (_, member_snap) = net.nodes[b].core.relay_snapshot().unwrap();
+    net.nodes[b].core.revoked.remove(&ann);
+    assert!(net.nodes[c].core.apply_relay_snapshot(&member_snap, now));
+    assert!(!net.nodes[c].core.revoked.contains(&ann));
+
+    // Snapshots from before two rotations, one by a member removed since.
+    let (_, old_owner) = net.nodes[0].core.relay_snapshot().unwrap();
+    let (_, removed) = net.nodes[c].core.relay_snapshot().unwrap();
+    let cm = net.nodes[c].core.my_member;
+    let out = net.nodes[0].core.remove_member(cm, now).unwrap();
+    net.run(0, out);
+    assert_eq!(net.nodes[b].core.epoch(), 2);
+    assert!(!net.nodes[b].core.apply_relay_snapshot(&removed, now), "removed sender");
+    let dm = net.nodes[d].core.my_member;
+    let out = net.nodes[0].core.remove_member(dm, now).unwrap();
+    net.run(0, out);
+    assert_eq!(net.nodes[b].core.epoch(), 3);
+    assert!(!net.nodes[b].core.apply_relay_snapshot(&old_owner, now), "epoch too old");
+    let (_, fresh) = net.nodes[0].core.relay_snapshot().unwrap();
+    assert!(net.nodes[b].core.apply_relay_snapshot(&fresh, now));
+}
+
+#[test]
+fn a_demotion_cannot_be_undone_by_replaying_the_old_certificate() {
+    let mut net = Net::new("Ann");
+    net.connect(0);
+    let b = net.join("Bo", 0, 0, Role::Member);
+    let c = net.join("Chai", 0, 0, Role::Member);
+    let (bm, bd) = (net.nodes[b].core.my_member, net.nodes[b].core.me);
+    let old = net.nodes[b].core.my_chain.clone();
+    // Same second as the join, so the new certificate must still sort newer.
+    let now = net.now;
+    let out = net.nodes[0].core.change_role(bm, Role::Viewer, now).unwrap();
+    net.run(0, out);
+    assert_eq!(net.nodes[b].core.role(), Role::Viewer);
+    assert_eq!(net.nodes[c].core.peers[&bd].role(), Role::Viewer);
+
+    // Bo replays the Member chain in a hello and as a role change.
+    net.nodes[b].core.my_chain = old.clone();
+    let hello = net.nodes[b].core.hello(now);
+    net.run(b, vec![Effect::Send(hello), Effect::Send(RoomMessage::RoleChanged { member: bm, chain: Box::new(old) })]);
+    for i in [0, c] {
+        assert_eq!(net.nodes[i].core.peers[&bd].role(), Role::Viewer, "node {i}");
+    }
+    // A later promotion still applies.
+    net.now += 1;
+    let now = net.now;
+    let out = net.nodes[0].core.change_role(bm, Role::Member, now).unwrap();
+    net.run(0, out);
+    assert_eq!(net.nodes[c].core.peers[&bd].role(), Role::Member);
+}
+
+#[test]
+fn knocks_cannot_claim_an_existing_member() {
+    let mut net = Net::new("Ann");
+    net.connect(0);
+    let b = net.join("Bo", 0, 0, Role::Member);
+    let bm = net.nodes[b].core.my_member;
+    let knock = |id: &DeviceIdentity, member: MemberId, net: &Net| Knock {
+        id: ObjectId::random().unwrap(),
+        display_name: "Bo".into(),
+        member,
+        device: id.device_id(),
+        requested_role: Role::Member,
+        via: net.nodes[0].core.me,
+        at: net.now,
+        kx: id.public().kx.to_vec(),
+        name_salt: vec![7; 16],
+        surface: None,
+        capabilities: vec![],
+    };
+    let now = net.now;
+    // A new device claiming Bo's (or the owner's) member id is refused.
+    for member in [bm, net.nodes[0].core.my_member] {
+        let k = knock(&DeviceIdentity::generate().unwrap(), member, &net);
+        let out = net.nodes[0].core.post_knock(k.clone());
+        net.run(0, out);
+        assert!(net.nodes[0].core.approve_knock(k.id, Role::Member, now).is_err());
+    }
+    // A brand-new member is still approved as before.
+    let k = knock(&DeviceIdentity::generate().unwrap(), MemberId::random().unwrap(), &net);
+    let out = net.nodes[0].core.post_knock(k.clone());
+    net.run(0, out);
+    assert!(net.nodes[0].core.approve_knock(k.id, Role::Member, now).is_ok());
+}

@@ -291,6 +291,13 @@ impl std::fmt::Debug for SavedRoom {
     }
 }
 
+/// Whether `new` may replace the certificate held for the same device: newest
+/// wins, and at equal age the lower role, so a demotion cannot be undone by
+/// replaying the older chain.
+fn supersedes(new: &VerifiedMember, held: &VerifiedMember) -> bool {
+    new.issued_at > held.issued_at || (new.issued_at == held.issued_at && new.role <= held.role)
+}
+
 /// What a member uploads to the relay as an encrypted snapshot.
 #[derive(Serialize, Deserialize)]
 struct RelaySnapshot {
@@ -658,9 +665,13 @@ impl RoomCore {
                     && v.room == self.id
                 {
                     if v.device.sign == self.me {
-                        self.my_verified = v;
-                        self.my_chain = *chain;
-                    } else if let Some(p) = self.peers.get_mut(&v.device.sign) {
+                        if supersedes(&v, &self.my_verified) {
+                            self.my_verified = v;
+                            self.my_chain = *chain;
+                        }
+                    } else if let Some(p) = self.peers.get_mut(&v.device.sign)
+                        && p.verified.as_ref().is_none_or(|h| supersedes(&v, h))
+                    {
                         p.chain = *chain;
                         p.verified = Some(v);
                     }
@@ -795,9 +806,14 @@ impl RoomCore {
         let new_device = !self.peers.contains_key(&from);
         let (member, role) = (v.member, v.role);
         let name = profile.display_name.clone();
+        // An older certificate than the one held (say, from before a demotion) does not replace it.
+        let (chain, v) = match self.peers.get(&from) {
+            Some(p) if p.verified.as_ref().is_some_and(|h| !supersedes(&v, h)) => (p.chain.clone(), p.verified.clone()),
+            _ => (chain, Some(v)),
+        };
         self.peers.insert(
             from,
-            Peer { chain, verified: Some(v), profile: Some(profile), presence: Some(presence), last_seen: now },
+            Peer { chain, verified: v, profile: Some(profile), presence: Some(presence), last_seen: now },
         );
         let mut out = vec![];
         if !known_member {
@@ -864,6 +880,13 @@ impl RoomCore {
             return Err(RoomError::Forbidden);
         }
         let k = self.knocks.get(&knock).cloned().ok_or(RoomError::NotFound("knock"))?;
+        // A knock may not claim an existing member's id (it would inherit their
+        // name and standing) unless it is one of that member's own devices re-joining.
+        let same_device = self.peers.get(&k.device).is_some_and(|p| p.member() == Some(k.member));
+        let taken = k.member == self.my_member || self.peers.values().any(|p| p.member() == Some(k.member));
+        if taken && !same_device {
+            return Err(RoomError::Invalid("knock claims an existing member's id"));
+        }
         let kx: [u8; 32] = k.kx.as_slice().try_into().map_err(|_| RoomError::Invalid("knock has no key"))?;
         let salt: [u8; 16] =
             k.name_salt.as_slice().try_into().map_err(|_| RoomError::Invalid("knock has no name salt"))?;
@@ -981,30 +1004,38 @@ impl RoomCore {
         if !self.role().can_issue_certs() || role > self.role() {
             return Err(RoomError::Forbidden);
         }
-        let (dev, peer) = self
+        // Every device of the member gets the new role; one left on its old
+        // certificate would keep the old role.
+        let devices: Vec<(DeviceId, VerifiedMember)> = self
             .peers
             .iter()
-            .find(|(_, p)| p.member() == Some(member))
-            .map(|(d, p)| (*d, p.clone()))
-            .ok_or(RoomError::NotFound("member"))?;
-        let v = peer.verified.ok_or(RoomError::NotFound("member"))?;
-        let cert = MembershipCert {
-            room: self.id,
-            member,
-            device: v.device,
-            name_commit: v.name_commit,
-            role,
-            issued_at: now,
-            expires_at: None,
-            capabilities: v.capabilities,
-        };
-        let chain = self.my_chain.issue(&self.identity, &cert)?;
-        let nv = chain.verify(now, &|_| false)?;
-        if let Some(p) = self.peers.get_mut(&dev) {
-            p.chain = chain.clone();
-            p.verified = Some(nv);
+            .filter_map(|(d, p)| p.verified.clone().filter(|v| v.member == member).map(|v| (*d, v)))
+            .collect();
+        if devices.is_empty() {
+            return Err(RoomError::NotFound("member"));
         }
-        Ok(vec![Effect::Send(RoomMessage::RoleChanged { member, chain: Box::new(chain) })])
+        let mut out = vec![];
+        for (dev, v) in devices {
+            let cert = MembershipCert {
+                room: self.id,
+                member,
+                device: v.device,
+                name_commit: v.name_commit,
+                role,
+                // Strictly newer than the held certificate, so it wins everywhere.
+                issued_at: now.max(v.issued_at + 1),
+                expires_at: None,
+                capabilities: v.capabilities,
+            };
+            let chain = self.my_chain.issue(&self.identity, &cert)?;
+            let nv = chain.verify(now, &|_| false)?;
+            if let Some(p) = self.peers.get_mut(&dev) {
+                p.chain = chain.clone();
+                p.verified = Some(nv);
+            }
+            out.push(Effect::Send(RoomMessage::RoleChanged { member, chain: Box::new(chain) }));
+        }
+        Ok(out)
     }
 
     pub fn set_hue_if_unset(&mut self) -> Vec<Effect> {
@@ -1631,23 +1662,36 @@ impl RoomCore {
     /// Merges a snapshot another member uploaded. Returns whether it could be read.
     pub fn apply_relay_snapshot(&mut self, blob: &[u8], now: i64) -> bool {
         let Ok(env) = Envelope::decode(blob) else { return false };
+        // Snapshots are sealed with seq 0, so the replay guard cannot apply;
+        // only the current or previous epoch is accepted instead.
+        let current = self.keyring.current_key().map_or(0, |k| k.epoch);
+        if env.epoch.saturating_add(1) < current || self.revoked.contains(&env.sender) {
+            return false;
+        }
         let Some(key) = self.keyring.get(env.epoch) else { return false };
         let Ok(pt) = key.open(&env) else { return false };
         let Ok(snap) = from_cbor::<RelaySnapshot>(&pt) else { return false };
-        if env.sender != self.me && !self.peers.contains_key(&env.sender) {
-            // Accept only snapshots from devices whose chain is inside the snapshot itself or known.
-            let ok = snap.members.iter().any(|(c, _)| {
-                c.verify(now, &|_| false).is_ok_and(|v| v.device.sign == env.sender && v.room == self.id)
-            });
-            if !ok {
-                return false;
-            }
-        }
+        // Same role checks as live messages: the sender's held certificate, or for
+        // a device not yet known, its chain from the snapshot checked against our revocations.
+        let role = if env.sender == self.me {
+            Some(self.role())
+        } else {
+            self.sender_role(&env.sender).or_else(|| {
+                snap.members.iter().find_map(|(c, _)| {
+                    c.verify(now, &|d| self.revoked.contains(d))
+                        .ok()
+                        .filter(|v| v.device.sign == env.sender && v.room == self.id)
+                        .map(|v| v.role)
+                })
+            })
+        };
+        let Some(role) = role.filter(|r| r.can_write()) else { return false };
         if self.name.is_empty() {
             self.name = snap.name;
         }
-        for d in snap.revoked {
-            self.revoked.insert(d);
+        // Removals are taken only from senders who could have removed someone.
+        if role.can_rotate_keys() {
+            self.revoked.extend(snap.revoked);
         }
         for (chain, profile) in snap.members {
             let revoked = self.revoked.clone();
@@ -1656,13 +1700,20 @@ impl RoomCore {
                 && v.device.sign != self.me
             {
                 let profile = profile.filter(|p| verify_profile(p, &v));
-                self.peers.entry(v.device.sign).or_insert(Peer {
-                    chain,
-                    verified: Some(v),
-                    profile,
-                    presence: None,
-                    last_seen: 0,
-                });
+                match self.peers.get_mut(&v.device.sign) {
+                    Some(p) => {
+                        if p.verified.as_ref().is_none_or(|h| supersedes(&v, h)) {
+                            p.chain = chain;
+                            p.verified = Some(v);
+                        }
+                    }
+                    None => {
+                        self.peers.insert(
+                            v.device.sign,
+                            Peer { chain, verified: Some(v), profile, presence: None, last_seen: 0 },
+                        );
+                    }
+                }
             }
         }
         for (n, d) in snap.docs {
