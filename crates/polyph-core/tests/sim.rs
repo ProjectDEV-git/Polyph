@@ -5,9 +5,11 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use polyph_core::{Effect, RoomCore, RoomEvent};
-use polyph_proto::cert::Role;
+use polyph_proto::cert::{MembershipCert, Role, name_commitment};
+use polyph_proto::delivery::seal_epoch_key;
 use polyph_proto::identity::DeviceIdentity;
 use polyph_proto::ids::{MemberId, ObjectId};
+use polyph_proto::join::JoinApproved;
 use polyph_proto::messages::{AgentRef, ApprovalKind, ApprovalScope, ClaimTarget, Decision, Knock, RoomMessage};
 
 struct Node {
@@ -457,6 +459,83 @@ fn a_demotion_cannot_be_undone_by_replaying_the_old_certificate() {
     let out = net.nodes[0].core.change_role(bm, Role::Member, now).unwrap();
     net.run(0, out);
     assert_eq!(net.nodes[c].core.peers[&bd].role(), Role::Member);
+
+    // Bo becomes a Maintainer, lets Dee in, and is demoted again.
+    net.now += 1;
+    let now = net.now;
+    let out = net.nodes[0].core.change_role(bm, Role::Maintainer, now).unwrap();
+    net.run(0, out);
+    assert_eq!(net.nodes[b].core.role(), Role::Maintainer);
+    let maint = net.nodes[b].core.my_chain.clone();
+    let dee = net.join("Dee", b, b, Role::Member);
+    let dd = net.nodes[dee].core.me;
+    net.now += 1;
+    let now = net.now;
+    let out = net.nodes[0].core.change_role(bm, Role::Member, now).unwrap();
+    net.run(0, out);
+    assert_eq!(net.nodes[c].core.peers[&bd].role(), Role::Member);
+    // Dee, whom Bo let in before the demotion, is re-issued and stays.
+    assert_eq!(net.nodes[dee].core.my_chain.certs.len(), 2, "re-issued from the owner's chain");
+    let hello = net.nodes[dee].core.hello(now);
+    net.run(dee, vec![Effect::Send(hello)]);
+    assert_eq!(net.nodes[c].core.peers[&dd].role(), Role::Member);
+
+    // 1. Bo extends its old Maintainer chain with a certificate for itself, dated later.
+    let bo = net.nodes[b].core.identity();
+    let held = maint.verify(now, &|_| false).unwrap();
+    let restamp = MembershipCert {
+        room: held.room,
+        member: bm,
+        device: held.device,
+        name_commit: held.name_commit,
+        role: Role::Maintainer,
+        // Later than the demotion's certificate, which would win on date alone.
+        issued_at: now + 60,
+        expires_at: None,
+        capabilities: vec![],
+    };
+    let restamped = maint.issue(bo, &restamp).unwrap();
+    net.nodes[b].core.my_chain = restamped.clone();
+    let hello = net.nodes[b].core.hello(now);
+    net.run(
+        b,
+        vec![Effect::Send(hello), Effect::Send(RoomMessage::RoleChanged { member: bm, chain: Box::new(restamped) })],
+    );
+    for i in [0, c, dee] {
+        assert_eq!(net.nodes[i].core.peers[&bd].role(), Role::Member, "self-issued, node {i}");
+    }
+
+    // 2. Bo issues a Maintainer certificate for a fresh device from the old chain.
+    let fresh = Arc::new(DeviceIdentity::generate().unwrap());
+    let cert = MembershipCert {
+        room: held.room,
+        member: MemberId::random().unwrap(),
+        device: fresh.public(),
+        name_commit: name_commitment("Eve", &[7; 16]),
+        role: Role::Maintainer,
+        issued_at: now,
+        expires_at: None,
+        capabilities: vec![],
+    };
+    let forged = maint.issue(net.nodes[b].core.identity(), &cert).unwrap();
+    let key = seal_epoch_key(net.nodes[b].core.identity(), &fresh.public(), net.nodes[b].core.current_key().unwrap())
+        .unwrap();
+    let approved = JoinApproved {
+        room: held.room,
+        room_name: None,
+        role: Role::Maintainer,
+        chain: forged.clone(),
+        key,
+        relay: None,
+    };
+    net.run(b, vec![Effect::Send(RoomMessage::MemberAdded { chain: Box::new(forged) })]);
+    let core = RoomCore::from_join(fresh.clone(), &approved, "Eve", [7; 16], now).unwrap();
+    net.nodes.push(Node { core, online: true, events: vec![] });
+    let eve = net.nodes.len() - 1;
+    net.connect(eve);
+    for i in [0, c, dee] {
+        assert!(!net.nodes[i].core.peers.contains_key(&fresh.device_id()), "fresh device, node {i}");
+    }
 }
 
 #[test]
@@ -528,4 +607,77 @@ fn a_member_can_add_their_own_device_through_a_code_they_made() {
     net.run(0, out);
     net.nodes[0].core.allow_own_device(k.id);
     assert!(net.nodes[0].core.approve_knock(k.id, Role::Member, now).is_err());
+}
+
+#[test]
+fn a_device_rejoining_must_present_the_key_its_certificate_names() {
+    let mut net = Net::new("Ann");
+    net.connect(0);
+    let b = net.join("Bo", 0, 0, Role::Member);
+    let (bm, bd) = (net.nodes[b].core.my_member, net.nodes[b].core.me);
+    let bo_kx = net.nodes[0].core.peers[&bd].verified.as_ref().unwrap().device.kx.to_vec();
+    let now = net.now;
+    let knock = |kx: Vec<u8>, net: &Net| Knock {
+        id: ObjectId::random().unwrap(),
+        display_name: "Bo".into(),
+        member: bm,
+        device: bd,
+        requested_role: Role::Member,
+        via: net.nodes[0].core.me,
+        at: net.now,
+        kx,
+        name_salt: vec![7; 16],
+        surface: None,
+        capabilities: vec![],
+    };
+    // Bo's device id is public; with another encryption key the knock is refused.
+    let k = knock(DeviceIdentity::generate().unwrap().public().kx.to_vec(), &net);
+    let out = net.nodes[0].core.post_knock(k.clone());
+    net.run(0, out);
+    assert!(net.nodes[0].core.knock_claims_member(&k), "never approved automatically");
+    assert!(net.nodes[0].core.approve_knock(k.id, Role::Member, now).is_err());
+    // With the key its certificate names, the same device may re-join.
+    let k = knock(bo_kx, &net);
+    let out = net.nodes[0].core.post_knock(k.clone());
+    net.run(0, out);
+    assert!(net.nodes[0].core.knock_claims_member(&k), "never approved automatically");
+    assert!(net.nodes[0].core.approve_knock(k.id, Role::Member, now).is_ok());
+}
+
+#[test]
+fn an_own_device_mark_is_cleared_once_the_knock_is_decided() {
+    let mut net = Net::new("Ann");
+    net.connect(0);
+    let am = net.nodes[0].core.my_member;
+    let now = net.now;
+    let knock = |net: &Net| {
+        let id = DeviceIdentity::generate().unwrap();
+        Knock {
+            id: ObjectId::random().unwrap(),
+            display_name: "Ann".into(),
+            member: am,
+            device: id.device_id(),
+            requested_role: Role::Member,
+            via: net.nodes[0].core.me,
+            at: net.now,
+            kx: id.public().kx.to_vec(),
+            name_salt: vec![7; 16],
+            surface: None,
+            capabilities: vec![],
+        }
+    };
+    let approved = knock(&net);
+    let denied = knock(&net);
+    for k in [&approved, &denied] {
+        let out = net.nodes[0].core.post_knock(k.clone());
+        net.run(0, out);
+        net.nodes[0].core.allow_own_device(k.id);
+        assert!(net.nodes[0].core.is_own_device_knock(&k.id));
+    }
+    let out = net.nodes[0].core.approve_knock(approved.id, Role::Member, now).unwrap();
+    net.run(0, out);
+    let out = net.nodes[0].core.deny_knock(denied.id).unwrap();
+    net.run(0, out);
+    assert!(!net.nodes[0].core.is_own_device_knock(&approved.id));
+    assert!(!net.nodes[0].core.is_own_device_knock(&denied.id));
 }

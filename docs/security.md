@@ -74,14 +74,48 @@ relay (no certificate) and by clients. Revoking the link stops new content.
 
 ### Someone guessing a join code
 
-Online guessing only: each attempt is a full PAKE with the host. With the
-first half known (worst case: the relay is the attacker), 20 bits remain;
-five failures kill a one-time code or lock a reusable one for 10 minutes and
-notify the owner, and approval to join is on by default. A join attempt that
-is abandoned or stalls for 2 minutes counts as a failure, and a code never
-has more attempts in progress than it has failures left. Per-IP limits slow
-spraying across codes. Probability of a correct guess before lockout: about 5
-in 2^20 (≈ 0.0005%) per code.
+Online guessing only: each attempt is a full PAKE with the host, and the
+host sends its confirmation tag only after the joiner's tag has verified, so
+a wrong guess teaches the guesser nothing it can test offline. With the
+first half known (worst case: the relay is the attacker), 20 bits remain.
+
+- The relay counts failures: five kill a one-time code or lock a reusable
+  one for 10 minutes and notify the owner. A join attempt that is abandoned
+  or stalls for 2 minutes counts as a failure, and a code never has more
+  attempts in progress than it has failures left. Per-IP limits slow
+  spraying across codes.
+- The host daemon counts its own: a wrong tag, a malformed message, or a
+  session that ends before the joiner's tag verified. After five in a row it
+  stops accepting the code. This is the limit that holds when the relay
+  operator is the attacker.
+
+Probability of a correct guess: about 5 in 2^20 (≈ 0.0005%) per one-time
+code, and the same between successful joins on a reusable code. Hosts on
+Polyph 0.1.2 and earlier send their tag before checking the joiner's, so
+against a relay operator guessing through such a host this bound does not
+hold. Approval to join is on by default, so a correct guess still only
+produces a knock.
+
+### Someone claiming to be an existing member
+
+A join request names a member id, and nothing in it proves the joiner is
+that person. Clients refuse to approve a knock that names a member already in
+the room, with two exceptions: a code that `phone.pair` or `host.invite` made
+on the approving device for its own person (recorded on that device only;
+the approval says a new device is joining as you), and a device already in
+the room re-joining with the same keys its certificate names. Such knocks are
+never approved automatically. Plain invite codes never let a joiner take an
+existing member id.
+
+### A demoted Maintainer
+
+A role change re-issues a certificate for every device of the member, dated
+after the one it replaces; clients keep the newest certificate per device.
+A chain whose issuing link is older than the certificate a client holds for
+that issuer is refused, and no device may certify itself, so a demoted
+Maintainer cannot restore its role or certify a new device from its old
+chain. A client that has not yet seen the demotion, directly or in a
+snapshot, still accepts the old chain until it does.
 
 ### A network attacker between a member and the relay
 

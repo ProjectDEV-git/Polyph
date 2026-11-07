@@ -83,6 +83,7 @@ member-offline = ออฟไลน์
 member-you = (คุณ)
 knocks-empty = ไม่มีใครรอเข้าห้อง
 knock-line = { $id }  { $name } ขอเข้าห้อง
+knock-line-own-device = { $id }  อุปกรณ์ใหม่ขอเข้าห้องในนามคุณ ({ $name }) ให้เข้าเฉพาะเมื่อคุณเพิ่งจับคู่โทรศัพท์หรือตั้งค่าเครื่องรันเอเจนต์
 knock-hint = อนุมัติด้วย `polyph approve { $id }` หรือปฏิเสธด้วย `polyph deny { $id }`
 settings-approval-on = การเข้าห้องต้องได้รับอนุมัติ
 settings-approval-off = ใครมีรหัสก็เข้าห้องได้โดยไม่ต้องอนุมัติ

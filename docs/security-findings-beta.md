@@ -195,6 +195,12 @@ Summary:
   - Relay: key per-IP limits on /64 for IPv6 and cap concurrent sessions
     per code.
 - Wire change: no.
+- Status: partly open. Branch `beta/kao-78-80-room-relay`: the host sends
+  its tag only after the joiner's verified (joiners already sent theirs
+  first, so the order they receive is unchanged) and counts `PakeEnded`
+  before that point as a failure; the relay counts stalled sessions and caps
+  sessions in progress per code. Open: per-IP limits still key on the full
+  IPv6 address, and 0.1.2 hosts keep the old order (`STUBS.md`).
 
 ## SEC-5: Epoch u64::MAX makes later key rotations silently fail
 

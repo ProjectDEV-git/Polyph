@@ -71,6 +71,9 @@ pub struct HostedCode {
     pub kind: CodeKind,
     pub expires_at: i64,
     pub failures: u32,
+    /// Made by `phone.pair` or `host.invite` for another device of this member:
+    /// a knock through it may claim this member id. Kept in memory only.
+    pub own_device: Option<MemberId>,
 }
 
 enum HostStage {
@@ -83,8 +86,8 @@ enum HostStage {
 struct HostJoin {
     rendezvous: RendezvousId,
     stage: Option<HostStage>,
-    /// The code was one-time when the joiner arrived (the relay drops it on success).
-    one_time: bool,
+    /// The code's own-device member when the joiner arrived.
+    own_device: Option<MemberId>,
 }
 
 /// Resolves with (granted, denied) when the acting host answers a claim request.
@@ -273,7 +276,14 @@ pub async fn apply(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, effects
                     }
                     _ => {}
                 }
-                shared.emit(ApiEvent::room(&rt.id, &ev));
+                let mut api = ApiEvent::room(&rt.id, &ev);
+                // Tells the approver this is another device joining as them.
+                if let RoomEvent::Knock { knock } = &ev
+                    && let Some(o) = api.event.get_mut("knock").and_then(|k| k.as_object_mut())
+                {
+                    o.insert("own_device".into(), ctx.core.is_own_device_knock(&knock.id).into());
+                }
+                shared.emit(api);
             }
         }
     }
@@ -450,6 +460,10 @@ async fn tick_loop(rt: Arc<RoomRuntime>, shared: Arc<Shared>) {
 }
 
 pub async fn upload_snapshot(ctx: &mut RoomCtx, now: i64) {
+    // The relay refuses snapshots from Viewers, and other clients ignore them.
+    if !ctx.core.role().can_write() {
+        return;
+    }
     let room = ctx.core.id;
     match ctx.core.relay_snapshot() {
         Ok((epoch, blob)) => {
@@ -551,7 +565,14 @@ async fn handle_frame(rt: &RoomRuntime, shared: &Shared, f: RelayFrame) {
         RelayFrame::JoinerArrived { rendezvous, session } => host_join_start(&mut ctx, rendezvous, session).await,
         RelayFrame::Pake { session, data } => host_join_step(rt, &mut ctx, shared, session, data, now).await,
         RelayFrame::PakeEnded { session, .. } => {
-            ctx.joins.remove(&session);
+            // A join that ends before the joiner proved the code is a failed
+            // attempt here too, whatever the relay counts.
+            if let Some(j) = ctx.joins.remove(&session)
+                && matches!(j.stage, Some(HostStage::AwaitPake(_) | HostStage::AwaitConfirm(_)))
+                && let Some(c) = ctx.codes.get_mut(&j.rendezvous)
+            {
+                c.failures += 1;
+            }
         }
         RelayFrame::Error { code, detail } => {
             debug!(?code, "relay error");
@@ -573,10 +594,10 @@ async fn host_join_start(ctx: &mut RoomCtx, rendezvous: RendezvousId, session: u
         }
         return;
     }
-    let one_time = matches!(code.kind, CodeKind::OneTime);
+    let own_device = code.own_device;
     let p = PakeStart::new(&code.code, PakeRole::Host, &ctx.binding);
     let msg = p.message().to_vec();
-    ctx.joins.insert(session, HostJoin { rendezvous, stage: Some(HostStage::AwaitPake(p)), one_time });
+    ctx.joins.insert(session, HostJoin { rendezvous, stage: Some(HostStage::AwaitPake(p)), own_device });
     if let Some(s) = &ctx.sender {
         let _ = s.send(ClientFrame::Pake { session, data: msg }).await;
     }
@@ -592,9 +613,12 @@ async fn host_join_step(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, se
         }
     };
     match stage {
+        // The host's confirmation tag goes out only after the joiner's has
+        // verified, so a guesser learns nothing it could check offline without
+        // spending a counted attempt. Joiners send their tag without waiting
+        // for the host's, so the order they receive is unchanged.
         Some(HostStage::AwaitPake(p)) => match p.finish(&data) {
             Ok(f) => {
-                let _ = sender.send(ClientFrame::Pake { session, data: f.confirmation().to_vec() }).await;
                 j.stage = Some(HostStage::AwaitConfirm(f));
                 ctx.joins.insert(session, j);
             }
@@ -603,8 +627,9 @@ async fn host_join_step(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, se
                 let _ = sender.send(ClientFrame::PakeResult { session, ok: false }).await;
             }
         },
-        Some(HostStage::AwaitConfirm(f)) => match f.verify_peer(&data) {
-            Ok(ch) => {
+        Some(HostStage::AwaitConfirm(f)) => match (f.confirmation(), f.verify_peer(&data)) {
+            (tag, Ok(ch)) => {
+                let _ = sender.send(ClientFrame::Pake { session, data: tag.to_vec() }).await;
                 let _ = sender.send(ClientFrame::PakeResult { session, ok: true }).await;
                 if let Some(c) = ctx.codes.get_mut(&j.rendezvous) {
                     c.failures = 0;
@@ -612,7 +637,7 @@ async fn host_join_step(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, se
                 j.stage = Some(HostStage::AwaitRequest(ch));
                 ctx.joins.insert(session, j);
             }
-            Err(_) => {
+            (_, Err(_)) => {
                 fail(ctx, j.rendezvous);
                 let _ = sender.send(ClientFrame::PakeResult { session, ok: false }).await;
             }
@@ -634,15 +659,17 @@ async fn host_join_step(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, se
                 capabilities: req.capabilities.clone(),
             };
             let kid = knock.id;
-            // A one-time code made on this device may be used to add another
-            // device of this same member (phone pairing, agent host). Such a
-            // knock may claim our member id, but a person must approve it:
-            // never automatically. Reusable codes never get this exception.
-            let own = req.member == ctx.core.my_member && j.one_time;
+            // Only a code `phone.pair` or `host.invite` made on this device, for
+            // this member, may add another device of this member; plain
+            // `room.invite` codes never do. A knock that names an existing
+            // member is never approved automatically: a person decides.
+            let own = j.own_device == Some(req.member) && req.member == ctx.core.my_member;
             if own {
                 ctx.core.allow_own_device(kid);
             }
-            let auto = !own && !ctx.core.require_approval() && ctx.core.role().can_approve_joins();
+            let auto = !ctx.core.knock_claims_member(&knock)
+                && !ctx.core.require_approval()
+                && ctx.core.role().can_approve_joins();
             j.stage = Some(HostStage::Knocked { channel: ch, knock: kid });
             ctx.joins.insert(session, j);
             let effects = ctx.core.post_knock(knock);
@@ -672,15 +699,18 @@ async fn host_join_step(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, se
 /// Creates a join code and asks the relay to host it. Returns the code and a
 /// receiver that resolves once the relay confirms (`true`) or refuses it
 /// because the rendezvous is taken (`false`). When disconnected the code is
-/// hosted on reconnect and no receiver is returned.
+/// hosted on reconnect and no receiver is returned. `own_device` marks a code
+/// made for another device of this member (see `HostedCode::own_device`).
 pub async fn host_code(
     ctx: &mut RoomCtx,
     kind: CodeKind,
     expires_at: i64,
+    own_device: bool,
 ) -> anyhow::Result<(JoinCode, Option<oneshot::Receiver<bool>>)> {
     let code = JoinCode::generate()?;
     let r = code.rendezvous();
-    ctx.codes.insert(r, HostedCode { code: code.clone(), kind: kind.clone(), expires_at, failures: 0 });
+    let own_device = own_device.then_some(ctx.core.my_member);
+    ctx.codes.insert(r, HostedCode { code: code.clone(), kind: kind.clone(), expires_at, failures: 0, own_device });
     let mut waiter = None;
     if let (Some(s), true) = (&ctx.sender, ctx.connected) {
         let (tx, rx) = oneshot::channel();

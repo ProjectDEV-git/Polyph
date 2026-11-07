@@ -82,6 +82,8 @@ A `CertChain` is the signed genesis plus certificates `c[0..n]`:
 4. Each `c[i].role` is at most its issuer's role (the owner counts as Owner).
 5. Every certificate names this room, is unexpired, was not issued more than
    five minutes in the future, and no device in the chain has been removed.
+6. `c[i]` (i > 0) does not certify the device that signed it: only the
+   owner's first certificate is self-issued.
 
 The member's role is `c[n-1].role`. Clients drop envelopes from any sender
 whose chain they have not verified.
@@ -92,6 +94,16 @@ role), whether it arrives in `Hello`, `RoleChanged` or a snapshot. A role
 change re-issues the certificate of every device of the member, with an
 `issued_at` later than the one it replaces, so a demoted device cannot restore
 its old role by presenting its previous chain.
+
+Clients also refuse a new chain (in `Hello`, `RoleChanged`, `MemberAdded` or
+a snapshot) when any issuing link `c[i]` (i < n-1) is older than the
+certificate they hold for that link's device: the issuer was demoted or
+re-issued since, so it cannot extend its old chain, whatever `issued_at` it
+writes on the new link. A device already held keeps the chain held for it.
+For the same reason a role change also re-issues, from the changer's own
+chain and keeping their role, every device whose chain runs through a
+device being re-issued, and a device whose own chain runs through the member
+being changed cannot change that member's role.
 
 ### 4.3 Roles
 
@@ -223,14 +235,28 @@ The joiner's `JoinRequest { device, member, display_name, name_salt, surface,
 link_device, capabilities }` travels over that channel. A joiner may name an
 existing member id (a person's phone or agent host joining as another device
 of theirs); it is still a knock that an Owner or Maintainer must approve.
-Until the request can prove it comes from that member, clients refuse to
-approve (by hand or automatically) a knock whose member id already belongs to
-someone in the room, unless the knocking device is already one of that
-member's devices.
+The request carries no proof that it comes from that member, so clients
+refuse to approve a knock whose member id already belongs to someone in the
+room, except in two cases:
 
-Both sides exchange confirmation tags and compare in constant time. Then they
-use an ordered XChaCha20-Poly1305 channel with counter nonces
-(`nonce = 0^16 || counter_be`, aad `"polyph/v1/join"`).
+- The code was made by `phone.pair` or `host.invite` on the approving device,
+  for the approver's own member id, and the knock names that member id. The
+  host daemon records this locally when it makes the code; nothing on the
+  wire marks such a code. Plain invites (`room.invite`, one-time or reusable)
+  never qualify. Only that device can approve the knock, and its approval
+  prompt says that a new device is joining as you.
+- The knocking device is already one of that member's devices and its knock
+  carries the same encryption key (`kx`) as the certificate held for it.
+
+A knock that names an existing member id is never approved automatically,
+even with "Require approval to join" off.
+
+Both sides exchange confirmation tags and compare in constant time. The
+joiner sends its tag as soon as it has the host's SPAKE2 message. The host
+sends its own tag only after the joiner's has verified, so a joiner learns
+nothing it could test a guess against offline without spending a counted
+attempt. Then they use an ordered XChaCha20-Poly1305 channel with counter
+nonces (`nonce = 0^16 || counter_be`, aad `"polyph/v1/join"`).
 
 ### 7.3 Flow over the relay
 
@@ -260,6 +286,10 @@ Enforced by the relay, and independently by the host daemon:
   with `PakeEnded`).
 - A code accepts a new `JoinCode` only while its failures plus attempts still
   in progress stay under the limit; otherwise the relay answers `RateLimited`.
+- The host daemon counts its own failures per code: a malformed SPAKE2
+  message, a wrong tag, or a session that ends (`PakeEnded`) before the
+  joiner's tag verified. After 5 in a row it refuses the code, whatever the
+  relay does.
 - After 5 failures a one-time code is deleted (`CodeClosed::Failed`); a
   reusable code is locked for 10 minutes and the host is told (`CodeLocked`),
   which the daemon shows to the room owner.

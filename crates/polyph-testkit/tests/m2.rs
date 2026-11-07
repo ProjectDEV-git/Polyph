@@ -229,3 +229,60 @@ async fn acting_host_fails_over() {
     h.advance(30).await;
     h.nodes[a].wait_event("Ann host again", |e| e.kind() == "acting_host" && e.event["me"] == true).await.unwrap();
 }
+
+/// Only codes made for another device of this member (`phone.pair`,
+/// `host.invite`) let a joiner claim the inviter's member id, and never
+/// without a person approving it, even with approval off.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn only_pairing_codes_let_a_device_join_as_the_inviter() {
+    let mut h = Harness::new().await.unwrap();
+    let a = h.add("Ann").await.unwrap();
+    let eve = h.add("Eve").await.unwrap();
+    let server = h.add("server").await.unwrap();
+    let room = h.nodes[a].call("room.create", json!({ "name": "payments", "require_approval": false })).await.unwrap();
+    let rid = room["id"].as_str().unwrap().to_string();
+    h.until("connected", || async {
+        h.nodes[a].call("room.get", json!({ "room": rid })).await.unwrap()["connected"] == true
+    })
+    .await
+    .unwrap();
+    let ann = h.nodes[a].call("whoami", json!({})).await.unwrap()["member"].as_str().unwrap().to_string();
+    let dir = tempfile::tempdir().unwrap();
+
+    // A plain invite: Eve claims to be Ann. Not let in automatically, and
+    // refused when Ann tries to approve it.
+    let inv = h.nodes[a].call("room.invite", json!({ "room": rid })).await.unwrap();
+    let ed = h.nodes[eve].daemon.clone();
+    let params =
+        json!({ "code": inv["code"], "member": ann, "relay": h.relay.url(), "workdir": dir.path(), "name": "Ann" });
+    let joining = tokio::spawn(async move { ed.call("host.join", params).await });
+    let knock = h.nodes[a].wait_event("knock", |e| e.kind() == "knock").await.unwrap();
+    assert_eq!(knock.event["knock"]["member"], ann.as_str());
+    assert_eq!(knock.event["knock"]["own_device"], false);
+    h.nodes[eve].wait_event("pending", |e| e.kind() == "join_pending").await.unwrap();
+    let kid = knock.event["knock"]["id"].as_str().unwrap().to_string();
+    let e = h.nodes[a]
+        .call("knock.decide", json!({ "room": rid, "knock": kid, "approve": true }))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("existing member"), "{e}");
+    h.nodes[a].call("knock.decide", json!({ "room": rid, "knock": kid, "approve": false })).await.unwrap();
+    assert!(joining.await.unwrap().is_err());
+
+    // The same through `host.invite`: it waits for Ann, then gets in.
+    let inv = h.nodes[a].call("host.invite", json!({ "room": rid })).await.unwrap();
+    assert_eq!(inv["member"], ann.as_str());
+    let sd = h.nodes[server].daemon.clone();
+    let params = json!({ "code": inv["code"], "member": inv["member"], "relay": inv["relay"], "workdir": dir.path(), "name": "Ann" });
+    let joining = tokio::spawn(async move { sd.call("host.join", params).await });
+    let knock = h.nodes[a].wait_event("knock", |e| e.kind() == "knock").await.unwrap();
+    assert_eq!(knock.event["knock"]["own_device"], true);
+    h.nodes[server].wait_event("pending", |e| e.kind() == "join_pending").await.unwrap();
+    let listed = h.nodes[a].call("knock.list", json!({ "room": rid })).await.unwrap();
+    assert_eq!(listed[0]["own_device"], true);
+    let kid = knock.event["knock"]["id"].as_str().unwrap().to_string();
+    h.nodes[a].call("knock.decide", json!({ "room": rid, "knock": kid, "approve": true })).await.unwrap();
+    let joined = joining.await.unwrap().map_err(|e| e.to_string()).unwrap();
+    assert_eq!(joined["id"], rid.as_str());
+}

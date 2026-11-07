@@ -69,6 +69,25 @@ lists notes and agents write them.
 - **Smoke tests against real agents** (`POLYPH_SMOKE=1`) exist for Claude
   Code, Codex and Ollama but have not been run: none is installed here.
 - **Security contact address** in `docs/security.md` is not set.
+- **Adding your own device (SEC-3).** A join request carries no proof that
+  it comes from the member it names, so only the device that made a
+  `phone.pair` or `host.invite` code can approve a knock naming its own
+  member id. A Member (who cannot approve joins) cannot pair a phone or add
+  an agent host; another approver's device refuses the knock. Needs a
+  device-link signature in `JoinRequest` (wire change, Kao).
+- **Demotion (SEC-2) is client logic.** A client that has not seen a
+  demotion, directly or in a snapshot, still accepts chains issued through
+  the old certificate. A role change re-issues only the devices the changer
+  holds; a device that a demoted Maintainer let in and that the changer does
+  not know is refused by clients that saw the change until someone
+  re-issues it. A Maintainer whose own chain runs through a member cannot
+  change that member's role. Certificates are ordered by the issuer's clock,
+  so role changes made from devices whose clocks differ by more than the time
+  between the changes can apply in the wrong order.
+- **Join-code guessing (SEC-4).** Per-IP join limits key on the full
+  address, so each IPv6 /128 has its own budget (should be /64). Hosts on
+  0.1.2 and earlier still send their confirmation tag before checking the
+  joiner's.
 
 ## Milestone 4 gaps
 

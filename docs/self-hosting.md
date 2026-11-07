@@ -52,6 +52,11 @@ Other TOML keys: `buffer_secs` (600), `buffer_max_envelopes` (5000),
 `frames_per_sec` (200), `code_max_failures` (5), `code_lock_secs` (600),
 `join_handshake_secs` (120).
 
+A code takes a new join only while its failures plus joins still in progress
+stay under `code_max_failures`, so several people joining at once on one
+reusable code can be refused with "too many joins in progress"; they can retry
+a moment later.
+
 Endpoints: `/ws` (clients), `/healthz` (JSON status), `/metrics` (opt-in).
 Logs are JSON on stderr and never include content.
 

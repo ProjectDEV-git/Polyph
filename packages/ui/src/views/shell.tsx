@@ -38,7 +38,8 @@ function Finding() {
       mine.length > 1
         ? l.t("app-finding-more", { first: describeApproval(l, mine[0]), n: mine.length - 1 })
         : describeApproval(l, mine[0]);
-  else if (knocks[0]) text = l.t("app-knock", { name: knocks[0].display_name });
+  else if (knocks[0])
+    text = l.t(knocks[0].own_device ? "app-knock-own-device" : "app-knock", { name: knocks[0].display_name });
   else if (running) text = l.t("app-finding-running", { n: running });
   else text = l.t("app-finding-quiet");
   return (

@@ -59,6 +59,7 @@ app-approve-task = Approve for this task
 app-deny = Deny
 app-deny-send = Deny with note
 app-knock = { $name } asks to join this room.
+app-knock-own-device = A new device asks to join as you ({ $name }). Let it in only if you just paired a phone or set up an agent host.
 app-knock-approve = Let in
 app-knock-let-in = Let in.
 

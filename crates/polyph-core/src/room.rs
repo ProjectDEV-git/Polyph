@@ -588,6 +588,35 @@ impl RoomCore {
         self.peers.get(d).and_then(|p| p.member())
     }
 
+    /// The certificate held for a device, this one included.
+    fn held_cert(&self, d: &DeviceId) -> Option<&VerifiedMember> {
+        if *d == self.me {
+            return Some(&self.my_verified);
+        }
+        self.peers.get(d).and_then(|p| p.verified.as_ref())
+    }
+
+    /// Whether a chain was issued through a certificate older than the one held
+    /// for that issuer. The issuer was demoted or re-issued since, so its old
+    /// certificate no longer lets it issue: a demoted Maintainer cannot extend
+    /// its previous chain, whatever date it puts on the new link.
+    fn issued_through_superseded(&self, chain: &CertChain) -> bool {
+        let issuers = chain.certs.len().saturating_sub(1);
+        chain.certs[..issuers].iter().any(|s| match s.open() {
+            Ok(c) => self
+                .held_cert(&c.device.sign)
+                .is_some_and(|h| h.issued_at > c.issued_at || (h.issued_at == c.issued_at && h.role < c.role)),
+            Err(_) => true,
+        })
+    }
+
+    /// Verifies a chain someone presented: signatures, revocations, this room,
+    /// and that no link was issued through a superseded certificate.
+    fn accept_chain(&self, chain: &CertChain, now: i64) -> Option<VerifiedMember> {
+        let v = chain.verify(now, &|d| self.revoked.contains(d)).ok()?;
+        (v.room == self.id && !self.issued_through_superseded(chain)).then_some(v)
+    }
+
     fn handle(&mut self, from: DeviceId, msg: RoomMessage, now: i64) -> Vec<Effect> {
         if let RoomMessage::Hello { chain, profile, presence } = msg {
             return self.on_hello(from, *chain, profile, presence, now);
@@ -665,9 +694,7 @@ impl RoomCore {
             }
             RoomMessage::MemberAdded { chain } => out.extend(self.on_member_added(*chain, now)),
             RoomMessage::RoleChanged { member: _, chain } => {
-                if let Ok(v) = chain.verify(now, &|d| self.revoked.contains(d))
-                    && v.room == self.id
-                {
+                if let Some(v) = self.accept_chain(&chain, now) {
                     if v.device.sign == self.me {
                         if supersedes(&v, &self.my_verified) {
                             self.my_verified = v;
@@ -719,6 +746,7 @@ impl RoomCore {
                 out.push(Effect::Event(RoomEvent::Knock { knock: k }));
             }
             RoomMessage::KnockDecided { id, approved, by: _ } if role.can_approve_joins() => {
+                self.own_device_knocks.remove(&id);
                 out.push(Effect::Event(RoomEvent::KnockDecided { id, approved }));
                 if !approved
                     && let Some(k) = self.knocks.remove(&id)
@@ -806,15 +834,23 @@ impl RoomCore {
         if v.room != self.id || v.device.sign != from || !verify_profile(&profile, &v) {
             return vec![];
         }
+        // A chain issued through a superseded certificate is never taken; a
+        // device we already hold keeps the chain we hold.
+        let superseded = self.issued_through_superseded(&chain);
+        if superseded && !self.peers.contains_key(&from) {
+            return vec![];
+        }
         let known_member = self.peers.values().any(|p| p.member() == Some(v.member)) || v.member == self.my_member;
         let new_device = !self.peers.contains_key(&from);
-        let (member, role) = (v.member, v.role);
         let name = profile.display_name.clone();
         // An older certificate than the one held (say, from before a demotion) does not replace it.
         let (chain, v) = match self.peers.get(&from) {
-            Some(p) if p.verified.as_ref().is_some_and(|h| !supersedes(&v, h)) => (p.chain.clone(), p.verified.clone()),
+            Some(p) if superseded || p.verified.as_ref().is_some_and(|h| !supersedes(&v, h)) => {
+                (p.chain.clone(), p.verified.clone())
+            }
             _ => (chain, Some(v)),
         };
+        let Some((member, role)) = v.as_ref().map(|v| (v.member, v.role)) else { return vec![] };
         self.peers.insert(
             from,
             Peer { chain, verified: v, profile: Some(profile), presence: Some(presence), last_seen: now },
@@ -839,11 +875,7 @@ impl RoomCore {
     }
 
     fn on_member_added(&mut self, chain: CertChain, now: i64) -> Vec<Effect> {
-        let revoked = self.revoked.clone();
-        let Ok(v) = chain.verify(now, &|d| revoked.contains(d)) else { return vec![] };
-        if v.room != self.id {
-            return vec![];
-        }
+        let Some(v) = self.accept_chain(&chain, now) else { return vec![] };
         let dev = v.device.sign;
         let mut out = vec![];
         let knock = self.knocks.iter().find(|(_, k)| k.device == dev).map(|(id, k)| (*id, k.clone()));
@@ -886,12 +918,17 @@ impl RoomCore {
         let k = self.knocks.get(&knock).cloned().ok_or(RoomError::NotFound("knock"))?;
         // A knock may not claim an existing member's id (it would inherit their
         // name and standing) unless it is one of that member's own devices
-        // re-joining, or it came through a pairing or host code this device made
-        // for its own member (`allow_own_device`).
+        // re-joining with the same keys, or it came through a pairing or agent
+        // host code this device made for its own member (`allow_own_device`).
+        // Device ids are public, so the re-joining device must also present the
+        // encryption key its certificate already names.
         let own_invite = k.member == self.my_member && self.own_device_knocks.contains(&knock);
-        let same_device = self.peers.get(&k.device).is_some_and(|p| p.member() == Some(k.member));
-        let taken = k.member == self.my_member || self.peers.values().any(|p| p.member() == Some(k.member));
-        if taken && !same_device && !own_invite {
+        let same_device = self
+            .peers
+            .get(&k.device)
+            .and_then(|p| p.verified.as_ref())
+            .is_some_and(|v| v.member == k.member && v.device.kx.as_slice() == k.kx.as_slice());
+        if self.knock_claims_member(&k) && !same_device && !own_invite {
             return Err(RoomError::Invalid("knock claims an existing member's id"));
         }
         let kx: [u8; 32] = k.kx.as_slice().try_into().map_err(|_| RoomError::Invalid("knock has no key"))?;
@@ -920,6 +957,7 @@ impl RoomCore {
         if k.via == self.me {
             self.pending_deliveries.insert(k.device, delivery);
         }
+        self.own_device_knocks.remove(&knock);
         out.extend(self.on_member_added(chain, now));
         Ok(out)
     }
@@ -931,11 +969,23 @@ impl RoomCore {
         self.own_device_knocks.insert(knock);
     }
 
+    /// Whether a knock is marked as another device of this device's member.
+    pub fn is_own_device_knock(&self, knock: &ObjectId) -> bool {
+        self.own_device_knocks.contains(knock)
+    }
+
+    /// Whether a knock names a member id already in the room. Such a knock is
+    /// never approved automatically.
+    pub fn knock_claims_member(&self, k: &Knock) -> bool {
+        k.member == self.my_member || self.peers.values().any(|p| p.member() == Some(k.member))
+    }
+
     pub fn deny_knock(&mut self, knock: ObjectId) -> Result<Vec<Effect>> {
         if !self.role().can_approve_joins() {
             return Err(RoomError::Forbidden);
         }
         let k = self.knocks.remove(&knock).ok_or(RoomError::NotFound("knock"))?;
+        self.own_device_knocks.remove(&knock);
         let mut out = vec![Effect::Send(RoomMessage::KnockDecided { id: knock, approved: false, by: self.my_member })];
         if k.via == self.me {
             out.push(Effect::Event(RoomEvent::JoinDenied { knock }));
@@ -1028,11 +1078,48 @@ impl RoomCore {
         if devices.is_empty() {
             return Err(RoomError::NotFound("member"));
         }
+        // Devices whose chain runs through one being re-issued would be refused
+        // from now on (issued through a superseded certificate), so re-issue
+        // them from this device's chain too, keeping their role.
+        let mut through: BTreeSet<DeviceId> = devices.iter().map(|(d, _)| *d).collect();
+        let mut dependents: Vec<(DeviceId, VerifiedMember)> = vec![];
+        loop {
+            let more: Vec<(DeviceId, VerifiedMember)> = self
+                .peers
+                .iter()
+                .filter(|(d, _)| !through.contains(*d))
+                .filter_map(|(d, p)| {
+                    let v = p.verified.clone()?;
+                    let issuers = p.chain.certs.len().saturating_sub(1);
+                    p.chain.certs[..issuers]
+                        .iter()
+                        .any(|s| s.open().is_ok_and(|c| through.contains(&c.device.sign)))
+                        .then_some((*d, v))
+                })
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            through.extend(more.iter().map(|(d, _)| *d));
+            dependents.extend(more);
+        }
+        // A certificate issued through this member's own would be refused too.
+        let mine_through = self.my_chain.certs[..self.my_chain.certs.len().saturating_sub(1)]
+            .iter()
+            .any(|s| s.open().is_ok_and(|c| devices.iter().any(|(d, _)| *d == c.device.sign)));
+        if mine_through {
+            return Err(RoomError::Invalid("your certificate was issued by this member; ask the room owner"));
+        }
+        let mine = self.role();
+        let reissue = devices.into_iter().map(|(d, v)| (d, v, role)).chain(dependents.into_iter().map(|(d, v)| {
+            let r = v.role.min(mine);
+            (d, v, r)
+        }));
         let mut out = vec![];
-        for (dev, v) in devices {
+        for (dev, v, role) in reissue {
             let cert = MembershipCert {
                 room: self.id,
-                member,
+                member: v.member,
                 device: v.device,
                 name_commit: v.name_commit,
                 role,
@@ -1047,7 +1134,7 @@ impl RoomCore {
                 p.chain = chain.clone();
                 p.verified = Some(nv);
             }
-            out.push(Effect::Send(RoomMessage::RoleChanged { member, chain: Box::new(chain) }));
+            out.push(Effect::Send(RoomMessage::RoleChanged { member: v.member, chain: Box::new(chain) }));
         }
         Ok(out)
     }
@@ -1692,10 +1779,7 @@ impl RoomCore {
         } else {
             self.sender_role(&env.sender).or_else(|| {
                 snap.members.iter().find_map(|(c, _)| {
-                    c.verify(now, &|d| self.revoked.contains(d))
-                        .ok()
-                        .filter(|v| v.device.sign == env.sender && v.room == self.id)
-                        .map(|v| v.role)
+                    self.accept_chain(c, now).filter(|v| v.device.sign == env.sender).map(|v| v.role)
                 })
             })
         };
@@ -1708,9 +1792,7 @@ impl RoomCore {
             self.revoked.extend(snap.revoked);
         }
         for (chain, profile) in snap.members {
-            let revoked = self.revoked.clone();
-            if let Ok(v) = chain.verify(now, &|d| revoked.contains(d))
-                && v.room == self.id
+            if let Some(v) = self.accept_chain(&chain, now)
                 && v.device.sign != self.me
             {
                 let profile = profile.filter(|p| verify_profile(p, &v));

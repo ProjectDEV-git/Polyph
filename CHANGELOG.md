@@ -11,6 +11,10 @@ GitHub release page.
   relay addresses. `--print` prints the link instead of opening a browser.
 - **`polyph agent message <agent> <text>`.** Leaves a message in an agent's
   inbox from the command line.
+- **Viewers no longer upload snapshots.** The relay now refuses snapshots
+  from Viewers. A Viewer on Polyph 0.1.2 connected to an upgraded relay logs
+  one harmless relay error each snapshot interval (5 minutes) until it
+  updates.
 
 ## 0.1.2
 
