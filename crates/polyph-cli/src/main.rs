@@ -1766,12 +1766,9 @@ async fn room_cmd(ctx: &Ctx, api: &mut Api, cmd: RoomCmd) -> anyhow::Result<()> 
             } else {
                 for k in v.as_array().into_iter().flatten() {
                     let id: String = k["id"].as_str().unwrap_or_default().chars().take(6).collect();
-                    ctx.out(tr!(
-                        l,
-                        "knock-line",
-                        id = id.clone(),
-                        name = k["display_name"].as_str().unwrap_or_default()
-                    ));
+                    // Another device joining as this person says so plainly.
+                    let line = if k["own_device"] == true { "knock-line-own-device" } else { "knock-line" };
+                    ctx.out(tr!(l, line, id = id.clone(), name = k["display_name"].as_str().unwrap_or_default()));
                     ctx.out(tr!(l, "knock-hint", id = id));
                 }
             }

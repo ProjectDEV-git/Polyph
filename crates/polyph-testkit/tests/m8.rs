@@ -42,7 +42,8 @@ async fn room_with_phone(pair: bool) -> (Harness, String, PhoneDriver) {
     let phone = Phone::new(identity, member, "Ann's phone", &h.relay.url()).unwrap();
     let mut p = PhoneDriver::connect(phone, &h.relay.url(), h.clock.clone()).await.unwrap();
 
-    let inv = h.nodes[a].call("room.invite", json!({ "room": rid })).await.unwrap();
+    // Pairing uses the real pairing call: only its codes may add a device of Ann's own.
+    let inv = h.nodes[a].call(if pair { "phone.pair" } else { "room.invite" }, json!({ "room": rid })).await.unwrap();
     p.start_join(inv["code"].as_str().unwrap(), if pair { "Ann" } else { "Pim" }).await.unwrap();
     let knock = h.nodes[a].wait_event("knock", |e| e.kind() == "knock").await.unwrap();
     assert_eq!(knock.event["knock"]["surface"], "phone");

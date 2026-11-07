@@ -283,13 +283,49 @@ pub struct SavedRoom {
     pub cursor: Option<u64>,
     pub relay: Option<String>,
     pub created_at: i64,
+    /// Local only, never sent. 0 (absent) for rooms saved by 0.1.2 or saved
+    /// before this device ran the re-issue pass for them; [`SAVE_FORMAT`]
+    /// once it has.
+    #[serde(default)]
+    pub format: u32,
 }
+
+/// The saved-state format this version writes once the 0.1.2 re-issue pass
+/// (`reissue_superseded_chains` on the first connect after loading) has run.
+pub const SAVE_FORMAT: u32 = 1;
 
 impl std::fmt::Debug for SavedRoom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "SavedRoom({}, {} keys, {} peers)", self.id.short(), self.keys.len(), self.peers.len())
     }
 }
+
+/// Whether `new` may replace the certificate held for the same device: newest
+/// wins, and at equal age the lower role, so a demotion cannot be undone by
+/// replaying the older chain.
+fn supersedes(new: &VerifiedMember, held: &VerifiedMember) -> bool {
+    new.issued_at > held.issued_at || (new.issued_at == held.issued_at && new.role <= held.role)
+}
+
+/// Whether the certificate `held` for a device is newer than `cert`, the one a
+/// chain names for it (so `cert` was superseded).
+fn held_is_newer(held: &VerifiedMember, cert: &MembershipCert) -> bool {
+    held.issued_at > cert.issued_at || (held.issued_at == cert.issued_at && held.role < cert.role)
+}
+
+/// The device that signed a chain's last certificate and the role the chain
+/// gives it. The owner's own chain is self-issued.
+fn leaf_issuer(chain: &CertChain, v: &VerifiedMember) -> Option<(DeviceId, Role)> {
+    match chain.certs.len() {
+        0 => None,
+        1 => Some((v.owner, Role::Owner)),
+        n => chain.certs[n - 2].open().ok().map(|c| (c.device.sign, c.role)),
+    }
+}
+
+/// How long a knock waits for a decision. The relay ends a join session after
+/// 15 minutes, so a knock older than this can no longer complete.
+pub const KNOCK_TTL: i64 = 20 * 60;
 
 /// What a member uploads to the relay as an encrypted snapshot.
 #[derive(Serialize, Deserialize)]
@@ -323,6 +359,9 @@ pub struct RoomCore {
     docs: HashMap<DocName, Doc>,
     pub knocks: BTreeMap<ObjectId, Knock>,
     pending_deliveries: HashMap<DeviceId, Signed<EpochKeyDelivery>>,
+    /// Knocks that arrived through a code this device made for its own member's
+    /// next device. Local only; never sent or persisted.
+    own_device_knocks: std::collections::HashSet<ObjectId>,
     pub approvals: BTreeMap<ObjectId, PendingApproval>,
     pub cursor: Option<u64>,
     pub relay: Option<String>,
@@ -331,6 +370,10 @@ pub struct RoomCore {
     online_seen: BTreeSet<DeviceId>,
     /// Next epoch, installed by `commit_rotation` once the announcement is sealed.
     pending_rotation: Option<EpochKey>,
+    /// Set by `load` for rooms saved by 0.1.2: on the next connect, an Owner
+    /// or Maintainer re-issues peers whose chain runs through a superseded
+    /// certificate (0.1.2 role changes re-issued only the member's own devices).
+    reissue_on_connect: bool,
     /// Latest time seen (ticks, messages), for activity entries.
     pub last_now: i64,
     /// The embedder's clock, when it has one (the daemon's).
@@ -442,6 +485,7 @@ impl RoomCore {
             docs,
             knocks: BTreeMap::new(),
             pending_deliveries: HashMap::new(),
+            own_device_knocks: Default::default(),
             approvals: BTreeMap::new(),
             cursor: None,
             relay: None,
@@ -449,6 +493,7 @@ impl RoomCore {
             last_sync_reply: 0,
             online_seen: BTreeSet::new(),
             pending_rotation: None,
+            reissue_on_connect: false,
             last_now: now,
             clock: None,
         })
@@ -508,6 +553,9 @@ impl RoomCore {
             self.host.device = None;
         }
         let mut out = vec![Effect::Send(self.hello(now))];
+        if std::mem::take(&mut self.reissue_on_connect) {
+            out.extend(self.reissue_superseded_chains(now));
+        }
         if was_host {
             // Claims granted while we were cut off must reach whoever is host
             // now so the split can be reconciled.
@@ -575,6 +623,175 @@ impl RoomCore {
 
     fn sender_member(&self, d: &DeviceId) -> Option<MemberId> {
         self.peers.get(d).and_then(|p| p.member())
+    }
+
+    /// The certificate held for a device, this one included.
+    fn held_cert(&self, d: &DeviceId) -> Option<&VerifiedMember> {
+        if *d == self.me {
+            return Some(&self.my_verified);
+        }
+        self.peers.get(d).and_then(|p| p.verified.as_ref())
+    }
+
+    /// The chain held for a device, this one included.
+    fn held_chain(&self, d: &DeviceId) -> Option<&CertChain> {
+        if *d == self.me {
+            return Some(&self.my_chain);
+        }
+        self.peers.get(d).map(|p| &p.chain)
+    }
+
+    /// The held certificate that can supersede a link naming `d`. For the room
+    /// owner's device only its genesis self-certificate counts: a room saved
+    /// by 0.1.2 may hold a newer certificate another device issued for it
+    /// (when the owner's role was changed), which this version refuses
+    /// (`certifies_owner_device`) and which must not cut off every chain.
+    fn superseding_cert(&self, d: &DeviceId) -> Option<&VerifiedMember> {
+        if *d == self.my_verified.owner && self.held_chain(d).is_some_and(|c| c.certs.len() != 1) {
+            return None;
+        }
+        self.held_cert(d)
+    }
+
+    /// Whether a chain was issued through a certificate older than the one held
+    /// for that issuer. The issuer was demoted or re-issued since, so its old
+    /// certificate no longer lets it issue: a demoted Maintainer cannot extend
+    /// its previous chain, whatever date it puts on the new link.
+    fn issued_through_superseded(&self, chain: &CertChain) -> bool {
+        let issuers = chain.certs.len().saturating_sub(1);
+        chain.certs[..issuers].iter().any(|s| match s.open() {
+            Ok(c) => self.superseding_cert(&c.device.sign).is_some_and(|h| held_is_newer(h, &c)),
+            Err(_) => true,
+        })
+    }
+
+    /// Whether a chain's last certificate was issued before every issuer
+    /// certificate on its path was superseded: the issuer still held that
+    /// role when it let the device in.
+    fn issued_before_supersession(&self, chain: &CertChain, leaf_at: i64) -> bool {
+        let issuers = chain.certs.len().saturating_sub(1);
+        chain.certs[..issuers].iter().all(|s| match s.open() {
+            Ok(c) => {
+                self.superseding_cert(&c.device.sign).is_none_or(|h| !held_is_newer(h, &c) || leaf_at < h.issued_at)
+            }
+            Err(_) => false,
+        })
+    }
+
+    /// The room owner's genesis chain: its self-issued first certificate,
+    /// taken from the head of a held chain or, on the owner's device, signed
+    /// again (Ed25519 signatures are deterministic, so it is the same bytes).
+    fn genesis_owner_chain(&self, now: i64) -> Option<CertChain> {
+        let owner = self.my_verified.owner;
+        let held = std::iter::once(&self.my_chain)
+            .chain(self.peers.values().map(|p| &p.chain))
+            .filter_map(|c| {
+                let s = c.certs.first()?;
+                let cert = s.open().ok()?;
+                (cert.device.sign == owner)
+                    .then(|| (cert.issued_at, CertChain { genesis: c.genesis.clone(), certs: vec![s.clone()] }))
+            })
+            .min_by_key(|(at, _)| *at)
+            .map(|(_, c)| c);
+        let chain = match held {
+            Some(c) => c,
+            None if self.me == owner => {
+                let (g, _) = polyph_proto::cert::open_genesis(&self.my_chain.genesis).ok()?;
+                let salt: [u8; 16] = self.my_profile.name_salt.as_slice().try_into().ok()?;
+                CertChain::for_owner(
+                    &self.identity,
+                    self.my_chain.genesis.clone(),
+                    g.owner_member,
+                    name_commitment(&self.my_profile.display_name, &salt),
+                    g.created_at,
+                )
+                .ok()?
+            }
+            None => return None,
+        };
+        chain.verify(now, &|_| false).ok().filter(|v| v.room == self.id && v.device.sign == owner).map(|_| chain)
+    }
+
+    /// Puts the room owner's device back on its genesis chain where a room
+    /// saved by 0.1.2 holds another certificate for it (this device's own
+    /// chain, on the owner's device, or the peer entry). A peer entry with no
+    /// genesis chain to put back is dropped; the owner's hello brings it back.
+    fn reset_owner_chain(&mut self, now: i64) {
+        let owner = self.my_verified.owner;
+        let mine = self.me == owner && self.my_chain.certs.len() != 1;
+        let peer = self.peers.get(&owner).is_some_and(|p| p.chain.certs.len() != 1);
+        if !mine && !peer {
+            return;
+        }
+        let genesis = self.genesis_owner_chain(now);
+        let verified = genesis.as_ref().and_then(|c| c.verify(now, &|_| false).ok());
+        if mine && let (Some(c), Some(v)) = (genesis.clone(), verified.clone()) {
+            self.my_chain = c;
+            self.my_verified = v;
+        }
+        if peer {
+            match (genesis, verified) {
+                (Some(c), Some(v)) => {
+                    if let Some(p) = self.peers.get_mut(&owner) {
+                        p.chain = c;
+                        p.verified = Some(v);
+                    }
+                }
+                _ => {
+                    self.peers.remove(&owner);
+                }
+            }
+        }
+    }
+
+    /// The room owner's device (named in the genesis) holds only the
+    /// certificate it issued itself; nobody else may certify that device.
+    fn certifies_owner_device(chain: &CertChain, v: &VerifiedMember) -> bool {
+        v.device.sign == v.owner && chain.certs.len() != 1
+    }
+
+    /// Verifies a chain someone presented: signatures, revocations, this room,
+    /// that no link was issued through a superseded certificate, and that it
+    /// does not certify the owner's device on someone else's signature.
+    fn accept_chain(&self, chain: &CertChain, now: i64) -> Option<VerifiedMember> {
+        let v = chain.verify(now, &|d| self.revoked.contains(d)).ok()?;
+        (v.room == self.id && !self.issued_through_superseded(chain) && !Self::certifies_owner_device(chain, &v))
+            .then_some(v)
+    }
+
+    /// Whether `new` (verified from `chain`) may replace the certificate held
+    /// for the same device. It must be newer, keep the member id and the
+    /// encryption key, and come from an issuer whose role is at least the held
+    /// one. An Owner's certificate is replaced only by the room owner's device.
+    fn may_replace(&self, chain: &CertChain, new: &VerifiedMember, held: &VerifiedMember) -> bool {
+        if !supersedes(new, held) || new.member != held.member || new.device.kx != held.device.kx {
+            return false;
+        }
+        let Some((issuer, chain_role)) = leaf_issuer(chain, new) else { return false };
+        if held.role == Role::Owner {
+            return issuer == new.owner;
+        }
+        // The issuer's role as we hold it now, if we know the issuer.
+        let issuer_role = self.held_cert(&issuer).map_or(chain_role, |h| h.role.min(chain_role));
+        issuer_role >= held.role
+    }
+
+    /// Drops peers whose chain runs through a certificate superseded since, so
+    /// a demoted Maintainer's earlier issues stop counting until someone with
+    /// the role re-issues them (`change_role` does for the devices it holds).
+    fn drop_superseded_chains(&mut self) -> Vec<Effect> {
+        let stale: Vec<DeviceId> =
+            self.peers.iter().filter(|(_, p)| self.issued_through_superseded(&p.chain)).map(|(d, _)| *d).collect();
+        let mut out = vec![];
+        for d in stale {
+            if let Some(m) = self.sender_member(&d)
+                && self.online_seen.remove(&d)
+            {
+                out.push(Effect::Event(RoomEvent::MemberOffline { member: m, device: d }));
+            }
+            self.peers.remove(&d);
+        }
+        out
     }
 
     fn handle(&mut self, from: DeviceId, msg: RoomMessage, now: i64) -> Vec<Effect> {
@@ -654,15 +871,38 @@ impl RoomCore {
             }
             RoomMessage::MemberAdded { chain } => out.extend(self.on_member_added(*chain, now)),
             RoomMessage::RoleChanged { member: _, chain } => {
-                if let Ok(v) = chain.verify(now, &|d| self.revoked.contains(d))
-                    && v.room == self.id
-                {
-                    if v.device.sign == self.me {
-                        self.my_verified = v;
-                        self.my_chain = *chain;
-                    } else if let Some(p) = self.peers.get_mut(&v.device.sign) {
-                        p.chain = *chain;
-                        p.verified = Some(v);
+                if let Some(v) = self.accept_chain(&chain, now) {
+                    let dev = v.device.sign;
+                    if dev == self.me {
+                        if self.may_replace(&chain, &v, &self.my_verified) {
+                            self.my_verified = v;
+                            self.my_chain = *chain;
+                            // Peers that dropped this device (its old chain ran
+                            // through a superseded certificate) learn the new one.
+                            out.push(Effect::Send(self.hello(now)));
+                            out.extend(self.drop_superseded_chains());
+                        }
+                    } else {
+                        let replace = match self.peers.get(&dev).and_then(|p| p.verified.as_ref()) {
+                            Some(h) => self.may_replace(&chain, &v, h),
+                            // A device re-issued after we dropped it, or one we
+                            // never saw: like `MemberAdded`.
+                            None => true,
+                        };
+                        if replace {
+                            let p = self.peers.entry(dev).or_insert(Peer {
+                                chain: (*chain).clone(),
+                                verified: None,
+                                profile: None,
+                                presence: None,
+                                last_seen: 0,
+                            });
+                            p.chain = *chain;
+                            p.verified = Some(v);
+                            // Also for a device not held before: its
+                            // certificate may supersede a link of a held chain.
+                            out.extend(self.drop_superseded_chains());
+                        }
                     }
                 }
             }
@@ -704,6 +944,7 @@ impl RoomCore {
                 out.push(Effect::Event(RoomEvent::Knock { knock: k }));
             }
             RoomMessage::KnockDecided { id, approved, by: _ } if role.can_approve_joins() => {
+                self.own_device_knocks.remove(&id);
                 out.push(Effect::Event(RoomEvent::KnockDecided { id, approved }));
                 if !approved
                     && let Some(k) = self.knocks.remove(&id)
@@ -791,15 +1032,40 @@ impl RoomCore {
         if v.room != self.id || v.device.sign != from || !verify_profile(&profile, &v) {
             return vec![];
         }
+        // A chain issued through a superseded certificate, or one certifying
+        // the owner's device on another signature, is never taken; a device we
+        // already hold keeps the chain we hold.
+        let refused = self.issued_through_superseded(&chain) || Self::certifies_owner_device(&chain, &v);
+        if refused && !self.peers.contains_key(&from) {
+            return vec![];
+        }
         let known_member = self.peers.values().any(|p| p.member() == Some(v.member)) || v.member == self.my_member;
         let new_device = !self.peers.contains_key(&from);
-        let (member, role) = (v.member, v.role);
         let name = profile.display_name.clone();
-        self.peers.insert(
-            from,
-            Peer { chain, verified: Some(v), profile: Some(profile), presence: Some(presence), last_seen: now },
-        );
+        // A certificate that may not replace the one held (older, from a
+        // lower-ranked issuer, or for another member or key) does not.
+        let held = self.peers.get(&from).map(|p| (p.chain.clone(), p.verified.clone()));
+        let (chain, v, replaced) = match held {
+            Some((c, h)) if refused || h.as_ref().is_some_and(|h| !self.may_replace(&chain, &v, h)) => (c, h, false),
+            Some((c, _)) => {
+                let changed = c != chain;
+                (chain, Some(v), changed)
+            }
+            None => (chain, Some(v), false),
+        };
+        let Some((member, role)) = v.as_ref().map(|v| (v.member, v.role)) else { return vec![] };
+        // The profile must match the certificate kept, not only the one presented.
+        let profile = v.as_ref().is_some_and(|v| verify_profile(&profile, v)).then_some(profile);
+        let profile = profile.or_else(|| self.peers.get(&from).and_then(|p| p.profile.clone()));
+        self.peers.insert(from, Peer { chain, verified: v, profile, presence: Some(presence), last_seen: now });
         let mut out = vec![];
+        // A device not held before may supersede a link of a held chain too.
+        if replaced || new_device {
+            out.extend(self.drop_superseded_chains());
+        }
+        if !self.peers.contains_key(&from) {
+            return out;
+        }
         if !known_member {
             out.push(Effect::Event(RoomEvent::MemberJoined { member, name, role }));
         }
@@ -819,12 +1085,20 @@ impl RoomCore {
     }
 
     fn on_member_added(&mut self, chain: CertChain, now: i64) -> Vec<Effect> {
-        let revoked = self.revoked.clone();
-        let Ok(v) = chain.verify(now, &|d| revoked.contains(d)) else { return vec![] };
-        if v.room != self.id {
+        let Some(v) = self.accept_chain(&chain, now) else { return vec![] };
+        let dev = v.device.sign;
+        // A certificate for this device, or for a known device under another
+        // member id or encryption key, takes over a device that is not the
+        // joiner's (device ids are public). Only the same device re-joining passes.
+        if dev == self.me {
             return vec![];
         }
-        let dev = v.device.sign;
+        let held = self.peers.get(&dev).and_then(|p| p.verified.clone());
+        if self.peers.contains_key(&dev)
+            && held.as_ref().is_none_or(|h| h.member != v.member || h.device.kx != v.device.kx)
+        {
+            return vec![];
+        }
         let mut out = vec![];
         let knock = self.knocks.iter().find(|(_, k)| k.device == dev).map(|(id, k)| (*id, k.clone()));
         if let Some((kid, k)) = knock {
@@ -848,7 +1122,13 @@ impl RoomCore {
                 self.knocks.remove(&kid);
             }
         }
-        self.peers.entry(dev).or_insert(Peer { chain, verified: Some(v), profile: None, presence: None, last_seen: 0 });
+        // A device already held keeps the certificate held (a re-joining
+        // device's new one arrives in its hello, under the usual rules).
+        if let std::collections::btree_map::Entry::Vacant(e) = self.peers.entry(dev) {
+            e.insert(Peer { chain, verified: Some(v), profile: None, presence: None, last_seen: 0 });
+            // Its certificate may supersede a link of a held chain.
+            out.extend(self.drop_superseded_chains());
+        }
         out
     }
 
@@ -864,6 +1144,33 @@ impl RoomCore {
             return Err(RoomError::Forbidden);
         }
         let k = self.knocks.get(&knock).cloned().ok_or(RoomError::NotFound("knock"))?;
+        // A knock may not claim an existing member's id (it would inherit their
+        // name and standing) unless it is one of that member's own devices
+        // re-joining with the same keys, or it came through a pairing or agent
+        // host code this device made for its own member (`allow_own_device`).
+        // Device ids are public, so the re-joining device must also present the
+        // encryption key its certificate already names.
+        let own_invite = k.member == self.my_member && self.own_device_knocks.contains(&knock);
+        let same_device = self
+            .peers
+            .get(&k.device)
+            .and_then(|p| p.verified.as_ref())
+            .is_some_and(|v| v.member == k.member && v.device.kx.as_slice() == k.kx.as_slice());
+        let member_taken = k.member == self.my_member || self.peers.values().any(|p| p.member() == Some(k.member));
+        if member_taken && !same_device && !own_invite {
+            return Err(RoomError::Invalid("knock claims an existing member's id"));
+        }
+        // Nor may it name a device already in the room (or removed from it):
+        // the certificate would carry the joiner's key under that device's id.
+        if self.revoked.contains(&k.device) {
+            return Err(RoomError::Invalid(
+                "this device was removed from the room; to rejoin, the person joins from a new device \
+                 identity (another machine, or a separate POLYPH_HOME)",
+            ));
+        }
+        if self.device_taken(&k.device) && !same_device {
+            return Err(RoomError::Invalid("knock names a device already in the room"));
+        }
         let kx: [u8; 32] = k.kx.as_slice().try_into().map_err(|_| RoomError::Invalid("knock has no key"))?;
         let salt: [u8; 16] =
             k.name_salt.as_slice().try_into().map_err(|_| RoomError::Invalid("knock has no name salt"))?;
@@ -890,8 +1197,43 @@ impl RoomCore {
         if k.via == self.me {
             self.pending_deliveries.insert(k.device, delivery);
         }
+        self.own_device_knocks.remove(&knock);
         out.extend(self.on_member_added(chain, now));
         Ok(out)
+    }
+
+    /// Marks a knock as arriving through a code this device made to add another
+    /// device of its own member (phone pairing, agent host). Only then may the
+    /// knock claim this member's id, and only a person approves it.
+    pub fn allow_own_device(&mut self, knock: ObjectId) {
+        self.own_device_knocks.insert(knock);
+    }
+
+    /// Whether a knock is marked as another device of this device's member.
+    pub fn is_own_device_knock(&self, knock: &ObjectId) -> bool {
+        self.own_device_knocks.contains(knock)
+    }
+
+    /// Whether a knock names a member id or a device already in the room (or
+    /// a removed device). Such a knock is never approved automatically.
+    pub fn knock_claims_member(&self, k: &Knock) -> bool {
+        k.member == self.my_member
+            || self.peers.values().any(|p| p.member() == Some(k.member))
+            || self.device_taken(&k.device)
+    }
+
+    /// Whether a device id belongs to this device, the room owner's device, a
+    /// known peer or a removed device.
+    fn device_taken(&self, d: &DeviceId) -> bool {
+        *d == self.me || *d == self.my_verified.owner || self.peers.contains_key(d) || self.revoked.contains(d)
+    }
+
+    /// Forgets a knock whose join ended without a decision (the joiner left or
+    /// the session expired), with its own-device mark.
+    pub fn drop_knock(&mut self, knock: &ObjectId) {
+        self.knocks.remove(knock);
+        self.own_device_knocks.remove(knock);
+        self.pending_deliveries.retain(|d, _| self.knocks.values().any(|k| k.device == *d));
     }
 
     pub fn deny_knock(&mut self, knock: ObjectId) -> Result<Vec<Effect>> {
@@ -899,6 +1241,7 @@ impl RoomCore {
             return Err(RoomError::Forbidden);
         }
         let k = self.knocks.remove(&knock).ok_or(RoomError::NotFound("knock"))?;
+        self.own_device_knocks.remove(&knock);
         let mut out = vec![Effect::Send(RoomMessage::KnockDecided { id: knock, approved: false, by: self.my_member })];
         if k.via == self.me {
             out.push(Effect::Event(RoomEvent::JoinDenied { knock }));
@@ -981,20 +1324,76 @@ impl RoomCore {
         if !self.role().can_issue_certs() || role > self.role() {
             return Err(RoomError::Forbidden);
         }
-        let (dev, peer) = self
+        // Every device of the member gets the new role; one left on its old
+        // certificate would keep the old role.
+        let devices: Vec<(DeviceId, VerifiedMember)> = self
             .peers
             .iter()
-            .find(|(_, p)| p.member() == Some(member))
-            .map(|(d, p)| (*d, p.clone()))
-            .ok_or(RoomError::NotFound("member"))?;
-        let v = peer.verified.ok_or(RoomError::NotFound("member"))?;
+            .filter_map(|(d, p)| p.verified.clone().filter(|v| v.member == member).map(|v| (*d, v)))
+            .collect();
+        if devices.is_empty() {
+            return Err(RoomError::NotFound("member"));
+        }
+        // Nobody changes the role of someone ranked above them, and only the
+        // room owner's device re-issues an Owner (others refuse it anyway).
+        let mine = self.role();
+        if devices.iter().any(|(_, v)| v.role > mine || (v.role == Role::Owner && self.me != v.owner)) {
+            return Err(RoomError::Forbidden);
+        }
+        // Devices whose chain runs through one being re-issued would be refused
+        // from now on (issued through a superseded certificate), so re-issue
+        // them from this device's chain too, keeping their role.
+        let mut through: BTreeSet<DeviceId> = devices.iter().map(|(d, _)| *d).collect();
+        let mut dependents: Vec<(DeviceId, VerifiedMember)> = vec![];
+        loop {
+            let more: Vec<(DeviceId, VerifiedMember)> = self
+                .peers
+                .iter()
+                .filter(|(d, _)| !through.contains(*d))
+                .filter_map(|(d, p)| {
+                    let v = p.verified.clone()?;
+                    let issuers = p.chain.certs.len().saturating_sub(1);
+                    p.chain.certs[..issuers]
+                        .iter()
+                        .any(|s| s.open().is_ok_and(|c| through.contains(&c.device.sign)))
+                        .then_some((*d, v))
+                })
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            through.extend(more.iter().map(|(d, _)| *d));
+            dependents.extend(more);
+        }
+        // A certificate issued through this member's own would be refused too.
+        let mine_through = self.my_chain.certs[..self.my_chain.certs.len().saturating_sub(1)]
+            .iter()
+            .any(|s| s.open().is_ok_and(|c| devices.iter().any(|(d, _)| *d == c.device.sign)));
+        if mine_through {
+            return Err(RoomError::Invalid("your certificate was issued by this member; ask the room owner"));
+        }
+        let reissue = devices.into_iter().map(|(d, v)| (d, v, role)).chain(dependents.into_iter().map(|(d, v)| {
+            let r = v.role.min(mine);
+            (d, v, r)
+        }));
+        let mut out = vec![];
+        for (dev, v, role) in reissue {
+            out.push(self.reissue(dev, v, role, now)?);
+        }
+        Ok(out)
+    }
+
+    /// Issues a new certificate for a held peer from this device's chain, with
+    /// `role`, and returns the `RoleChanged` that tells the room.
+    fn reissue(&mut self, dev: DeviceId, v: VerifiedMember, role: Role, now: i64) -> Result<Effect> {
         let cert = MembershipCert {
             room: self.id,
-            member,
+            member: v.member,
             device: v.device,
             name_commit: v.name_commit,
             role,
-            issued_at: now,
+            // Strictly newer than the held certificate, so it wins everywhere.
+            issued_at: now.max(v.issued_at + 1),
             expires_at: None,
             capabilities: v.capabilities,
         };
@@ -1004,7 +1403,88 @@ impl RoomCore {
             p.chain = chain.clone();
             p.verified = Some(nv);
         }
-        Ok(vec![Effect::Send(RoomMessage::RoleChanged { member, chain: Box::new(chain) })])
+        Ok(Effect::Send(RoomMessage::RoleChanged { member: v.member, chain: Box::new(chain) }))
+    }
+
+    /// Re-issues, from this device's chain, peers whose chain runs through a
+    /// certificate superseded since they were let in. Rooms saved by 0.1.2
+    /// have such peers: a role change there re-issued only the member's own
+    /// devices, so devices that join later would refuse the
+    /// people that member had let in. Only an Owner or Maintainer does this,
+    /// only for peers ranked no higher than itself, only for chains whose last
+    /// certificate predates the supersession (a demoted Maintainer's later
+    /// issues stay refused, unless backdated), and at most at Member: nobody
+    /// chose these roles, so nobody gets to approve joins or change roles
+    /// through them. Each pass logs who was re-issued in the activity feed.
+    /// Runs on the first connect after loading a room saved by 0.1.2.
+    pub fn reissue_superseded_chains(&mut self, now: i64) -> Vec<Effect> {
+        let mine = self.role();
+        if !mine.can_issue_certs() || self.issued_through_superseded(&self.my_chain) {
+            return vec![];
+        }
+        let stale: Vec<(DeviceId, VerifiedMember)> = self
+            .peers
+            .iter()
+            .filter_map(|(d, p)| {
+                let v = p.verified.clone()?;
+                (self.issued_through_superseded(&p.chain)
+                    && self.issued_before_supersession(&p.chain, v.issued_at)
+                    && v.role <= mine
+                    && *d != v.owner)
+                    .then_some((*d, v))
+            })
+            .collect();
+        let mut out = vec![];
+        let mut names = vec![];
+        for (dev, v) in stale {
+            let role = v.role.min(Role::Member);
+            let name = self.peers.get(&dev).map(|p| p.name()).filter(|n| !n.is_empty());
+            let name = name.unwrap_or_else(|| v.member.short());
+            match self.reissue(dev, v, role, now) {
+                Ok(e) => {
+                    out.push(e);
+                    if !names.contains(&name) {
+                        names.push(name);
+                    }
+                }
+                Err(e) => debug!(error = %e, "re-issuing a certificate failed"),
+            }
+        }
+        if !names.is_empty() {
+            out.extend(self.log_activity(
+                "certificates_reissued",
+                serde_json::json!({ "names": names.join(", "), "count": names.len() }),
+                now,
+            ));
+        }
+        out
+    }
+
+    /// Appends an entry by this member to the activity feed and returns the
+    /// update to broadcast.
+    fn log_activity(&mut self, kind: &str, args: serde_json::Value, now: i64) -> Vec<Effect> {
+        let entry = polyph_proto::crdt::ActivityEntry {
+            id: ObjectId::random().map(|o| o.to_hex()).unwrap_or_default(),
+            at: now,
+            summary_key: format!("activity-{}", kind.replace('_', "-")),
+            kind: kind.to_string(),
+            actor: self.my_member.to_hex(),
+            agent: None,
+            args,
+            checkpoint: None,
+        };
+        let act = self.doc(&DocName::Activity);
+        let sv = state_vector(act);
+        if polyph_proto::crdt::Activity::new(act).append(&entry).is_err() {
+            return vec![];
+        }
+        match diff_since(act, &sv) {
+            Ok(update) => vec![
+                Effect::Send(RoomMessage::Crdt { doc: DocName::Activity, update }),
+                Effect::Event(RoomEvent::DocChanged { doc: DocName::Activity }),
+            ],
+            Err(_) => vec![],
+        }
     }
 
     pub fn set_hue_if_unset(&mut self) -> Vec<Effect> {
@@ -1239,6 +1719,13 @@ impl RoomCore {
                 })));
             }
         }
+        // Knocks whose join can no longer complete, with their own-device marks.
+        let expired: Vec<ObjectId> =
+            self.knocks.iter().filter(|(_, k)| now - k.at > KNOCK_TTL).map(|(id, _)| *id).collect();
+        for id in expired {
+            self.drop_knock(&id);
+        }
+        self.own_device_knocks.retain(|id| self.knocks.contains_key(id));
         let before = self.claims.len();
         self.claims.expire(now);
         if self.claims.len() != before {
@@ -1577,6 +2064,8 @@ impl RoomCore {
             cursor: self.cursor,
             relay: self.relay.clone(),
             created_at: self.created_at,
+            // Until the re-issue pass ran, the next load must run it again.
+            format: if self.reissue_on_connect { 0 } else { SAVE_FORMAT },
         }
     }
 
@@ -1607,6 +2096,10 @@ impl RoomCore {
         core.cursor = s.cursor;
         core.relay = s.relay;
         core.created_at = s.created_at;
+        core.reset_owner_chain(now);
+        // Only rooms saved by 0.1.2 (no format marker) can hold peers left
+        // on a superseded chain by a role change; re-issue them once.
+        core.reissue_on_connect = s.format < SAVE_FORMAT;
         Ok(core)
     }
 
@@ -1631,40 +2124,63 @@ impl RoomCore {
     /// Merges a snapshot another member uploaded. Returns whether it could be read.
     pub fn apply_relay_snapshot(&mut self, blob: &[u8], now: i64) -> bool {
         let Ok(env) = Envelope::decode(blob) else { return false };
+        // Snapshots are sealed with seq 0, so the replay guard cannot apply;
+        // only the current or previous epoch is accepted instead.
+        let current = self.keyring.current_key().map_or(0, |k| k.epoch);
+        if env.epoch.saturating_add(1) < current || self.revoked.contains(&env.sender) {
+            return false;
+        }
         let Some(key) = self.keyring.get(env.epoch) else { return false };
         let Ok(pt) = key.open(&env) else { return false };
         let Ok(snap) = from_cbor::<RelaySnapshot>(&pt) else { return false };
-        if env.sender != self.me && !self.peers.contains_key(&env.sender) {
-            // Accept only snapshots from devices whose chain is inside the snapshot itself or known.
-            let ok = snap.members.iter().any(|(c, _)| {
-                c.verify(now, &|_| false).is_ok_and(|v| v.device.sign == env.sender && v.room == self.id)
-            });
-            if !ok {
-                return false;
-            }
-        }
+        // Same role checks as live messages: the sender's held certificate, or for
+        // a device not yet known, its chain from the snapshot checked against our revocations.
+        let role = if env.sender == self.me {
+            Some(self.role())
+        } else {
+            self.sender_role(&env.sender).or_else(|| {
+                snap.members.iter().find_map(|(c, _)| {
+                    self.accept_chain(c, now).filter(|v| v.device.sign == env.sender).map(|v| v.role)
+                })
+            })
+        };
+        let Some(role) = role.filter(|r| r.can_write()) else { return false };
         if self.name.is_empty() {
             self.name = snap.name;
         }
-        for d in snap.revoked {
-            self.revoked.insert(d);
+        // Removals are taken only from senders who could have removed someone.
+        if role.can_rotate_keys() {
+            self.revoked.extend(snap.revoked);
         }
         for (chain, profile) in snap.members {
-            let revoked = self.revoked.clone();
-            if let Ok(v) = chain.verify(now, &|d| revoked.contains(d))
-                && v.room == self.id
+            if let Some(v) = self.accept_chain(&chain, now)
                 && v.device.sign != self.me
             {
                 let profile = profile.filter(|p| verify_profile(p, &v));
-                self.peers.entry(v.device.sign).or_insert(Peer {
-                    chain,
-                    verified: Some(v),
-                    profile,
-                    presence: None,
-                    last_seen: 0,
-                });
+                let replace = self
+                    .peers
+                    .get(&v.device.sign)
+                    .map(|p| p.verified.as_ref().is_none_or(|h| self.may_replace(&chain, &v, h)));
+                match (self.peers.get_mut(&v.device.sign), replace) {
+                    (Some(p), Some(replace)) => {
+                        if replace && p.chain != chain {
+                            p.chain = chain;
+                            p.verified = Some(v);
+                        }
+                    }
+                    _ => {
+                        self.peers.insert(
+                            v.device.sign,
+                            Peer { chain, verified: Some(v), profile, presence: None, last_seen: 0 },
+                        );
+                    }
+                }
             }
         }
+        // Always, whatever the order of the members: a device inserted here
+        // (not only one replaced) may supersede a link of a chain taken
+        // earlier in the same snapshot.
+        self.drop_superseded_chains();
         for (n, d) in snap.docs {
             let _ = apply_update(self.doc(&n), &d);
         }

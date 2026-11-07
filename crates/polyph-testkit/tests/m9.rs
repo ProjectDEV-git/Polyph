@@ -179,7 +179,8 @@ async fn phone_starts_an_agent_on_the_host_with_the_laptop_closed() {
     let member = MemberId::from_hex(who["member"].as_str().unwrap()).unwrap();
     let phone = Phone::new(Arc::new(DeviceIdentity::generate().unwrap()), Some(member), "Ann", &h.relay.url()).unwrap();
     let mut p = PhoneDriver::connect(phone, &h.relay.url(), h.clock.clone()).await.unwrap();
-    let inv = h.nodes[a].call("room.invite", json!({ "room": rid })).await.unwrap();
+    // Pairing uses the real pairing call: only its codes may add a device of Ann's own.
+    let inv = h.nodes[a].call("phone.pair", json!({ "room": rid })).await.unwrap();
     p.start_join(inv["code"].as_str().unwrap(), "Ann").await.unwrap();
     let knock = h.nodes[a].wait_event("knock", |e| e.kind() == "knock").await.unwrap();
     let kid = knock.event["knock"]["id"].as_str().unwrap().to_string();
