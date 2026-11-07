@@ -28,3 +28,10 @@ bugs belong in Linear (or `STUBS.md` for unfinished work), not here.
 - Join changes in `polyph-core` reach far: phone pairing (`m8`,
   `scripts/e2e-phone.mjs`) and agent hosts (`m9`) both add a second device
   under an existing member id.
+
+## Workers
+
+- Reviewers have checked out PR branches in the main checkout
+  (`/home/user/Polyph`), leaving it on a detached HEAD. Briefs must say: use
+  `git diff origin/Main...origin/<branch>` or `git show`, or a worktree under
+  `/root/review/`, never `git checkout` in the main checkout.

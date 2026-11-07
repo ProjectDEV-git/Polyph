@@ -44,8 +44,21 @@ Results checked:
 - #15: worker allows a member's own new device only through a one-time code
   that member's daemon made, with a person's approval. Checked:
   `cargo test -p polyph-core` (32 passed), `--test m8` (2), `--test m9` (3).
-  Phone e2e not run locally; CI runs it. Next: architect and security
-  review.
+  Phone e2e not run locally; CI runs it. Architect review: CHANGES
+  REQUESTED (any one-time invite lets a stranger take the inviter's member
+  id; a demoted Maintainer can extend their old chain). Sent back to an
+  Opus rust-engineer with the decisions in `docs/decisions.md`.
+- #14: harness now trusts test project files like `polyph trust`; m3 has a
+  60 s guard. Checked: `--test m3` 8 passed; diff adds trust calls and a
+  timeout only. Architect review: CHANGES REQUESTED (`[merge] approval`
+  honored untrusted; merges skip checks silently; `polyph trust` trusts
+  blind). Sent back to Opus with merge settings and prices under trust.
+- #16 rework (577e9ff): all 8 findings fixed; push stays guarded where an
+  agent ran outside bwrap/Seatbelt (accepted). Checked: polyph-git 14,
+  plugins 8, sandbox 6+2 (real bwrap), m4 4, m4_merge 7, fmt clean.
+  Security auditor sign-off review running; architect re-review next.
+
+Dispatch count: 11.
 
 Dogfood setup (`polyph` built from `Main` at 448f203, `POLYPH_KEYSTORE=file`,
 home `/root/dogfood-home`): `polyph start --name polyph-beta --yes

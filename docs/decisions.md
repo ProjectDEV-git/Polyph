@@ -53,3 +53,8 @@ architecture decisions stay in `DECISIONS.md` at the root.
   partly open and say so.
 - **Opus for sandbox and certificate work.** Both reworks touch the sandbox
   or certificate checks, so they run on Opus per the routing rule.
+- **Merge gates under trust (PR #14).** `[merge] approval`, `run_checks`
+  and `[prices]` join the trusted sections. An untrusted file with checks
+  fails the merge entry with "run `polyph trust`" instead of skipping
+  checks. One assertion in `polyph-agents` that encoded the old rule is
+  replaced, approved by the lead as a rule change.
