@@ -241,6 +241,17 @@ Session 2026-11-08 (after two container restarts, 02:47 and ~03:10 UTC):
   failure). Sonnet worker cherry-picks the m4 fix and investigates m6.
 - Usage: plan shows only `seven_day` `allowed_warning`; no five-hour flag.
 
+- 03:20-03:56 UTC: #17 test-only race fixes (m4 cherry-pick, m6 wait)
+  verified; macOS green, Windows red on the new run. #14 25aa084: clap
+  parser overflowed the 1 MiB Windows main thread; parsing and runtime now
+  on a 16 MiB thread; lead ran the binary at 900 KiB stack. #16 f5a6ec4:
+  all nine items plus m6; macOS CI green (first run of the Seatbelt
+  hard-link tests), Windows red; lead's local verification running.
+  KAO-93/94 on `beta/kao-93-94-start-name` (288054f, not yet verified by
+  the lead). KAO-103 filed: `start`/`connect` rewrote the real
+  `~/.claude.json` from a temp POLYPH_HOME (DF-6); this container's entry
+  still points at a scratch home.
+
 ### Next after the pause
 
 1. Usage: get_session first; pause on any `five_hour` status other than

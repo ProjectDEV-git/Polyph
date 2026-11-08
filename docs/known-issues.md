@@ -51,6 +51,9 @@ bugs belong in Linear (or `STUBS.md` for unfinished work), not here.
 - Workers' Bash pipelines over downloaded logs (sed | grep | cut) can stop
   at a permission prompt nobody answers. Log-reading briefs say: use the
   Grep and Read tools on saved logs, no Bash pipelines.
+- Live checks of `polyph start` or `connect` change the real
+  `~/.claude.json` even with a temp POLYPH_HOME (KAO-103). Briefs must pass
+  `--no-connect` and a temp `HOME` for live CLI checks.
 - Reviewers have checked out PR branches in the main checkout
   (`/home/user/Polyph`), leaving it on a detached HEAD. Briefs must say: use
   `git diff origin/Main...origin/<branch>` or `git show`, or a worktree under
