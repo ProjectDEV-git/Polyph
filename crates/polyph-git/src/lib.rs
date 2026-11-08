@@ -389,6 +389,16 @@ fn check_alternates(objects: &Path, common: &Path) -> Result<()> {
 /// writes.
 const NETWORK: &[&str] = &["fetch", "pull", "push"];
 
+/// Settings for every git write run in the daemon's sandbox: no automatic
+/// `gc` or maintenance. In there `objects/info` is read-only, so an
+/// automatic `gc` fails and leaves a `gc.log` that stops the person's own
+/// automatic `gc` for a day.
+const NO_AUTO_GC: &[&str] = &["-c", "gc.auto=0", "-c", "maintenance.auto=false"];
+
+/// The largest pack [`Repo::import_branch`] takes from a task's object
+/// store into the shared one: 2 GiB.
+const MAX_IMPORT_BYTES: u64 = 2 << 30;
+
 /// `GIT_ALTERNATE_OBJECT_DIRECTORIES` naming `dir` alone, quoted when it
 /// holds the list separator or starts with a quote.
 fn alternates_value(dir: &Path) -> std::ffi::OsString {
@@ -518,8 +528,12 @@ impl Repo {
             c.env("GIT_OBJECT_DIRECTORY", o)
                 .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", alternates_value(&common.join("objects")));
         }
+        let confined = writes && !NETWORK.contains(&sub);
+        if confined {
+            c.args(NO_AUTO_GC);
+        }
         c.args(args);
-        if writes && !NETWORK.contains(&sub) {
+        if confined {
             let (mut w, ro) = self.write_scope(&dir, &common);
             w.extend(extra.iter().cloned());
             c = confine::confine(c, &w, &ro);
@@ -965,7 +979,28 @@ impl Repo {
             revs.push_str(&oid);
             revs.push('\n');
         }
-        let mut pack = self.command(Trust::Agent, &["pack-objects", "--revs", "--stdout", "-q"])?;
+        // Packed in the sandbox with nothing writable, and without the
+        // bitmaps, multi-pack index and commit graph the agent could have
+        // put in its store: pack-objects reads objects only.
+        let mut pack = confine::confine(
+            self.command(
+                Trust::Agent,
+                &[
+                    "-c",
+                    "pack.useBitmaps=false",
+                    "-c",
+                    "core.multiPackIndex=false",
+                    "-c",
+                    "core.commitGraph=false",
+                    "pack-objects",
+                    "--revs",
+                    "--stdout",
+                    "-q",
+                ],
+            )?,
+            &[],
+            &[],
+        );
         pack.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut p = pack.spawn().map_err(GitError::Spawn)?;
         let input = p.stdin.take();
@@ -979,7 +1014,7 @@ impl Repo {
         let Some(packed) = p.stdout.take() else { return Err(failed("no output from pack-objects".into())) };
         let objects = common.join("objects");
         let mut index = confine::confine(
-            shared(&["index-pack", "--stdin", "--strict"]),
+            shared(&["index-pack", "--stdin", "--strict", &format!("--max-input-size={MAX_IMPORT_BYTES}")]),
             std::slice::from_ref(&objects),
             &[objects.join("info")],
         );
@@ -1895,6 +1930,29 @@ mod tests {
         let args: Vec<String> = c.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert!(args.contains(&format!("--git-dir={}", common.display())), "{args:?}");
         assert!(c.get_envs().any(|(k, v)| k == "GIT_COMMON_DIR" && v == Some(common.as_os_str())), "{c:?}");
+    }
+
+    /// Git writes in the daemon's sandbox run no automatic `gc`: it would
+    /// fail on the read-only `objects/info` and leave a `gc.log` that stops
+    /// the person's own automatic `gc` for a day. Reads and network
+    /// commands are left as they are.
+    #[test]
+    fn confined_writes_run_no_automatic_gc() {
+        let (_d, r) = init();
+        let args = |a: &[&str]| -> Vec<String> {
+            r.command(Trust::Agent, a).unwrap().get_args().map(|x| x.to_string_lossy().into_owned()).collect()
+        };
+        for a in [&["update-ref", "refs/heads/x", "HEAD"][..], &["commit-tree", "HEAD^{tree}"], &["merge", "HEAD"]] {
+            let v = args(a);
+            let sub = v.iter().position(|x| x == a[0]).unwrap();
+            for kv in ["gc.auto=0", "maintenance.auto=false"] {
+                let at = v.iter().position(|x| x == kv).unwrap_or_else(|| panic!("no {kv} in {v:?}"));
+                assert!(at < sub && v[at - 1] == "-c", "{v:?}");
+            }
+        }
+        for a in [&["status"][..], &["fetch", "origin"]] {
+            assert!(!args(a).iter().any(|x| x == "gc.auto=0"), "{a:?}");
+        }
     }
 
     /// SEC-13: a `commondir` file makes git read the config and hooks of
