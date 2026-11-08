@@ -283,6 +283,12 @@ SEC-15/17 (KAO-76, KAO-81).
   Lead verified: all tests, clippy, fmt; no function from either parent
   missing. Paused for the 5-hour window (Kao: 72% at 05:58).
 
+- 07:50 UTC: resumed after the estimated reset (window started 02:47
+  after the overnight gap; plan shows no five-hour flag; ccusage new block
+  at 07:00, near 0%). #16 c33287e: all CI green, clean. Security auditor
+  reviewing the merge resolution; merge after that. KAO-75 waits for #16
+  (both change polyph-sandbox).
+
 ### Next after the pause
 
 1. Usage: get_session, and Kao's figure if given. Continue only under 75%.

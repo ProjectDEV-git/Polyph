@@ -1,10 +1,9 @@
 # Handoff
 
-> **Paused for the 5-hour usage limit (2026-11-08 06:10 UTC).** Kao
-> reported 72% at 05:58 UTC. Merged: #15, #17, #18, #14. Open: #16, merged
-> with Main at c33287e and verified locally; it needs one review of the
-> merge resolution, then green CI. Resume from `docs/progress.md` ("Next
-> after the pause"). Weekly limit at warning level (resets 2026-11-13).
+> **Resumed 2026-11-08 07:50 UTC after a 5-hour pause.** Merged: #15,
+> #17, #18, #14. Open: #16 (c33287e, CI green, final review of the merge
+> resolution running). Weekly limit at warning level (resets 2026-11-13).
+> Next steps in `docs/progress.md`.
 
 Read this first when continuing the build. Then `PLAN.md` (checklist),
 `STUBS.md` (what is not done), `DECISIONS.md` (why things are the way they
