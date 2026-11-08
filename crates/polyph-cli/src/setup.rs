@@ -240,25 +240,76 @@ pub async fn mcp(ctx: &Ctx, client: Option<String>, room: Option<String>) -> any
     polyph_mcp::run_direct(bridge).await
 }
 
+/// Where a first-run name comes from when none is saved and `--me` is absent.
+#[derive(Debug, PartialEq, Eq)]
+enum NameSource {
+    Git(String),
+    Ask,
+    Missing,
+}
+
+fn name_source(git: Option<String>, interactive: bool) -> NameSource {
+    match git {
+        Some(n) => NameSource::Git(n),
+        None if interactive => NameSource::Ask,
+        None => NameSource::Missing,
+    }
+}
+
+/// `git config user.name`; `global` points it at one config file (for tests).
+fn git_user_name(global: Option<&Path>) -> Option<String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(["config", "user.name"]);
+    if let Some(g) = global {
+        cmd.env("GIT_CONFIG_GLOBAL", g).env("GIT_CONFIG_NOSYSTEM", "1");
+    }
+    let out = cmd.output().ok().filter(|o| o.status.success())?;
+    let n = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!n.is_empty()).then_some(n)
+}
+
+#[cfg(test)]
+#[path = "setup_tests.rs"]
+mod setup_tests;
+
 /// `polyph start`: daemon, name, a room for this folder, an invite code, and
 /// the person's agents connected, in one command.
-pub async fn start(ctx: &Ctx, name: Option<String>, yes: bool, no_connect: bool) -> anyhow::Result<()> {
+pub async fn start(
+    ctx: &Ctx,
+    name: Option<String>,
+    me: Option<String>,
+    yes: bool,
+    no_connect: bool,
+) -> anyhow::Result<()> {
     let l = &ctx.l;
     let mut api = ctx.api().await?;
     let who = call(&mut api, "whoami", json!({})).await?;
-    if who["name"].as_str().is_none_or(|n| n.trim().is_empty()) {
-        let guess = std::env::var("USER").or_else(|_| std::env::var("USERNAME")).unwrap_or_default();
-        let chosen = if std::io::stdin().is_terminal() && !yes {
-            let a = ask(&tr!(l, "start-ask-name", guess = guess.as_str()))?;
-            if a.is_empty() { guess } else { a }
-        } else {
-            guess
+    let me = me.map(|m| m.trim().to_string()).filter(|m| !m.is_empty());
+    if let Some(me) = me {
+        call(&mut api, "config.set", json!({ "key": "name", "value": me })).await?;
+        ctx.out(tr!(l, "start-name-set", name = me.as_str()));
+    } else if who["name"].as_str().is_none_or(|n| n.trim().is_empty()) {
+        let interactive = std::io::stdin().is_terminal() && !yes;
+        let chosen = match name_source(git_user_name(None), interactive) {
+            NameSource::Git(n) => {
+                ctx.out(tr!(l, "start-name-git", name = n.as_str()));
+                n
+            }
+            NameSource::Ask => {
+                let guess = std::env::var("USER").or_else(|_| std::env::var("USERNAME")).unwrap_or_default();
+                let a = ask(&tr!(l, "start-ask-name", guess = guess.as_str()))?;
+                let n = if a.is_empty() { guess } else { a };
+                if !n.trim().is_empty() {
+                    ctx.out(tr!(l, "start-name-set", name = n.trim()));
+                }
+                n
+            }
+            NameSource::Missing => String::new(),
         };
         if chosen.trim().is_empty() {
             anyhow::bail!(l.t("start-needs-name"));
         }
         call(&mut api, "config.set", json!({ "key": "name", "value": chosen.trim() })).await?;
-        ctx.out(tr!(l, "start-name-set", name = chosen.trim()));
     }
     let cwd = std::env::current_dir()?;
     let root = polyph_daemon::folders::root(&cwd);

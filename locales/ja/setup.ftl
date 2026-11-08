@@ -25,8 +25,9 @@ disconnect-done = { $client } の接続を解除しました。
 disconnect-nothing = 設定に Polyph が入っているエージェントはありません。
 
 start-ask-name = チームメイトに表示される名前 [{ $guess }]:
-start-needs-name = まず名前を設定してください: polyph config set name "あなたの名前"
+start-needs-name = 名前が必要です。--me "あなたの名前" を付けるか、次を実行してください: polyph config set name "あなたの名前"
 start-name-set = Polyph でのあなたの名前は { $name } です。
+start-name-git = git の名前 { $name } を使います。変更するには: polyph config set name "あなたの名前"
 start-room-existing = このフォルダーはルーム { $name } のものです。
 start-room-created = { $dir } のためにルーム { $name } を作りました。
 start-ready = 準備ができました。{ $dir } で起動したエージェントは { $name }/<エージェント> として { $room } に参加します。

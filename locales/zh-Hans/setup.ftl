@@ -25,8 +25,9 @@ disconnect-done = 已断开 { $client }。
 disconnect-nothing = 你的智能体设置中都没有 Polyph。
 
 start-ask-name = 队友看到的你的名字 [{ $guess }]：
-start-needs-name = Polyph 需要先知道你的名字：polyph config set name "你的名字"
+start-needs-name = Polyph 需要你的名字。加上 --me "你的名字"，或运行：polyph config set name "你的名字"
 start-name-set = 你在 Polyph 中的名字是 { $name }。
+start-name-git = 使用你的 git 名字 { $name }。要修改，请运行：polyph config set name "你的名字"
 start-room-existing = 此文件夹属于房间 { $name }。
 start-room-created = 已为 { $dir } 创建房间 { $name }。
 start-ready = 准备就绪。你在 { $dir } 中启动的智能体会以 { $name }/<智能体> 的身份加入 { $room }。
