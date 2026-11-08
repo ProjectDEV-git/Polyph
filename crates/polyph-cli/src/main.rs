@@ -746,12 +746,38 @@ async fn call(api: &mut Api, method: &str, params: Value) -> anyhow::Result<Valu
 }
 
 fn main() {
+    // Read before any other thread starts: on Unix `time` refuses to read the
+    // local offset once the process has more than one thread.
     let _ = UTC_OFFSET.set(time::UtcOffset::current_local_offset().map(|o| i64::from(o.whole_seconds())).unwrap_or(0));
-    // The sandbox helper re-enters this binary before anything else runs.
+    // The sandbox helper re-enters this binary before anything else runs. It
+    // stays on the main thread: it confines the process it is running in.
     let raw: Vec<String> = std::env::args().collect();
     if raw.get(1).map(String::as_str) == Some("__sandbox") {
         std::process::exit(polyph_sandbox::helper::main_with_args(raw[2..].to_vec()));
     }
+    // Everything else runs on a thread with a 16 MiB stack. In a debug build
+    // the frame of clap's derived `Cmd::augment_subcommands` alone is about
+    // 800 KiB on Linux and larger on Windows, whose main thread has 1 MiB, so
+    // building the parser overflowed there before any subcommand ran. The
+    // poll frame of `run` (one state machine for every subcommand) is large
+    // too.
+    let code = std::thread::Builder::new()
+        .name("polyph".into())
+        .stack_size(MAIN_STACK)
+        .spawn(cli_main)
+        .map_err(|e| e.to_string())
+        .and_then(|h| h.join().map_err(|_| "the command panicked".to_string()))
+        .unwrap_or_else(|e| {
+            eprintln!("{e}");
+            1
+        });
+    std::process::exit(code);
+}
+
+/// Stack size of the thread that parses arguments and runs the command.
+const MAIN_STACK: usize = 16 << 20;
+
+fn cli_main() -> i32 {
     let l0 = Localizer::new(&polyph_i18n::detect(None));
     let matches = localize(Cli::command(), &l0, "").get_matches();
     let cli = match Cli::from_arg_matches(&matches) {
@@ -765,7 +791,7 @@ fn main() {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("{e}");
-                std::process::exit(1);
+                return 1;
             }
         },
     };
@@ -776,37 +802,18 @@ fn main() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{e}");
-            std::process::exit(1);
+            return 1;
         }
     };
-    // `block_on` polls `run` on the calling thread, and in a debug build the
-    // poll frame of `run` (one state machine for every subcommand) is larger
-    // than the 1 MiB main-thread stack on Windows: `polyph trust` overflowed
-    // it. Poll on a thread with a stack sized for it; boxing the future would
-    // not shrink that frame.
-    let code = std::thread::scope(|s| {
-        std::thread::Builder::new()
-            .name("main-run".into())
-            .stack_size(16 << 20)
-            .spawn_scoped(s, || {
-                rt.block_on(async {
-                    match run(&ctx, cli.cmd).await {
-                        Ok(()) => 0,
-                        Err(e) => {
-                            eprintln!("{e}");
-                            1
-                        }
-                    }
-                })
-            })
-            .map_err(|e| e.to_string())
-            .and_then(|h| h.join().map_err(|_| "the command panicked".to_string()))
-    });
-    let code = code.unwrap_or_else(|e| {
-        eprintln!("{e}");
-        1
-    });
-    std::process::exit(code);
+    rt.block_on(async {
+        match run(&ctx, cli.cmd).await {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("{e}");
+                1
+            }
+        }
+    })
 }
 
 /// Opens a URL in the person's browser.
