@@ -175,7 +175,7 @@ pub fn parse(text: &str, source: Option<String>) -> Areas {
 /// The areas of the repository at `worktree`.
 pub fn load(worktree: &Path) -> Areas {
     for f in std::iter::once(FILE).chain(FALLBACKS.iter().copied()) {
-        if let Ok(text) = std::fs::read_to_string(worktree.join(f)) {
+        if let Ok(text) = polyph_plugins::read_text_under(worktree, Path::new(f)) {
             return parse(&text, Some(f.to_string()));
         }
     }

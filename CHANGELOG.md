@@ -5,6 +5,28 @@ GitHub release page.
 
 ## Unreleased
 
+- **Task branches are `polyph/<task id>/<name>`** (they were
+  `polyph/<name>-<task id>`), one folder per task, and a task agent can
+  write only its own task's folder. Polyph gives an agent an existing
+  branch only if it created that branch for a task, so tasks started with
+  an older version need their card's branch cleared before a new agent
+  picks them up.
+- **Task agents commit into an object store of their own.** The shared
+  `.git/objects` is read-only to them; Polyph copies a task's commits in
+  at the end of each turn and when the task finishes, checking every
+  object's hash. Polyph's own git writes in a task's folders run in the
+  sandbox (bubblewrap or Seatbelt). Merge approvals name the commit to be
+  merged and its diff stat: the approval's branch text now reads
+  `<branch> at <sha12> (<diff stat>)`.
+- **Agents without a task can no longer commit in your own checkout**
+  under bubblewrap and Seatbelt: its `.git` is read-only to them. Give
+  them a task, or commit yourself.
+- **Seatbelt denies hard links from outside an agent's writable folders**,
+  for agents and for Polyph's own git writes.
+- **The daemon logs one line at start when its own git writes run without
+  a sandbox** (Landlock, Windows, container mode), and logs a warning on this
+  machine naming the branch when a task's commits could not be copied into
+  the shared object store.
 - **Upgrading from 0.1.2: run `polyph trust` once.** The security sections
   of `polyph.toml` (`[sandbox]`, `[agents.*]`, `checks`, `[policy] preset`,
   `[merge] approval`, `run_checks`, `via` and `remote`, `[prices]`) now apply only after you
@@ -26,7 +48,6 @@ GitHub release page.
   It meant the room's name in one and the person's name in the other. The old
   `--name` still works in both, hidden from help. `polyph start --yes` now
   has a help line.
-
 - **`polyph feedback`.** Opens a prefilled GitHub issue with your Polyph
   version, OS, architecture, Linux distro, surface and whether the daemon
   runs. It leaves out room names, paths, chat, code, user and host names and

@@ -417,6 +417,25 @@ impl Daemon {
             }
         }
         info!(device = %shared.identity.device_id().short(), "daemon started");
+        {
+            // SEC-13: commits task agents made in their own object stores
+            // during a turn the daemon did not finish go into the shared
+            // store now; and say once when the daemon's own git writes run
+            // without a sandbox.
+            let home = shared.paths.home.clone();
+            tokio::task::spawn_blocking(move || {
+                if polyph_git::confine::confinement() == polyph_git::confine::Confinement::None {
+                    tracing::warn!(
+                        "no sandbox for Polyph's own git writes on this machine (needs bubblewrap or Seatbelt); \
+                         they run unconfined, with the link check alone"
+                    );
+                }
+                for (repo, branch, error) in crate::folders::import_task_branches(&home) {
+                    tracing::warn!(repo = %repo.display(), %branch, %error,
+                        "could not take a task's commits into the shared object store");
+                }
+            });
+        }
         Ok(d)
     }
 

@@ -203,7 +203,7 @@ async fn claim_and_allow(
 fn symbol_targets(worktree: &Path, path: &Path, new: &str) -> Option<Vec<ClaimTarget>> {
     let rel = path.strip_prefix(worktree).ok()?.to_string_lossy().replace('\\', "/");
     let lang = polyph_merge::symbols::Lang::from_path(&rel)?;
-    let old = std::fs::read_to_string(path).ok()?;
+    let old = polyph_plugins::read_text_under(worktree, path.strip_prefix(worktree).ok()?).ok()?;
     let names = polyph_merge::symbols::changed_symbols(&old, new, lang)?;
     if names.is_empty() {
         return None;
@@ -514,7 +514,7 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
             let branch = card.as_ref().and_then(|c| c.branch.clone()).unwrap_or_else(|| {
                 polyph_git::task_branch(card.as_ref().map(|c| c.title.as_str()).unwrap_or(""), &t.short())
             });
-            Some(crate::tasks::prepare_worktree(cwd.clone(), branch, None).await?)
+            Some(crate::tasks::prepare_worktree(shared.paths.home.clone(), cwd.clone(), t.short(), branch, None).await?)
         }
         _ => None,
     };
@@ -580,11 +580,35 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
         })
     };
     let proxy = polyph_sandbox::proxy::start_with(allow, decider, Some(internal), Some(tmp.join("run"))).await?;
+    // The checkout's git directory stays read-only where the sandbox can do
+    // that (SEC-13); a task agent writes only the folders it commits into.
+    // Where it cannot, and the agent works in the person's own checkout, the
+    // daemon stops trusting that checkout's settings for its own fetches and
+    // pushes, and says so. (With no sandbox the agent runs as the person.)
+    // It commits only on a branch in its own task's folder,
+    // `polyph/<task>/<name>`, into its worktree's own object store.
+    let git = {
+        let branch = task_wt
+            .as_ref()
+            .map(|w| w.branch.clone())
+            .filter(|b| task.is_some_and(|t| polyph_git::task_folder(b) == Some(t.short().as_str())));
+        let wt = worktree.clone();
+        tokio::task::spawn_blocking(move || polyph_git::sandbox_git(&wt, branch.as_deref())).await.unwrap_or_default()
+    };
+    let enforced = git_mounts_enforced(mech);
+    let warnings = git_warnings(mech, task_wt.is_some(), !git.read_only.is_empty());
+    if warnings.contains(&GIT_UNPROTECTED)
+        && let Ok(r) = polyph_git::Repo::open(&worktree)
+    {
+        crate::folders::mark_git_exposed(&shared.paths.home, r.root())?;
+    }
     let policy = Policy {
         worktree: worktree.clone(),
         writable,
         tmp: Some(tmp.join("tmp")),
         hidden: Policy::default_hidden(&shared.paths.home),
+        read_only: git.read_only,
+        git_writable: if enforced { git.writable } else { vec![] },
         proxy_tcp: Some(proxy.tcp),
         proxy_unix: proxy.unix.clone(),
         helper: shared.opts.sandbox_helper.clone(),
@@ -594,11 +618,18 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
     let command = registry::resolve_command(&def.config.command)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|| def.config.command.clone());
+    let git_env = if enforced { git.env } else { vec![] };
     let mut wrapped = polyph_sandbox::wrap(mech, &policy, &command, &def.config.args)?;
+    wrapped.env.extend(git_env.iter().cloned());
     wrapped.env.extend(def.config.env.iter().map(|(k, v)| (k.clone(), v.clone())));
     let wrap: CommandWrapper = {
         let policy = policy.clone();
-        Arc::new(move |prog: &str, args: &[String]| polyph_sandbox::wrap(mech, &policy, prog, args))
+        Arc::new(move |prog: &str, args: &[String]| {
+            polyph_sandbox::wrap(mech, &policy, prog, args).map(|mut w| {
+                w.env.extend(git_env.iter().cloned());
+                w
+            })
+        })
     };
     // The Polyph MCP server runs inside the sandbox and reaches the daemon
     // through this agent's proxy, at the address the sandbox exports.
@@ -685,6 +716,13 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
     if !p.helper {
         crate::feed::log(&rt, &shared, "agent_started", Some(&agent.label), json!({ "kind": agent.kind, "card": task.map(|t| t.to_hex()), "branch": task_wt.as_ref().map(|w| w.branch.clone()) })).await;
     }
+    for key in &warnings {
+        shared.emit(crate::events::ApiEvent::room_kind(
+            &room,
+            "agent_warning",
+            json!({ "agent": id.to_hex(), "label": agent.label, "key": key, "sandbox": mech }),
+        ));
+    }
     set_state(&handle, &rt, &shared, AgentState::Idle, None).await;
     if let Some(text) = p.prompt {
         let (shared, rt, h) = (shared.clone(), rt.clone(), handle.clone());
@@ -701,8 +739,32 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
         "preset": preset,
         "worktree": task_wt.as_ref().map(|w| w.path.clone()),
         "branch": task_wt.as_ref().map(|w| w.branch.clone()),
+        "warnings": warnings,
         "untrusted": untrusted_json(&loaded),
     }))
+}
+
+/// Message key: the sandbox cannot keep the checkout's git settings from
+/// the agent (Landlock, Windows, container mode; SEC-13).
+pub const GIT_UNPROTECTED: &str = "agent-warning-git-unprotected";
+
+/// Message key: the daemon could not take a task agent's commits into the
+/// shared object store after a turn (SEC-13); `$branch` names the branch.
+pub const TASK_IMPORT_FAILED: &str = "agent-warning-task-import-failed";
+
+/// Whether `mech` mounts the checkout's git directory as
+/// `polyph_git::sandbox_git` asks (with no sandbox there is nothing to keep
+/// from the agent: it runs as the person).
+fn git_mounts_enforced(mech: Mechanism) -> bool {
+    matches!(mech, Mechanism::Bubblewrap | Mechanism::Seatbelt | Mechanism::None)
+}
+
+/// Warnings for an agent starting under `mech`: an agent in the person's own
+/// git checkout (no task) under a sandbox that cannot keep `.git` read-only
+/// can change what git runs there. A task's worktree lies outside the
+/// shared `.git`, which those sandboxes leave read-only.
+fn git_warnings(mech: Mechanism, task: bool, in_git: bool) -> Vec<&'static str> {
+    if !task && in_git && !git_mounts_enforced(mech) { vec![GIT_UNPROTECTED] } else { vec![] }
 }
 
 /// The ledger and budgets of a room, from its shared documents.
@@ -812,6 +874,33 @@ async fn run_turn(shared: &Shared, rt: &RoomRuntime, h: &AgentHandle, text: Opti
     publish(rt, shared, &h.agent, AgentEventKind::Prompt { text: text.to_string(), from: h.agent.member }).await;
     set_state(h, rt, shared, AgentState::Running, None).await;
     let r = h.proc.prompt(text).await;
+    // Commits the agent made in its turn go into the shared object store
+    // now, so the repository's refs never point at objects only its task's
+    // store has for longer than a turn (SEC-13).
+    if let Some(wt) = h.task_wt.clone() {
+        let took = tokio::task::spawn_blocking(move || {
+            polyph_git::Repo::open(&wt.repo)
+                .and_then(|m| m.open_worktree(&wt.path))
+                .and_then(|r| r.import_branch(&wt.branch))
+        })
+        .await;
+        if let Ok(Err(e)) = took {
+            warn!(error = %e, "could not take the task's commits into the shared object store");
+            // Until it works, the branch names commits only the task's own
+            // store has: say so where people look.
+            shared.emit(crate::events::ApiEvent::room_kind(
+                &rt.id,
+                "agent_warning",
+                json!({
+                    "agent": h.agent.id.to_hex(),
+                    "label": h.agent.label,
+                    "key": TASK_IMPORT_FAILED,
+                    "branch": h.task_wt.as_ref().map(|w| w.branch.clone()),
+                    "error": e.to_string(),
+                }),
+            ));
+        }
+    }
     let resp = match r {
         Ok(r) => r,
         Err(e) => {
@@ -892,6 +981,29 @@ pub fn doctor(shared: &Shared, cwd: &Path) -> ApiResult {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+
+    /// SEC-13: where the sandbox cannot keep `.git` read-only, an agent in
+    /// the person's own checkout starts with a warning, in every language.
+    #[test]
+    fn unprotected_git_settings_are_announced() {
+        for mech in [Mechanism::Landlock, Mechanism::WindowsJob, Mechanism::Container] {
+            assert_eq!(git_warnings(mech, false, true), [GIT_UNPROTECTED], "{mech:?}");
+            assert!(git_warnings(mech, true, true).is_empty(), "a task's worktree is outside .git: {mech:?}");
+            assert!(git_warnings(mech, false, false).is_empty(), "no git checkout: {mech:?}");
+        }
+        for mech in [Mechanism::Bubblewrap, Mechanism::Seatbelt, Mechanism::None] {
+            assert!(git_warnings(mech, false, true).is_empty(), "{mech:?}");
+        }
+        for lang in polyph_i18n::available() {
+            let l = polyph_i18n::Localizer::new(lang);
+            assert!(l.has(GIT_UNPROTECTED), "{lang}");
+            let text = polyph_i18n::tr!(l, GIT_UNPROTECTED, sandbox = "landlock");
+            assert!(text.contains("landlock") && text.contains("bubblewrap"), "{lang}: {text}");
+            assert!(l.has(TASK_IMPORT_FAILED), "{lang}");
+            let text = polyph_i18n::tr!(l, TASK_IMPORT_FAILED, branch = "polyph/ab12/x");
+            assert!(text.contains("polyph/ab12/x"), "{lang}: {text}");
+        }
+    }
 
     /// An agent's task worktree can carry its own polyph.toml; the daemon
     /// reads the person's checkout instead, and only trusted content counts.

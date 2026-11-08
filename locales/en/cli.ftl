@@ -163,6 +163,8 @@ help-budget = Manage budgets.
 help-budget-set = Set a budget for the room or one member.
 
 agent-started = Started { $label } (sandbox: { $sandbox }).
+agent-warning-git-unprotected = Warning: the { $sandbox } sandbox does not protect this checkout's git settings from the agent. It can change the config and hooks git runs here. Polyph no longer uses this checkout's own git settings for its fetches and pushes. To avoid this, give the agent a task (`polyph agent start --task ...`) or use bubblewrap.
+agent-warning-task-import-failed = Warning: Polyph could not copy the commits on { $branch } into the repository's shared object store. Until it can, git outside the task's worktree may report a bad object for that branch. Polyph tries again after the agent's next turn, when the task finishes, and when the daemon starts.
 agent-stopped = Stopped.
 agent-untrusted-project = Ignored { $ignored } in { $file }: this file is not trusted on this device, so the agent runs with the default sandbox and built-in agent definitions, and if its prices were ignored, dollar budgets stop the agent. Review the file, then run `polyph trust` in { $dir } to apply it.
 help-trust = Trust this repository's polyph.toml on this device, so its sandbox, agent, check, merge, pull request and price settings apply.

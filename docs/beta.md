@@ -101,6 +101,10 @@ later.
 - Codex runs through the `codex-acp` adapter, which you install yourself.
 - Agents in container mode do not get Polyph's tools, and container mode has
   no automated test yet.
+- Agents without a task cannot commit in your checkout: under bubblewrap and
+  Seatbelt its `.git` is read-only to them. Give them a task (`polyph agent
+  start <agent> --task <card>`), which runs in its own worktree where they
+  can commit, or commit yourself.
 - Usage shows tokens; cost estimates appear only after you fill in model
   prices under `[prices]` in `polyph.toml`.
 - Budgets can be changed only by Owners and Maintainers through Polyph, but a
@@ -140,6 +144,22 @@ later.
 - On Windows, agents can write only to their worktree and allowed paths, but
   can read hidden paths, and the network is steered only through proxy
   settings. Plugins there are only partly contained.
+- Under Landlock (Linux without bubblewrap), on Windows and in container
+  mode, an agent working in your own checkout without a task can change that
+  checkout's git settings and hooks, which your own git then runs. The
+  agent starts with a warning. Use tasks or bubblewrap there.
+- Under Landlock, on Windows and in container mode, task agents cannot
+  commit either: their task folders in `.git` are not opened to them.
+  Polyph commits their work when the task finishes. Polyph's own git
+  writes run unconfined there too; the daemon logs a line at start.
+- A task agent's own commits live in its worktree's object store until
+  Polyph copies them into the repository's shared store, after each turn,
+  when the task finishes and when the daemon starts. In that window, git
+  run outside the task's worktree (`git log --all`, `git gc`) can report
+  a bad object for the task's branch. If the copy fails, the daemon logs
+  a warning on this machine naming the branch (in `daemon.log`). The
+  person's `git fetch`, `git gc` and `git log --all` in that repository
+  then fail with "bad object" until the branch is cleared.
 - On macOS and Windows, sandboxing has only been tested in CI.
 - On Windows, the daemon's local API token relies on your user profile's
   folder permissions rather than its own.

@@ -3092,6 +3092,7 @@ dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
  "polyph-git",
+ "polyph-plugins",
  "polyph-proto",
  "polyph-sandbox",
  "serde",
@@ -3270,6 +3271,7 @@ dependencies = [
 name = "polyph-plugins"
 version = "0.1.2"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
  "tempfile",
@@ -3349,6 +3351,7 @@ version = "0.1.2"
 dependencies = [
  "anyhow",
  "landlock",
+ "polyph-git",
  "serde",
  "serde_json",
  "tempfile",

@@ -142,6 +142,8 @@ help-budget = 管理预算。
 help-budget-set = 为房间或某位成员设置预算。
 
 agent-started = 已启动 { $label }（沙箱：{ $sandbox }）。
+agent-warning-git-unprotected = 警告：{ $sandbox } 沙箱无法保护此检出的 git 设置不被智能体修改。智能体可以更改 git 在此运行的配置和钩子。Polyph 在获取和推送时将不再使用此检出自身的 git 设置。要避免这种情况，请给智能体分配任务（`polyph agent start --task ...`）或使用 bubblewrap。
+agent-warning-task-import-failed = 警告：Polyph 无法将 { $branch } 上的提交复制到仓库的共享对象库。在复制成功之前，在任务工作树之外运行的 git 可能会对该分支报告 bad object。Polyph 会在智能体的下一轮之后、任务完成时以及守护进程启动时重试。
 agent-stopped = 已停止。
 agent-untrusted-project = 已忽略 { $file } 中的 { $ignored }：此文件在这台设备上未被信任，因此智能体使用默认沙箱和内置的智能体定义运行；如果其中的价格被忽略，按美元计的预算会让智能体停止。请检查该文件，然后在 { $dir } 中运行 `polyph trust` 以应用它。
 help-trust = 在这台设备上信任此仓库的 polyph.toml，使其中的沙箱、智能体、检查、合并、拉取请求和价格设置生效。

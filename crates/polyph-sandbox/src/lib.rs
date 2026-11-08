@@ -42,6 +42,19 @@ pub struct Policy {
     pub tmp: Option<PathBuf>,
     /// Paths hidden from the agent entirely where the mechanism allows it.
     pub hidden: Vec<PathBuf>,
+    /// Paths that stay read-only inside the writable ones (the git
+    /// directory of the agent's checkout, see `polyph_git::sandbox_git`).
+    /// Enforced by bubblewrap and Seatbelt only; Landlock, Windows and
+    /// container mode ignore it.
+    pub read_only: Vec<PathBuf>,
+    /// Folders of the shared git directory a task agent writes to commit
+    /// (its task's folders in `refs/heads/polyph/` and
+    /// `logs/refs/heads/polyph/`, and its own `worktrees/<name>/`, which
+    /// holds its own object store; the shared `objects/` stays read-only),
+    /// each mounted writable over `read_only`, with the `read_only` paths
+    /// inside them (its store's `info/`, other branches) read-only again.
+    /// Bubblewrap and Seatbelt only; elsewhere the agent cannot commit.
+    pub git_writable: Vec<PathBuf>,
     /// Daemon proxy: loopback TCP address and (Unix) socket path.
     pub proxy_tcp: Option<std::net::SocketAddr>,
     pub proxy_unix: Option<PathBuf>,
@@ -70,6 +83,30 @@ impl Policy {
         v.extend(self.writable.iter().cloned());
         v.extend(self.tmp.iter().cloned());
         v
+    }
+
+    /// The `read_only` paths that exist inside a writable path (others are
+    /// read-only anyway), each with its folder and whether it lies in a
+    /// `git_writable` folder (then it goes on after those). The folder must
+    /// not be renamed away either, or the agent could put a writable copy in
+    /// its place (`mv .git .old && cp -r .old .git`).
+    fn read_only_inside(&self) -> Vec<(PathBuf, PathBuf, bool)> {
+        let writable = self.writable_all();
+        let git = self.git_writable_dirs();
+        self.read_only
+            .iter()
+            .filter(|r| writable.iter().chain(&git).any(|w| r.starts_with(w) && *r != w))
+            .filter(|r| std::fs::symlink_metadata(r).is_ok_and(|m| !m.file_type().is_symlink()))
+            .filter_map(|r| {
+                let late = git.iter().any(|g| r.starts_with(g) && r != g);
+                Some((r.clone(), r.parent()?.to_path_buf(), late))
+            })
+            .collect()
+    }
+
+    /// The `git_writable` folders that exist and are not links.
+    fn git_writable_dirs(&self) -> Vec<PathBuf> {
+        self.git_writable.iter().filter(|g| std::fs::symlink_metadata(g).is_ok_and(|m| m.is_dir())).cloned().collect()
     }
 
     fn tmp_env(&self) -> Vec<(String, String)> {
@@ -163,6 +200,32 @@ fn wrap_inner(mech: Mechanism, policy: &Policy, program: &str, args: &[String]) 
                 if w.exists() {
                     let p = w.to_string_lossy().into_owned();
                     a.extend(["--bind".into(), p.clone(), p]);
+                }
+            }
+            // Each folder bound onto itself is a mount point, which cannot
+            // be renamed or removed; then the read-only paths over it, the
+            // git folders a task agent commits into, and the read-only
+            // files inside those.
+            let ro = policy.read_only_inside();
+            let git = policy.git_writable_dirs();
+            let mut pinned: Vec<&PathBuf> = vec![];
+            for (_, dir, _) in &ro {
+                if !writable.contains(dir) && !git.contains(dir) && !pinned.contains(&dir) {
+                    pinned.push(dir);
+                    let p = dir.to_string_lossy().into_owned();
+                    a.extend(["--bind".into(), p.clone(), p]);
+                }
+            }
+            for late in [false, true] {
+                if late {
+                    for g in &git {
+                        let p = g.to_string_lossy().into_owned();
+                        a.extend(["--bind".into(), p.clone(), p]);
+                    }
+                }
+                for (r, _, _) in ro.iter().filter(|(_, _, l)| *l == late) {
+                    let p = r.to_string_lossy().into_owned();
+                    a.extend(["--ro-bind".into(), p.clone(), p]);
                 }
             }
             let s = sock.to_string_lossy().into_owned();
@@ -290,21 +353,77 @@ fn sb_quote(p: &Path) -> String {
     p.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// A Seatbelt rule for writes and the same for hard links: `verb` is
+/// `allow` or `deny`, `filter` `subpath` or `literal`.
+fn sb_rule(verb: &str, filter: &str, p: &Path) -> String {
+    let q = sb_quote(p);
+    format!("({verb} file-write* ({filter} \"{q}\"))\n({verb} file-link ({filter} \"{q}\"))\n")
+}
+
 /// Seatbelt profile: everything readable except hidden paths; writes only to
 /// the worktree, writable paths and temp; network only to the proxy.
+///
+/// Hard links too (`file-link`): `(allow default)` would let the agent link a
+/// file of the person's (`~/.profile`) into a folder it writes, where git
+/// run by the daemon as the person could append to it. A link is allowed
+/// only from a file in a writable folder, and never from a read-only one
+/// inside it. Bubblewrap needs no rule: every writable folder is its own
+/// mount, and Linux refuses links across mounts.
 pub fn seatbelt_profile(policy: &Policy, proxy_port: u16) -> String {
-    let mut s = String::from("(version 1)\n(allow default)\n(deny file-write*)\n");
+    let mut s = String::from("(version 1)\n(allow default)\n(deny file-write*)\n(deny file-link)\n");
     // Device files only; shared temp folders (/private/tmp, /private/var/folders)
     // stay read-only: the agent gets its own TMPDIR through the policy.
     s.push_str("(allow file-write* (literal \"/dev/null\") (literal \"/dev/tty\") (regex #\"^/dev/fd/\"))\n");
     for w in policy.writable_all() {
-        s.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", sb_quote(&w)));
+        s.push_str(&sb_rule("allow", "subpath", &w));
         // Seatbelt matches resolved paths (/var is /private/var on macOS).
         if let Ok(real) = w.canonicalize()
             && real != w
         {
-            s.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", sb_quote(&real)));
+            s.push_str(&sb_rule("allow", "subpath", &real));
         }
+    }
+    // Later rules win: read-only paths inside the writable ones, and their
+    // folders themselves (not what is in them), so they cannot be renamed.
+    // A writable root's own folder cannot be renamed: its parent is
+    // read-only. Then the git folders a task agent commits into (not the
+    // folders themselves), and the read-only files inside those.
+    let writable = policy.writable_all();
+    let git = policy.git_writable_dirs();
+    let ro = policy.read_only_inside();
+    let mut rules: Vec<String> = vec![];
+    let mut push = |rule: String| {
+        if !rules.contains(&rule) {
+            rules.push(rule);
+        }
+    };
+    let both = |p: &Path| {
+        let real = p.canonicalize().ok().filter(|real| real != p);
+        std::iter::once(p.to_path_buf()).chain(real).collect::<Vec<_>>()
+    };
+    for late in [false, true] {
+        if late {
+            for g in &git {
+                for p in both(g) {
+                    push(sb_rule("allow", "subpath", &p));
+                }
+                for p in both(g) {
+                    push(sb_rule("deny", "literal", &p));
+                }
+            }
+        }
+        for (r, dir, _) in ro.iter().filter(|(_, _, l)| *l == late) {
+            let filter = if r.is_dir() { "subpath" } else { "literal" };
+            let dir = (!writable.contains(dir) && !git.contains(dir)).then_some(("literal", dir.clone()));
+            for (f, p) in std::iter::once((filter, r.clone())).chain(dir) {
+                for p in both(&p) {
+                    push(sb_rule("deny", f, &p));
+                }
+            }
+        }
+    }
+    for r in rules {
+        s.push_str(&r);
     }
     for h in &policy.hidden {
         s.push_str(&format!("(deny file-read* (subpath \"{}\"))\n", sb_quote(h)));
@@ -431,6 +550,8 @@ mod seatbelt_tests {
             writable: vec![],
             tmp: Some(tmp.clone()),
             hidden: vec![],
+            read_only: vec![],
+            git_writable: vec![],
             proxy_tcp: None,
             proxy_unix: None,
             helper: vec![],
@@ -445,5 +566,212 @@ mod seatbelt_tests {
             let real = dir.canonicalize().unwrap();
             assert!(p.contains(&format!("(subpath \"{}\")", sb_quote(&real))), "{p}");
         }
+    }
+
+    fn git_policy(t: &Path) -> (Policy, PathBuf) {
+        let worktree = t.join("worktree");
+        let git = worktree.join(".git");
+        std::fs::create_dir_all(git.join("hooks")).unwrap();
+        std::fs::write(git.join("config"), "").unwrap();
+        let outside = t.join("elsewhere-config");
+        std::fs::write(&outside, "").unwrap();
+        let policy = Policy {
+            worktree: worktree.clone(),
+            writable: vec![],
+            tmp: None,
+            hidden: vec![],
+            // `info` is missing; `elsewhere-config` is not under a writable path.
+            read_only: vec![git.join("config"), git.join("hooks"), git.join("info"), outside],
+            git_writable: vec![],
+            proxy_tcp: None,
+            proxy_unix: Some(t.join("proxy.sock")),
+            helper: vec!["helper".into()],
+            container_image: None,
+        };
+        (policy, git)
+    }
+
+    #[test]
+    fn seatbelt_profile_keeps_git_settings_read_only() {
+        let t = tempfile::tempdir().unwrap();
+        let (policy, git) = git_policy(t.path());
+        let p = seatbelt_profile(&policy, 0);
+        let allow = p.find(&format!("(allow file-write* (subpath \"{}\"))", sb_quote(&policy.worktree))).unwrap();
+        for rule in [
+            format!("(deny file-write* (literal \"{}\"))", sb_quote(&git.join("config"))),
+            format!("(deny file-write* (subpath \"{}\"))", sb_quote(&git.join("hooks"))),
+            // `.git` itself, so it cannot be renamed and replaced.
+            format!("(deny file-write* (literal \"{}\"))", sb_quote(&git)),
+        ] {
+            let at = p.find(&rule).unwrap_or_else(|| panic!("no {rule} in\n{p}"));
+            assert!(at > allow, "a deny must come after the allow it narrows:\n{p}");
+        }
+        assert!(!p.contains("info\""), "{p}");
+        assert!(!p.contains("elsewhere-config"), "{p}");
+        // Hard links: denied first, then only from the worktree, and never
+        // from the read-only paths in it.
+        let none = p.find("(deny file-link)\n").unwrap_or_else(|| panic!("{p}"));
+        let link_allow = p.find(&format!("(allow file-link (subpath \"{}\"))", sb_quote(&policy.worktree))).unwrap();
+        let link_deny = p.find(&format!("(deny file-link (literal \"{}\"))", sb_quote(&git.join("config")))).unwrap();
+        assert!(none < link_allow && link_allow < link_deny, "{p}");
+        assert!(!p.contains(&format!("(deny file-write* (literal \"{}\"))", sb_quote(&policy.worktree))), "{p}");
+    }
+
+    #[test]
+    fn bubblewrap_keeps_git_settings_read_only() {
+        let t = tempfile::tempdir().unwrap();
+        let (policy, git) = git_policy(t.path());
+        let w = wrap_inner(Mechanism::Bubblewrap, &policy, "true", &[]).unwrap();
+        let s = |p: &Path| p.to_string_lossy().into_owned();
+        let pos = |a: &[&str]| {
+            w.args.windows(a.len()).position(|x| x.iter().zip(a).all(|(x, a)| x == a)).unwrap_or_else(|| {
+                panic!("no {a:?} in {:?}", w.args);
+            })
+        };
+        let wt = pos(&["--bind", &s(&policy.worktree), &s(&policy.worktree)]);
+        let pin = pos(&["--bind", &s(&git), &s(&git)]);
+        let config = pos(&["--ro-bind", &s(&git.join("config")), &s(&git.join("config"))]);
+        let hooks = pos(&["--ro-bind", &s(&git.join("hooks")), &s(&git.join("hooks"))]);
+        assert!(wt < pin && pin < config && pin < hooks, "{:?}", w.args);
+        assert!(!w.args.iter().any(|a| a.ends_with("info") || a.ends_with("elsewhere-config")), "{:?}", w.args);
+    }
+
+    /// A task agent: the shared git directory is outside its worktree, so
+    /// read-only already; its commit folders are opened, and the files in
+    /// its own worktree folder closed again after them. The shape
+    /// `polyph_git::sandbox_git` gives for branch `polyph/t1/a` (its task
+    /// folders in `refs/` and `logs/`, its own folder, then its own object
+    /// store on its own).
+    fn task_policy(t: &Path) -> (Policy, PathBuf, PathBuf) {
+        let common = t.join("repo").join(".git");
+        let own = common.join("worktrees").join("t1");
+        for d in ["objects/info", "refs/heads/polyph/t1", "logs/refs/heads/polyph/t1", "refs/heads/polyph/t2"] {
+            std::fs::create_dir_all(common.join(d)).unwrap();
+        }
+        std::fs::create_dir_all(own.join("objects").join("info")).unwrap();
+        for f in [
+            "refs/heads/main",
+            "refs/heads/polyph/t1/a",
+            "refs/heads/polyph/t1/other",
+            "logs/refs/heads/polyph/t1/other",
+            "refs/heads/polyph/t2/b",
+        ] {
+            std::fs::write(common.join(f), "").unwrap();
+        }
+        for f in ["commondir", "gitdir", "config.worktree"] {
+            std::fs::write(own.join(f), "").unwrap();
+        }
+        std::fs::write(common.join("config"), "").unwrap();
+        let worktree = t.join("repo").join(".polyph").join("t1");
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::write(worktree.join(".git"), "").unwrap();
+        let (refs, logs) = (common.join("refs/heads/polyph/t1"), common.join("logs/refs/heads/polyph/t1"));
+        let mut read_only = vec![common.clone(), worktree.join(".git")];
+        read_only.extend(["commondir", "gitdir", "config.worktree"].iter().map(|f| own.join(f)));
+        read_only.push(own.join("objects").join("info"));
+        read_only.extend([refs.join("other"), logs.join("other")]);
+        let git_writable = vec![refs, logs, own.clone(), own.join("objects")];
+        let policy = Policy {
+            worktree,
+            writable: vec![],
+            tmp: None,
+            hidden: vec![],
+            read_only,
+            git_writable,
+            proxy_tcp: None,
+            proxy_unix: Some(t.join("proxy.sock")),
+            helper: vec!["helper".into()],
+            container_image: None,
+        };
+        (policy, common, own)
+    }
+
+    #[test]
+    fn task_agents_write_only_their_commit_folders() {
+        let t = tempfile::tempdir().unwrap();
+        let (policy, common, own) = task_policy(t.path());
+        let s = |p: &Path| p.to_string_lossy().into_owned();
+
+        let w = wrap_inner(Mechanism::Bubblewrap, &policy, "true", &[]).unwrap();
+        let pos = |a: &[&str]| {
+            w.args.windows(a.len()).position(|x| x.iter().zip(a).all(|(x, a)| x == a)).unwrap_or_else(|| {
+                panic!("no {a:?} in {:?}", w.args);
+            })
+        };
+        let own_rw = pos(&["--bind", &s(&own), &s(&own)]);
+        let objects = own.join("objects");
+        let objects_rw = pos(&["--bind", &s(&objects), &s(&objects)]);
+        let commondir = pos(&["--ro-bind", &s(&own.join("commondir")), &s(&own.join("commondir"))]);
+        let gitdir = pos(&["--ro-bind", &s(&own.join("gitdir")), &s(&own.join("gitdir"))]);
+        let link = pos(&["--ro-bind", &s(&policy.worktree.join(".git")), &s(&policy.worktree.join(".git"))]);
+        assert!(own_rw < commondir && own_rw < gitdir && link < own_rw, "{:?}", w.args);
+        // Its own object store is a mount of its own, after its folder, so
+        // it cannot be renamed; its `info/` read-only after that.
+        let info = objects.join("info");
+        assert!(own_rw < objects_rw && objects_rw < pos(&["--ro-bind", &s(&info), &s(&info)]), "{:?}", w.args);
+        // Only the task's folders, with the other branches in them
+        // read-only again after them.
+        let (refs, logs) = (common.join("refs/heads/polyph/t1"), common.join("logs/refs/heads/polyph/t1"));
+        let refs_rw = pos(&["--bind", &s(&refs), &s(&refs)]);
+        let logs_rw = pos(&["--bind", &s(&logs), &s(&logs)]);
+        for p in [refs.join("other"), logs.join("other")] {
+            assert!(pos(&["--ro-bind", &s(&p), &s(&p)]) > refs_rw.max(logs_rw), "{:?}", w.args);
+        }
+        for p in [
+            common.join("refs"),
+            common.join("logs"),
+            common.join("refs/heads"),
+            common.join("refs/heads/polyph"),
+            common.join("refs/heads/polyph/t2"),
+            common.join("objects"),
+            common.join("objects").join("info"),
+            refs.join("a"),
+        ] {
+            assert!(!w.args.iter().any(|a| *a == s(&p)), "{p:?} in {:?}", w.args);
+        }
+        // The shared directory is outside the worktree: read-only already, and
+        // never bound over the commit folders.
+        assert!(!w.args.iter().any(|a| *a == s(&common)), "{:?}", w.args);
+
+        let p = seatbelt_profile(&policy, 0);
+        let at = |rule: String| p.find(&rule).unwrap_or_else(|| panic!("no {rule} in\n{p}"));
+        let allow = at(format!("(allow file-write* (subpath \"{}\"))", sb_quote(&own)));
+        let pin = at(format!("(deny file-write* (literal \"{}\"))", sb_quote(&own)));
+        let deny = at(format!("(deny file-write* (literal \"{}\"))", sb_quote(&own.join("commondir"))));
+        let objects_pin = at(format!("(deny file-write* (literal \"{}\"))", sb_quote(&objects)));
+        let refs_allow = at(format!("(allow file-write* (subpath \"{}\"))", sb_quote(&refs)));
+        at(format!("(allow file-write* (subpath \"{}\"))", sb_quote(&logs)));
+        for d in [refs.join("other"), logs.join("other")] {
+            assert!(at(format!("(deny file-write* (literal \"{}\"))", sb_quote(&d))) > refs_allow, "{p}");
+        }
+        assert!(at(format!("(deny file-write* (subpath \"{}\"))", sb_quote(&info))) > objects_pin, "{p}");
+        for d in [
+            common.join("refs"),
+            common.join("logs"),
+            common.join("refs/heads"),
+            common.join("refs/heads/polyph"),
+            common.join("objects"),
+        ] {
+            assert!(!p.contains(&format!("(allow file-write* (subpath \"{}\"))", sb_quote(&d))), "{p}");
+        }
+        assert!(allow < pin && pin < deny, "{p}");
+        assert!(!p.contains(&format!("(allow file-write* (subpath \"{}\"))", sb_quote(&common))), "{p}");
+        // Hard links follow the same rules: none from outside, none from a
+        // read-only file inside a folder it writes.
+        assert!(
+            p.find("(deny file-link)").unwrap() < at(format!("(allow file-link (subpath \"{}\"))", sb_quote(&own)))
+        );
+        assert!(at(format!("(deny file-link (literal \"{}\"))", sb_quote(&own.join("commondir")))) > allow, "{p}");
+        assert!(!p.contains(&format!("(allow file-link (subpath \"{}\"))", sb_quote(&common))), "{p}");
+
+        // Mechanisms that cannot narrow a writable folder never open them.
+        let l = wrap_inner(
+            Mechanism::Landlock,
+            &Policy { proxy_tcp: Some(([127, 0, 0, 1], 1).into()), ..policy },
+            "true",
+            &[],
+        )
+        .unwrap();
+        assert!(!l.args.iter().any(|a| a.contains(".git")), "{:?}", l.args);
     }
 }

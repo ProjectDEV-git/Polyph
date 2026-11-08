@@ -193,8 +193,158 @@ A repository's `polyph.toml` cannot weaken this on its own. Its `[sandbox]`
 apply once a person on that device ran `polyph trust` for that exact content (a
 per-user record of folder and SHA-256 in Polyph's data directory); the file is
 read from the person's checkout, never the agent's worktree, and any edit voids
-the record.
+the record. It is read once, like the worktree files below (no symbolic or hard
+links, size cap), and the bytes read are the ones hashed, shown and parsed; a
+parse error names the line and column but quotes nothing from the file.
 See "Trusting a project file" in `docs/sandbox.md`.
+
+The daemon treats an agent's worktree as hostile input:
+
+- Under bubblewrap and Seatbelt, an agent working in the person's own
+  checkout (no task) gets the whole `.git` read-only, mounted so it cannot
+  be renamed, removed or replaced. It can edit files and run read-only git
+  commands (`git status`, `git diff`, `git log`); it cannot commit, change
+  the config, hooks or info, or add a `commondir` file. A task agent's
+  branch is `polyph/<task id>/<name>`. It gets the shared `.git` read-only
+  too, `objects/` included, except its task's folder in
+  `refs/heads/polyph/` and in `logs/refs/heads/polyph/`, and its own
+  `.git/worktrees/<name>/` folder (its HEAD, index, reflog, per-worktree
+  refs and its own object store, `objects/`), so it can run `git add` and
+  `git commit` on its task branch. Its objects go into its own store: the
+  daemon sets `GIT_OBJECT_DIRECTORY` to it and
+  `GIT_ALTERNATE_OBJECT_DIRECTORIES` to the shared store, which it reads
+  but cannot change. Other entries in its task folders when it starts stay
+  read-only; so do `main`, every other task's folder and every other ref
+  and reflog. Inside its own folder the `commondir`, `gitdir` and
+  `config.worktree` files and `objects/info/` stay read-only (the daemon
+  creates an empty `config.worktree`, the task folders and the object
+  store first), as do its worktree's `.git` file and the folders of other
+  worktrees. An agent whose branch is not in its own task's folder (a
+  branch with no `/`, or one a card names elsewhere) cannot commit at all;
+  the daemon commits its work at finish.
+- The daemon takes a task's commits into the shared object store at the
+  end of every agent turn, on finish and on hand-off, never by trusting
+  the task's files: `git pack-objects` packs them from the task's store
+  and `git index-pack --strict` takes them into the shared one, naming
+  every object by hashing its content and checking that every object it
+  names is there; a blob the agent swapped fails the copy. Merges,
+  checkouts and the fast-forward of the person's checkout read only the
+  shared store. Until the turn that made them ends, commits an agent made
+  itself exist only in its task's store, and the person's `git fetch`,
+  `git gc` and `git log --all` in that repository fail with "bad object".
+- An existing branch is given to an agent only if the daemon created it
+  for a task (it records them in `task-branches.json` in the Polyph home):
+  a card's branch is room data, so a card naming `main` or a branch
+  someone else made is refused. The merge approval names the commit the
+  queue merges and its diff stat ("polyph/1a2b3c4d/login at 0123456789ab
+  (2 files changed, 5 insertions(+))"); the queue merges that commit, not
+  whatever the branch points at by then.
+- The daemon commits a task's work (on finish and hand-off) onto the task
+  branch itself (`commit-tree` on the branch's tip, then `update-ref`),
+  never through the worktree's HEAD, which the agent writes; if HEAD names
+  another branch it refuses. Before merging into a branch, and again
+  before moving it, it checks that the branch points where the last entry
+  of its reflog says git set it; a branch written without git (as an
+  agent with `refs/` writable would) is refused with an error naming the
+  reflog. A branch without a reflog is not checked, and the check proves
+  nothing for a branch inside a task folder, whose reflog its agent writes
+  along with the ref.
+- Before every git command that writes (commit, add, update-ref, merge,
+  fetch, push, worktree, branch and the like) and before it adds a line
+  to `info/exclude`, the daemon walks `logs/`, `refs/`, `worktrees/`,
+  `objects/info/` and `info/` of the shared git directory, and the
+  worktree's git directory, and refuses if any entry is a symbolic link
+  or (Linux and macOS, outside `objects/`) a file with more than one hard
+  link, with an error naming the path: git appends to reflogs through
+  links, so a linked `logs/HEAD` would let an agent append a line of its
+  choosing to any file the person can write. Before every git command it
+  refuses an `objects/info/alternates` or `http-alternates` file; Polyph
+  never creates one, so a repository cloned with `--reference` or
+  `--shared` must be repacked (`git repack -a -d`) and the file removed
+  before Polyph works in it. The same goes for a task's own store.
+- The agent keeps running while the daemon commits its work, so it could
+  swap a file for a link between that check and git's write. Every daemon
+  git command that writes, except `fetch`, `pull` and `push` (which need
+  the network and the person's credentials, and write only
+  `refs/remotes/`, `FETCH_HEAD` and the shared `objects/`, none of which
+  an agent writes), runs in a sandbox: bubblewrap on Linux, Seatbelt on
+  macOS. Only the folders the command writes are writable. In a task
+  worktree that is the worktree and its own `worktrees/<name>/` (not its
+  `commondir`, `gitdir`, `config.worktree` or `objects/info/`), plus its
+  branch's folders for an `update-ref`: what its agent writes anyway. In
+  the person's checkout it is the checkout and `.git` except `config`,
+  `hooks/` and `info/`. The person's home and everything else are
+  read-only, so a link leads nowhere git can write. Where neither exists
+  (Landlock, Windows, container mode, or bubblewrap that cannot create
+  namespaces) the daemon's git runs unconfined; there task agents cannot
+  write the shared git directory at all, and only an agent in the
+  person's own checkout, which starts with a warning, can plant links.
+  Bubblewrap is tested by `crates/polyph-sandbox/tests/sandbox.rs`;
+  Seatbelt's rules by a unit test of the profile only, not yet run on a
+  Mac. Landlock, Windows and container mode do not enforce any of this;
+  see "Git settings an agent can write" below.
+- Every git command the daemon runs names the git directory itself
+  (`--git-dir`, `--work-tree`) and sets `GIT_COMMON_DIR`, after checking
+  the checkout: a main git directory must not contain a `commondir` file,
+  and a linked worktree's `.git` file must point into the main repository's
+  `.git/worktrees/`, whose `commondir` must name that same repository. The
+  daemon refuses to run git otherwise, with an error that names the file.
+  Before a fetch or push with the repository's own settings, git, finding
+  the repository by itself (`rev-parse --git-common-dir`), must arrive at
+  `<main working copy>/.git`, or the command is refused.
+- Every local git command the daemon runs (status, commit, diff, merge)
+  overrides `core.fsmonitor`, `core.hooksPath`, `core.pager`,
+  `protocol.ext.allow`, `commit.gpgSign`, `core.sshCommand` and
+  `core.askPass` (with the person's own system or global value, `GIT_SSH`
+  or `SSH_ASKPASS` carried over), and resets `credential.helper` to the
+  person's system and global helpers. Diffs pass `--no-ext-diff
+  --no-textconv`. `core.gitProxy` is disabled with an empty
+  `GIT_PROXY_COMMAND`, because git keeps the first value it reads.
+- Fetches and pushes use those overrides, plus `--upload-pack=git-upload-pack`
+  on fetch, only for a checkout an agent ran in without a task under
+  Landlock, Windows or container mode. Any other checkout is fetched and
+  pushed with its own settings, so per-repository `core.sshCommand`,
+  `includeIf` and pre-push hooks (Git LFS) keep working. Fetches never
+  recurse into submodules.
+- Git runs commands inside a nested repository or submodule with that
+  repository's own config, which the agent can write (its clean filter runs
+  during `git status`, for one). The daemon's `status`, `add` and `commit`
+  never look inside submodules (`--ignore-submodules=all`,
+  `diff.ignoreSubmodules=all`, and submodule entries left out of `git add`
+  by path, so the daemon's commits never update a submodule's commit). In a
+  task worktree it also refuses to read changes or commit when there is a
+  `.git` file or folder below the worktree's root that is not a submodule
+  in HEAD's `.gitmodules`, or a submodule entry in the index that HEAD does
+  not have.
+- Filter drivers (`filter.*`) and merge drivers in the repository's own
+  config cannot be overridden by setting names; pointing
+  `core.attributesFile` elsewhere does not stop them either, since
+  `.gitattributes` in the worktree and `.git/info/attributes` still apply.
+  They rely on `.git` being read-only, as above. A relative `include.path`
+  in `.git/config` resolves inside `.git/`, which is read-only under
+  bubblewrap and Seatbelt, so an agent cannot add an included file there.
+- Files it reads from a worktree (the brief, areas, skills, mirrored files,
+  merge resolutions) must not be symbolic links on any part of their path,
+  nor (on Linux and macOS) hard links, and are capped in size (1 MiB unless
+  the caller sets less). The hosted-mode mirror skips such a file; it
+  reports a file as deleted only when it is gone.
+
+#### Git settings an agent can write
+
+Under Landlock, on Windows and in container mode, the mounts above are not
+enforced. An agent working in the person's own checkout (no task, or
+`worktree = false`) can write that checkout's `.git`: its config, hooks,
+info and a `commondir` file. The daemon then refuses to run git in that
+checkout while a `commondir` file is there, never looks inside submodules,
+and fetches and pushes it with the overrides above, but a filter or merge
+driver in that config still runs when the daemon checks status, commits or
+fast-forwards there, as does any other setting that names a program and is
+not listed above. The person's own git commands in that checkout run all of
+it. The agent starts with a warning saying so. Under those mechanisms, use
+tasks (each in its own worktree, outside the shared `.git`, which the agent
+cannot write there) or bubblewrap and Seatbelt. Files in the working copy
+itself remain writable everywhere, including a hooks folder that a
+repository's `core.hooksPath` points into the working copy.
 
 ### A lost phone
 

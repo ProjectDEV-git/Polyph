@@ -221,10 +221,13 @@ pub async fn open_pr(
         return Ok(());
     }
     let (root2, remote2, branch2) = (root.to_path_buf(), remote.clone(), e.branch.clone());
-    tokio::task::spawn_blocking(move || polyph_git::Repo::open(&root2).and_then(|r| r.push_branch(&remote2, &branch2)))
-        .await
-        .map_err(|x| ApiError::Failed(x.to_string()))?
-        .map_err(|x| ApiError::Failed(format!("pushing {} failed: {x}", e.branch)))?;
+    let home = shared.paths.home.clone();
+    tokio::task::spawn_blocking(move || {
+        crate::folders::open_for_network(&home, &root2).and_then(|r| r.push_branch(&remote2, &branch2))
+    })
+    .await
+    .map_err(|x| ApiError::Failed(x.to_string()))?
+    .map_err(|x| ApiError::Failed(format!("pushing {} failed: {x}", e.branch)))?;
 
     let card = match &e.card {
         Some(c) => crate::tasks::card(&mut *rt.ctx.lock().await, c),
