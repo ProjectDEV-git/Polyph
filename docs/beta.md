@@ -156,8 +156,10 @@ later.
   Polyph copies them into the repository's shared store, after each turn,
   when the task finishes and when the daemon starts. In that window, git
   run outside the task's worktree (`git log --all`, `git gc`) can report
-  a bad object for the task's branch. If the copy fails, the agent's
-  room shows a warning naming the branch.
+  a bad object for the task's branch. If the copy fails, the daemon logs
+  a warning on this machine naming the branch (in `daemon.log`). The
+  person's `git fetch`, `git gc` and `git log --all` in that repository
+  then fail with "bad object" until the branch is cleared.
 - On macOS and Windows, sandboxing has only been tested in CI.
 - On Windows, the daemon's local API token relies on your user profile's
   folder permissions rather than its own.

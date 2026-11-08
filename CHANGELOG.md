@@ -24,8 +24,9 @@ GitHub release page.
 - **Seatbelt denies hard links from outside an agent's writable folders**,
   for agents and for Polyph's own git writes.
 - **The daemon logs one line at start when its own git writes run without
-  a sandbox** (Landlock, Windows, container mode), and warns in the room
-  when a task's commits could not be copied into the shared object store.
+  a sandbox** (Landlock, Windows, container mode), and logs a warning on this
+  machine naming the branch when a task's commits could not be copied into
+  the shared object store.
 - **`polyph feedback`.** Opens a prefilled GitHub issue with your Polyph
   version, OS, architecture, Linux distro, surface and whether the daemon
   runs. It leaves out room names, paths, chat, code, user and host names and

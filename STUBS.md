@@ -67,8 +67,10 @@ lists notes and agents write them.
   itself in a turn that has not ended, its branch points at objects only
   its task's store has, so the person's `git fetch`, `git gc` and `git log
   --all` in that repository fail with "bad object" until the turn ends
-  (the daemon also copies them in at start, and warns in the room when a
-  copy fails). `task-branches.json` is never pruned. The reflog check on the branch merged into proves nothing
+  (the daemon also copies them in at start, and logs a warning on this
+  machine naming the branch when a copy fails). No client shows
+  `agent_warning` events yet (TUI, web feed, desktop); they are local to
+  the daemon and not sent to other members. `task-branches.json` is never pruned. The reflog check on the branch merged into proves nothing
   for a branch inside a task folder. Tasks started before task branches
   moved to `polyph/<task id>/<name>` keep a branch the daemon did not
   record; it refuses to hand that branch to a new agent until the card's
