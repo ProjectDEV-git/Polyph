@@ -53,6 +53,11 @@ pub async fn run_all(helper: Vec<String>) -> anyhow::Result<Vec<MechanismReport>
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let outside_port = listener.local_addr()?.port();
     let accept = tokio::spawn(async move { while listener.accept().await.is_ok() {} });
+    // A Unix socket outside, as the session bus or docker.sock would be.
+    #[cfg(unix)]
+    let ipc = outside.join("ipc.sock");
+    #[cfg(unix)]
+    let _ipc_listener = std::os::unix::net::UnixListener::bind(&ipc)?;
     let deny: Decider = Arc::new(|_, _| Box::pin(async { false }));
     let proxy = crate::proxy::start(Allowlist::default(), deny, Some(base.join("run"))).await?;
     let policy = Policy {
@@ -76,7 +81,8 @@ pub async fn run_all(helper: Vec<String>) -> anyhow::Result<Vec<MechanismReport>
             checks: vec![],
         };
         if a.available && a.mechanism != Mechanism::Container {
-            let probes: [(&str, Vec<String>, bool); 4] = [
+            #[allow(unused_mut)]
+            let mut probes: Vec<(&str, Vec<String>, bool)> = vec![
                 (
                     "sandbox-check-write-inside",
                     vec!["write".into(), worktree.join("ok.txt").to_string_lossy().into_owned()],
@@ -90,6 +96,8 @@ pub async fn run_all(helper: Vec<String>) -> anyhow::Result<Vec<MechanismReport>
                 ("sandbox-check-direct-network", vec!["connect".into(), format!("127.0.0.1:{outside_port}")], false),
                 ("sandbox-check-proxy-unlisted", vec!["proxy".into(), "unlisted.invalid:443".into()], false),
             ];
+            #[cfg(unix)]
+            probes.push(("sandbox-check-host-ipc", vec!["unix".into(), ipc.to_string_lossy().into_owned()], false));
             for (key, probe_args, should_succeed) in probes {
                 let mut args = vec!["probe".to_string()];
                 args.extend(probe_args);

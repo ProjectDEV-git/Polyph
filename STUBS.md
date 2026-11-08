@@ -47,9 +47,20 @@ lists notes and agents write them.
   are still readable and the network is steered only by proxy variables (no
   AppContainer yet). Tested only on GitHub's Windows runners. Documented in
   `docs/sandbox.md`.
-- **seccomp.** The Landlock fallback restricts files and TCP connects but adds
-  no seccomp filter (for example against raw sockets or UDP). bubblewrap mode
-  isolates the network with a namespace instead.
+- **seccomp.** The Landlock fallback has a seccomp filter only against Unix
+  sockets and `io_uring` (SEC-14): it refuses every Unix socket but stream
+  pairs, the agent's own included, since seccomp cannot filter by path. It
+  does nothing about UDP, raw or netlink sockets, and Landlock mode still
+  hides no paths (SEC-15). Without seccomp (architectures other than x86_64,
+  aarch64 and riscv64) Unix sockets stay reachable, with a warning.
+  bubblewrap mode has no seccomp filter: it isolates the network with a
+  namespace and empties `/run`, `/var/run` and `/tmp`, but a Unix socket
+  elsewhere in the readable filesystem stays connectable.
+- **Seatbelt `(deny default)` profile (SEC-14)** has run only on the macOS
+  CI runner. Its Mach service allow list is a first guess at what CLIs
+  need; tools that need more (or DNS, which is not allowed) fail inside
+  until the list grows. `com.apple.SecurityServer` is on it for TLS, so
+  keychain items readable by any program stay readable.
 - **Agents' git settings (SEC-13) open on Landlock and Windows.**
   bubblewrap and Seatbelt keep an agent's checkout's `.git` read-only (task
   agents write only their task's folder in `refs/heads/polyph/` and

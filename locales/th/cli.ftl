@@ -175,6 +175,7 @@ sandbox-check-write-inside = เขียนไฟล์ใน worktree ได�
 sandbox-check-write-outside = เขียนไฟล์นอก worktree ถูกกั้น
 sandbox-check-direct-network = การเชื่อมต่อเครือข่ายโดยตรงถูกกั้น
 sandbox-check-proxy-unlisted = โฮสต์ที่ไม่อยู่ในรายการอนุญาตถูกปฏิเสธ
+sandbox-check-host-ipc = Unix socket นอก sandbox (session bus, ssh-agent, docker.sock) เข้าถึงไม่ได้
 sandbox-pass = ผ่าน
 sandbox-fail = ไม่ผ่าน
 sandbox-none = เครื่องนี้ไม่มีแซนด์บ็อกซ์ที่ใช้งานได้ เอเจนต์จะเริ่มไม่ได้จนกว่าจะมี บน Linux ให้ติดตั้ง bubblewrap

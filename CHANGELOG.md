@@ -5,6 +5,24 @@ GitHub release page.
 
 ## Unreleased
 
+- **Agents no longer reach your session's IPC** (SEC-14): the D-Bus
+  session bus, `systemd --user`, keyring, gpg and ssh agents, X11 and
+  Wayland, and `docker.sock` or Podman sockets. Under bubblewrap `/run`
+  and `/var/run` are empty inside the sandbox; in Landlock mode a seccomp
+  filter refuses Unix sockets; on macOS the Seatbelt profile now starts
+  from `(deny default)`, runs no `open`, `osascript` or `osacompile`, and
+  allows only a short list of system services. Agents start without
+  `DBUS_SESSION_BUS_ADDRESS`, `XDG_RUNTIME_DIR`, `SSH_AUTH_SOCK`,
+  `GPG_AGENT_INFO`, `DISPLAY`, `WAYLAND_DISPLAY`, `DOCKER_HOST` and
+  similar variables. What this breaks: an agent that pushed over ssh with
+  your ssh-agent, signed commits with gpg, or ran `docker` must leave that
+  to Polyph or to you (Polyph pushes and merges for it). In Landlock mode
+  agents cannot open Unix sockets of their own either (Python
+  `multiprocessing` managers, socket-path test servers). On macOS, DNS
+  works only through the proxy, and a tool that needs a system service
+  not on the list fails; `polyph sandbox test` has a new check for host
+  IPC. See "Host IPC" in `docs/sandbox.md`.
+
 - **Task branches are `polyph/<task id>/<name>`** (they were
   `polyph/<name>-<task id>`), one folder per task, and a task agent can
   write only its own task's folder. Polyph gives an agent an existing

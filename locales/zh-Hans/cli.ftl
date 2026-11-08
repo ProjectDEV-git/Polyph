@@ -175,6 +175,7 @@ sandbox-check-write-inside = 工作树内可以写入
 sandbox-check-write-outside = 工作树外的写入被拦截
 sandbox-check-direct-network = 直接网络访问被拦截
 sandbox-check-proxy-unlisted = 不在允许列表中的主机被拒绝
+sandbox-check-host-ipc = 无法连接沙箱外的 Unix 套接字（会话总线、ssh-agent、docker.sock）
 sandbox-pass = 通过
 sandbox-fail = 未通过
 sandbox-none = 此机器上没有可用的沙箱。在有可用沙箱之前智能体无法启动；Linux 上请安装 bubblewrap。

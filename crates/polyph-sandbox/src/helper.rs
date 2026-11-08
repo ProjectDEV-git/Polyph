@@ -6,11 +6,19 @@
 //!   Unix socket S, then run `cmd` and exit with its status.
 //! - `landlock --proxy-port P --write DIR... -- cmd...`: restrict this
 //!   process with Landlock (writes only to DIRs, TCP connects only to port
-//!   P), then run `cmd`; the restriction is inherited by everything it spawns.
+//!   P, and, from Landlock ABI 6, no abstract Unix sockets or signals
+//!   outside the sandbox) and a seccomp filter (no Unix sockets but
+//!   connected pairs, see [`apply_seccomp`]), then run `cmd`; the
+//!   restriction is inherited by everything it spawns.
 //! - `lowil --write DIR... -- cmd...` (Windows): label DIRs low integrity
 //!   and run `cmd` at low integrity level, so it can write only there.
-//! - `probe write PATH | connect HOST:PORT | proxy HOST:PORT | landlock`:
-//!   self-test probes; exit 0 when the action succeeded, 3 when blocked.
+//! - `probe write PATH | connect HOST:PORT | proxy HOST:PORT | unix PATH |
+//!   socketpair | landlock | seccomp`: self-test probes; exit 0 when the
+//!   action succeeded, 3 when blocked. `unix @NAME` is an abstract socket.
+//!
+//! `forward` and `landlock` run `cmd` without the variables in
+//! [`crate::IPC_ENV`], which point at the person's session bus, agents and
+//! display servers (SEC-14).
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -49,7 +57,12 @@ fn run_child(cmd: &[String]) -> i32 {
         eprintln!("no command given");
         return 2;
     };
-    match std::process::Command::new(prog).args(&cmd[1..]).status() {
+    let mut c = std::process::Command::new(prog);
+    c.args(&cmd[1..]);
+    for k in crate::IPC_ENV {
+        c.env_remove(k);
+    }
+    match c.status() {
         Ok(s) => s.code().unwrap_or(1),
         Err(e) => {
             eprintln!("cannot run {prog}: {e}");
@@ -132,10 +145,16 @@ fn forward(_args: Vec<String>) -> i32 {
 fn apply_landlock(writable: &[String], proxy_port: Option<u16>) -> Result<bool, String> {
     use landlock::{
         ABI, Access, AccessFs, AccessNet, NetPort, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr,
-        RulesetStatus,
+        RulesetStatus, Scope,
     };
     let abi = ABI::V5;
-    let mut rs = Ruleset::default().handle_access(AccessFs::from_all(abi)).map_err(|e| e.to_string())?;
+    // Landlock ABI 6 (Linux 6.12): no connecting to abstract Unix sockets
+    // and no signals outside the sandbox. Older kernels skip this (best
+    // effort); the seccomp filter refuses Unix sockets there too.
+    let mut rs = Ruleset::default()
+        .handle_access(AccessFs::from_all(abi))
+        .and_then(|r| r.scope(Scope::from_all(ABI::V6)))
+        .map_err(|e| e.to_string())?;
     if proxy_port.is_some() {
         rs = rs.handle_access(AccessNet::ConnectTcp | AccessNet::BindTcp).map_err(|e| e.to_string())?;
     }
@@ -154,6 +173,58 @@ fn apply_landlock(writable: &[String], proxy_port: Option<u16>) -> Result<bool, 
     Ok(!matches!(status.ruleset, RulesetStatus::NotEnforced))
 }
 
+/// A seccomp filter for Landlock mode (SEC-14), which cannot otherwise
+/// keep an agent from host IPC: `socket(AF_UNIX)` and datagram
+/// `socketpair(AF_UNIX)` fail with `EACCES`, and `io_uring_setup` (which can
+/// create sockets without `socket`) with `ENOSYS`. Seccomp cannot read the
+/// address a socket connects to, so this refuses every Unix socket, not
+/// only those outside: connected stream pairs (`socketpair`, which pipes
+/// between processes use) still work, and nothing an agent needs from
+/// Polyph uses Unix sockets in this mode (the proxy is a TCP port). Other
+/// architectures' system calls (32-bit `int 0x80`) end the process.
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64")))]
+pub fn apply_seccomp() -> Result<(), String> {
+    use std::collections::BTreeMap;
+
+    use seccompiler::{
+        BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter, SeccompRule,
+        TargetArch,
+    };
+    let e = |e: seccompiler::BackendError| e.to_string();
+    let unix = || SeccompCondition::new(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Eq, libc::AF_UNIX as u64);
+    let dgram = SeccompCondition::new(1, SeccompCmpArgLen::Dword, SeccompCmpOp::MaskedEq(0xf), libc::SOCK_DGRAM as u64);
+    let arch = TargetArch::try_from(std::env::consts::ARCH).map_err(e)?;
+    let build = |rules: Vec<(i64, Vec<SeccompRule>)>, errno: i32| -> Result<BpfProgram, String> {
+        let mut map: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
+        for (nr, r) in rules {
+            // x32 calls (x86_64 numbers with bit 30 set) are checked too.
+            if cfg!(target_arch = "x86_64") {
+                map.insert(nr | 0x4000_0000, r.clone());
+            }
+            map.insert(nr, r);
+        }
+        let f = SeccompFilter::new(map, SeccompAction::Allow, SeccompAction::Errno(errno as u32), arch).map_err(e)?;
+        f.try_into().map_err(|x: seccompiler::BackendError| x.to_string())
+    };
+    let sockets = build(
+        vec![
+            (libc::SYS_socket, vec![SeccompRule::new(vec![unix().map_err(e)?]).map_err(e)?]),
+            (libc::SYS_socketpair, vec![SeccompRule::new(vec![unix().map_err(e)?, dgram.map_err(e)?]).map_err(e)?]),
+        ],
+        libc::EACCES,
+    )?;
+    let uring = build(vec![(libc::SYS_io_uring_setup, vec![])], libc::ENOSYS)?;
+    for p in [&sockets, &uring] {
+        seccompiler::apply_filter(p).map_err(|x| x.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64"))))]
+pub fn apply_seccomp() -> Result<(), String> {
+    Err("no seccomp filter for this platform".into())
+}
+
 #[cfg(not(target_os = "linux"))]
 fn apply_landlock(_writable: &[String], _proxy_port: Option<u16>) -> Result<bool, String> {
     Err("Landlock exists only on Linux".into())
@@ -164,7 +235,15 @@ fn landlock(args: Vec<String>) -> i32 {
     let writable: Vec<String> = flags.windows(2).filter(|w| w[0] == "--write").map(|w| w[1].clone()).collect();
     let port = opt(&flags, "--proxy-port").and_then(|p| p.parse().ok());
     match apply_landlock(&writable, port) {
-        Ok(true) => run_child(&cmd),
+        Ok(true) => {
+            if let Err(e) = apply_seccomp() {
+                eprintln!(
+                    "sandbox: no seccomp filter ({e}); the agent can still reach host IPC (the session bus, \
+                     ssh-agent, docker.sock) over Unix sockets"
+                );
+            }
+            run_child(&cmd)
+        }
         Ok(false) => {
             eprintln!("this kernel does not enforce Landlock; refusing to run unsandboxed");
             BLOCKED
@@ -196,10 +275,61 @@ fn probe(args: Vec<String>) -> i32 {
         )
         .is_ok(),
         "proxy" => proxy_connect(&target),
+        "unix" => unix_connect(&target),
+        "socketpair" => socket_pair(),
         "landlock" => apply_landlock(&[], None).unwrap_or(false),
+        // The filter applies and refuses a Unix socket afterwards.
+        "seccomp" => apply_seccomp().is_ok() && unix_socket_refused() && socket_pair(),
         _ => return 2,
     };
     if ok { 0 } else { BLOCKED }
+}
+
+/// Connects to the Unix socket at `target` (`@name`: abstract, Linux only).
+#[cfg(unix)]
+fn unix_connect(target: &str) -> bool {
+    use std::os::unix::net::UnixStream;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if let Some(name) = target.strip_prefix('@') {
+        use std::os::linux::net::SocketAddrExt;
+        return std::os::unix::net::SocketAddr::from_abstract_name(name)
+            .and_then(|a| UnixStream::connect_addr(&a))
+            .is_ok();
+    }
+    UnixStream::connect(target).is_ok()
+}
+
+#[cfg(not(unix))]
+fn unix_connect(_target: &str) -> bool {
+    false
+}
+
+/// Whether this process may not create a Unix socket.
+#[cfg(unix)]
+fn unix_socket_refused() -> bool {
+    std::os::unix::net::UnixDatagram::unbound().is_err()
+}
+
+#[cfg(not(unix))]
+fn unix_socket_refused() -> bool {
+    false
+}
+
+/// A connected pair of Unix stream sockets, as pipes between processes use.
+#[cfg(unix)]
+fn socket_pair() -> bool {
+    std::os::unix::net::UnixStream::pair()
+        .and_then(|(mut a, mut b)| {
+            a.write_all(b"x")?;
+            let mut buf = [0u8; 1];
+            b.read_exact(&mut buf)
+        })
+        .is_ok()
+}
+
+#[cfg(not(unix))]
+fn socket_pair() -> bool {
+    false
 }
 
 /// CONNECT through the proxy named in HTTPS_PROXY; true when it answered 200.

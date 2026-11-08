@@ -175,6 +175,7 @@ sandbox-check-write-inside = ワークツリー内への書き込みは可能
 sandbox-check-write-outside = ワークツリー外への書き込みはブロック
 sandbox-check-direct-network = 直接のネットワーク接続はブロック
 sandbox-check-proxy-unlisted = 許可リストにないホストは拒否
+sandbox-check-host-ipc = サンドボックス外の Unix ソケット（セッションバス、ssh-agent、docker.sock）には接続できない
 sandbox-pass = OK
 sandbox-fail = 失敗
 sandbox-none = このマシンで使えるサンドボックスがありません。使えるようになるまでエージェントは起動しません。Linux では bubblewrap をインストールしてください。

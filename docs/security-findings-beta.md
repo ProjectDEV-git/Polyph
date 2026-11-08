@@ -609,6 +609,64 @@ Summary:
   `(deny default)` and allow what agents need; deny `process-exec` of
   `/usr/bin/open` and `osascript` and restrict `mach-lookup`.
 - Wire change: no.
+- Status: fixed under bubblewrap and Landlock (tested on Linux); fixed
+  under Seatbelt in code, with tests that run only on the macOS CI runner;
+  partly open (KAO-75, branch `beta/kao-75-sandbox-ipc`). Every mechanism
+  that runs the agent through the helper or `sandbox-exec` starts it
+  without `DBUS_SESSION_BUS_ADDRESS`, `DBUS_SYSTEM_BUS_ADDRESS`,
+  `XDG_RUNTIME_DIR`, `SSH_AUTH_SOCK`, `GPG_AGENT_INFO`, `DISPLAY`,
+  `WAYLAND_DISPLAY`, `SWAYSOCK`, `I3SOCK`, `TMUX`, `DOCKER_HOST`,
+  `CONTAINER_HOST`, `NOTIFY_SOCKET` and `WSL_INTEROP`
+  (`polyph_sandbox::IPC_ENV`).
+  - bubblewrap: `/run` and `/var/run` (when it is not a link to `/run`)
+    are empty tmpfs mounts, with links in `/run` to folders outside it
+    (NixOS `/run/current-system`) recreated; the agent's writable paths
+    and the proxy socket are bound back after them. Container sockets
+    outside those folders (`~/.colima`, `~/.rd`, `~/.lima`, `~/.orbstack`,
+    podman machine, `$DOCKER_HOST`, `$CONTAINER_HOST`; `~/.docker` was
+    already hidden) are hidden; `--unshare-ipc --unshare-uts` are added.
+    Abstract sockets were already separate (`--unshare-net`). Tests:
+    `bubblewrap_cuts_the_agent_off_from_host_ipc` (a socket in `/run` or
+    `$XDG_RUNTIME_DIR`, a hidden `docker.sock`, an abstract socket, the
+    variables, and the agent's write, `git status` and proxy still
+    working) and `bubblewrap_empties_run_before_the_agents_paths`.
+  - Landlock: a seccomp filter (`seccompiler`) refuses `socket(AF_UNIX)`,
+    datagram `socketpair(AF_UNIX)` (whose `sendto` could reach a path) and
+    `io_uring_setup` (which can create sockets without `socket`), x32
+    numbers included; other architectures' calls end the process. Seccomp
+    cannot read the address passed to `connect`, so every Unix socket is
+    refused, not only those outside; stream socket pairs still work. Where
+    the kernel has Landlock ABI 6 (Linux 6.12), the ruleset also scopes
+    abstract Unix sockets and signals to the sandbox. Without a filter
+    (an architecture other than x86_64, aarch64 or riscv64, or a kernel
+    without seccomp) the helper says so on stderr and `polyph sandbox
+    test` / `agents doctor` name it in the Landlock line. Test:
+    `landlock_cuts_the_agent_off_from_host_ipc`.
+  - Seatbelt: `(deny default)` with an allow list: fork and exec (not
+    `/usr/bin/open`, `osascript`, `osacompile`), reads except hidden
+    paths, the existing write and hard-link rules, `sysctl-read`,
+    preference reads, POSIX semaphores and shared memory, signals within
+    the sandbox, ioctls except on terminals, Mach lookups only to
+    `SEATBELT_MACH_SERVICES` (directory services, logging, notifications,
+    cfprefsd, TLS trust, configd, networkd, FSEvents; no LaunchServices,
+    Apple Events, pasteboard or window server), TCP only to the proxy,
+    listening on localhost, and Unix sockets only in the agent's own temp
+    folder. Tests: `seatbelt_profile_denies_host_ipc` (any platform) and
+    `seatbelt_cuts_the_agent_off_from_host_ipc` (macOS CI only: `open -a
+    Terminal`, a copy of `open`, `osascript -e 'return 1'` and a Unix
+    socket outside fail; a write, `git status`, `cargo --version`, the
+    proxy and a socket in its temp folder work).
+  - Still open: under bubblewrap, a Unix socket somewhere else in the
+    readable filesystem (outside `/run`, `/var/run`, `/tmp`, the hidden
+    paths and the container locations above, for example the Nix daemon's
+    `/nix/var/nix/daemon-socket`) stays connectable; bubblewrap has no
+    seccomp filter. Under Seatbelt, the Mach services on the list stay
+    reachable, `com.apple.SecurityServer` included (needed for TLS), so
+    keychain items whose access list allows any program stay readable as
+    before. The Seatbelt profile has never run on a Mac outside CI.
+    Windows is unchanged: this fix does not cover named pipes or COM
+    servers a low-integrity process can still reach. Container mode is
+    unchanged (it mounts only the worktree and the proxy socket).
 
 ## SEC-15: Landlock mode hides nothing and silently drops its network rule on older kernels
 
