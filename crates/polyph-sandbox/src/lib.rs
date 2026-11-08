@@ -192,18 +192,64 @@ fn host_ipc_paths_in(home: Option<&Path>, env: &dyn Fn(&str) -> Option<String>) 
 /// session bus, `systemd --user`, keyring and gpg agents).
 const RUN_DIRS: [&str; 2] = ["/run", "/var/run"];
 
-/// Links directly in `/run` to folders outside it (NixOS keeps its system
-/// profile at `/run/current-system`), recreated inside the empty `/run`.
-fn run_links() -> Vec<(PathBuf, PathBuf)> {
-    let Ok(rd) = std::fs::read_dir("/run") else { return vec![] };
-    rd.flatten()
-        .filter(|e| e.file_type().is_ok_and(|t| t.is_symlink()))
-        .filter_map(|e| {
-            let target = std::fs::read_link(e.path()).ok()?;
-            let real = e.path().canonicalize().ok()?;
-            (real.is_dir() && !RUN_DIRS.iter().any(|r| real.starts_with(r))).then(|| (target, e.path()))
-        })
-        .collect()
+/// `p` with links resolved, or `p` itself when it does not exist.
+fn canon(p: &Path) -> PathBuf {
+    p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
+}
+
+/// The real folders behind [`RUN_DIRS`] under `root` (`/` outside tests),
+/// each once, for bubblewrap to replace with an empty tmpfs. Either may be
+/// a link, to the other or anywhere else; the tmpfs goes over where it
+/// points. Never over the root itself or a folder above it, and never over
+/// a folder other than `/run` or `/var/run` themselves that holds a
+/// writable path (`/var/run -> /home`): the sockets in it are then hidden
+/// one by one ([`ipc_to_hide`]).
+fn run_tmpfs_in(root: &Path, writable: &[PathBuf]) -> Vec<PathBuf> {
+    let root = canon(root);
+    let own: Vec<PathBuf> = RUN_DIRS.iter().map(|r| root.join(r.trim_start_matches('/'))).collect();
+    let mut v: Vec<PathBuf> = vec![];
+    for lit in &own {
+        let Ok(real) = lit.canonicalize() else { continue };
+        if !real.is_dir() || root.starts_with(&real) || v.iter().any(|t| real.starts_with(t)) {
+            continue;
+        }
+        if !own.contains(&real) && writable.iter().any(|w| canon(w).starts_with(&real)) {
+            continue;
+        }
+        v.retain(|t| !t.starts_with(&real));
+        v.push(real);
+    }
+    v
+}
+
+/// Links directly in the emptied folders to folders outside them (NixOS
+/// keeps its system profile at `/run/current-system`), recreated inside.
+fn run_links_in(tmpfs: &[PathBuf]) -> Vec<(PathBuf, PathBuf)> {
+    let mut v = vec![];
+    for dir in tmpfs {
+        let Ok(rd) = std::fs::read_dir(dir) else { continue };
+        for e in rd.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_symlink())) {
+            let (Ok(target), Ok(real)) = (std::fs::read_link(e.path()), e.path().canonicalize()) else { continue };
+            if real.is_dir() && !tmpfs.iter().any(|t| real.starts_with(t)) {
+                v.push((target, e.path()));
+            }
+        }
+    }
+    v
+}
+
+/// The host IPC paths bubblewrap must hide itself: those that exist and
+/// are not in a folder it empties (`tmpfs`, and `/tmp` when it is a real
+/// folder), compared and returned with links resolved, so
+/// `/var/run/docker.sock` is hidden wherever `/var/run` points.
+fn ipc_to_hide(ipc: Vec<PathBuf>, tmpfs: &[PathBuf], tmp: Option<&Path>) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = vec![];
+    for p in ipc.iter().filter_map(|p| p.canonicalize().ok()) {
+        if !tmpfs.iter().map(PathBuf::as_path).chain(tmp).any(|t| p.starts_with(t)) && !v.contains(&p) {
+            v.push(p);
+        }
+    }
+    v
 }
 
 pub fn home_dir() -> Option<PathBuf> {
@@ -278,22 +324,22 @@ fn wrap_inner(mech: Mechanism, policy: &Policy, program: &str, args: &[String]) 
             // elsewhere hidden. The network namespace already separates
             // abstract sockets. Writable paths and the proxy socket are
             // bound back below, wherever they are.
-            for r in RUN_DIRS {
-                if std::fs::symlink_metadata(r).is_ok_and(|m| m.is_dir()) {
-                    a.extend(["--tmpfs".into(), r.into()]);
-                }
+            // Each real folder behind `/run` and `/var/run`, wherever they
+            // point.
+            let writable = policy.writable_all();
+            let run = run_tmpfs_in(Path::new("/"), &writable);
+            for r in &run {
+                a.extend(["--tmpfs".into(), r.to_string_lossy().into_owned()]);
             }
-            for (target, link) in run_links() {
+            for (target, link) in run_links_in(&run) {
                 a.extend([
                     "--symlink".into(),
                     target.to_string_lossy().into_owned(),
                     link.to_string_lossy().into_owned(),
                 ]);
             }
-            let writable = policy.writable_all();
-            let ipc = host_ipc_paths()
-                .into_iter()
-                .filter(|p| !RUN_DIRS.iter().chain(&["/tmp"]).any(|r| p.starts_with(r)) && !policy.hidden.contains(p));
+            let tmp = std::fs::symlink_metadata("/tmp").is_ok_and(|m| m.is_dir()).then_some(Path::new("/tmp"));
+            let ipc = ipc_to_hide(host_ipc_paths(), &run, tmp).into_iter().filter(|p| !policy.hidden.contains(p));
             for h in policy.hidden.iter().cloned().chain(ipc).collect::<Vec<_>>().iter() {
                 // Never hide something that contains a writable path.
                 if h.exists() && !writable.iter().any(|w| w.starts_with(h)) {
@@ -798,6 +844,98 @@ mod seatbelt_tests {
         let wt = policy.worktree.to_string_lossy().into_owned();
         let bind = w.args.windows(2).position(|x| x[0] == "--bind" && x[1] == wt).unwrap();
         assert!(run < bind, "{:?}", w.args);
+    }
+
+    /// SEC-14: `/run` and `/var/run` are emptied wherever they point, each
+    /// real folder once; never the root or a folder holding the worktree,
+    /// whose sockets are hidden one by one instead.
+    #[cfg(unix)]
+    #[test]
+    fn run_folders_are_emptied_wherever_they_point() {
+        use std::os::unix::fs::symlink;
+        let fake = |run: Option<&str>, var_run: Option<&str>| {
+            let t = tempfile::tempdir().unwrap();
+            let root = t.path().canonicalize().unwrap();
+            for d in ["run", "var", "state/run", "srv/run", "nix/system", "home/ann/wt"] {
+                std::fs::create_dir_all(root.join(d)).unwrap();
+            }
+            for (lit, to) in [("run", run), ("var/run", var_run)] {
+                if let Some(to) = to {
+                    let _ = std::fs::remove_dir(root.join(lit));
+                    symlink(to, root.join(lit)).unwrap();
+                } else {
+                    std::fs::create_dir_all(root.join(lit)).unwrap();
+                }
+            }
+            (t, root)
+        };
+        let sock = |root: &Path| {
+            let p = root.join("var/run/docker.sock");
+            std::fs::write(&p, "").unwrap();
+            vec![p, root.join("run/podman/podman.sock")]
+        };
+
+        // `/var/run -> ../run`: one tmpfs, over the real `/run`.
+        let wt = |root: &Path| vec![root.join("home/ann/wt")];
+        let (_t, root) = fake(None, Some("../run"));
+        let run = run_tmpfs_in(&root, &wt(&root));
+        assert_eq!(run, [root.join("run")]);
+        assert!(ipc_to_hide(sock(&root), &run, None).is_empty());
+
+        // Both links to other folders: each real folder emptied, and its
+        // own links to folders outside recreated.
+        let (_t, root) = fake(Some("state/run"), Some("../srv/run"));
+        symlink("../../nix/system", root.join("state/run/current-system")).unwrap();
+        symlink("../run", root.join("srv/run/inside")).unwrap();
+        let run = run_tmpfs_in(&root, &wt(&root));
+        assert_eq!(run, [root.join("state/run"), root.join("srv/run")]);
+        assert!(ipc_to_hide(sock(&root), &run, None).is_empty());
+        let links = run_links_in(&run);
+        assert_eq!(links, [(PathBuf::from("../../nix/system"), root.join("state/run/current-system"))]);
+
+        // `/var/run -> ..` (the root itself): never emptied; the socket
+        // behind it is hidden at its real path.
+        let (_t, root) = fake(None, Some(".."));
+        let run = run_tmpfs_in(&root, &wt(&root));
+        assert_eq!(run, [root.join("run")]);
+        assert_eq!(ipc_to_hide(sock(&root), &run, None), [root.join("docker.sock")]);
+
+        // `/var/run -> ../home`, which holds the worktree: not emptied, so
+        // the socket in it is hidden on its own.
+        let (_t, root) = fake(None, Some("../home"));
+        let run = run_tmpfs_in(&root, &wt(&root));
+        assert_eq!(run, [root.join("run")]);
+        assert_eq!(ipc_to_hide(sock(&root), &run, None), [root.join("home/docker.sock")]);
+        // Without the worktree there it is emptied.
+        assert_eq!(run_tmpfs_in(&root, &[]), [root.join("run"), root.join("home")]);
+
+        // A writable path in the real `/run` does not keep it from being
+        // emptied (it is bound back afterwards).
+        let (_t, root) = fake(None, None);
+        let run = run_tmpfs_in(&root, &[root.join("run/user/1000/polyph")]);
+        assert_eq!(run, [root.join("run"), root.join("var/run")]);
+    }
+
+    #[test]
+    fn ipc_env_names_the_known_endpoints() {
+        for k in [
+            "DBUS_SESSION_BUS_ADDRESS",
+            "DBUS_SYSTEM_BUS_ADDRESS",
+            "DBUS_STARTER_ADDRESS",
+            "SSH_AUTH_SOCK",
+            "XAUTHORITY",
+            "PULSE_SERVER",
+            "PIPEWIRE_REMOTE",
+            "KRB5CCNAME",
+            "VSCODE_IPC_HOOK_CLI",
+            "KITTY_LISTEN_ON",
+            "WEZTERM_UNIX_SOCKET",
+            "NVIM",
+            "GNOME_KEYRING_CONTROL",
+            "NOTIFY_SOCKET",
+        ] {
+            assert!(IPC_ENV.contains(&k), "{k}");
+        }
     }
 
     #[test]
