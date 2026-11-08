@@ -49,14 +49,17 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> 
     tokio::task::spawn_blocking(f).await.map_err(|e| ApiError::Failed(e.to_string()))
 }
 
-/// Creates (or reuses) the worktree for a task in the repository at `cwd`.
-/// An existing branch is given to an agent only if this daemon created it
-/// for a task (recorded in `home`): a card's branch is shared room data,
-/// and naming `main` or another task's branch there must not hand that
-/// branch to an agent (SEC-13).
+/// Creates (or reuses) the worktree for the task `task` (its short id) in
+/// the repository at `cwd`. An existing branch is given to an agent only if
+/// this daemon created it for a task in that repository (recorded per
+/// repository in `home`, not per task) and it lies in this task's own
+/// folder, `polyph/<task>/`: a card's branch is shared room data, and
+/// naming `main` or another task's branch there must not hand that branch
+/// to an agent (SEC-13).
 pub async fn prepare_worktree(
     home: PathBuf,
     cwd: PathBuf,
+    task: String,
     branch: String,
     base: Option<String>,
 ) -> Result<TaskWorktree, ApiError> {
@@ -70,6 +73,12 @@ pub async fn prepare_worktree(
                 "refusing to give branch {branch} to an agent: Polyph did not create it for a task in {}. \
                  Clear the card's branch so the task gets a new one, or rename that branch",
                 main.root().display()
+            )));
+        }
+        if existed && polyph_git::task_folder(&branch) != Some(task.as_str()) {
+            return Err(ApiError::BadRequest(format!(
+                "refusing to give branch {branch} to an agent: Polyph created it for another task, not {task}. \
+                 Clear the card's branch so the task gets a new one"
             )));
         }
         let base = match base {
@@ -1007,26 +1016,44 @@ mod tests {
         git(d.path(), &["branch", "polyph/ab12cd34/planted"]);
         let (h, r) = (home.path().to_path_buf(), d.path().to_path_buf());
         let main = Some("main".to_string());
+        let task = "ab12cd34".to_string();
         for b in ["main", "polyph/ab12cd34/planted"] {
-            let e = prepare_worktree(h.clone(), r.clone(), b.into(), main.clone()).await.unwrap_err().to_string();
+            let e = prepare_worktree(h.clone(), r.clone(), task.clone(), b.into(), main.clone())
+                .await
+                .unwrap_err()
+                .to_string();
             assert!(e.contains(&format!("refusing to give branch {b} to an agent")), "{e}");
         }
         assert!(!d.path().join(WORKTREES).join("main").exists());
 
         let b = polyph_git::task_branch("Add login", "ab12cd34");
-        let wt = prepare_worktree(h.clone(), r.clone(), b.clone(), main.clone()).await.unwrap();
+        let wt = prepare_worktree(h.clone(), r.clone(), task.clone(), b.clone(), main.clone()).await.unwrap();
         assert_eq!(wt.branch, "polyph/ab12cd34/add-login");
         assert!(crate::folders::created_task_branch(&h, &r, &b));
         // The next agent on the task, with the worktree there or gone.
-        prepare_worktree(h.clone(), r.clone(), b.clone(), main.clone()).await.unwrap();
+        prepare_worktree(h.clone(), r.clone(), task.clone(), b.clone(), main.clone()).await.unwrap();
         let m = Repo::open(&r).unwrap();
         m.remove_worktree(&wt.path).unwrap();
-        let again = prepare_worktree(h.clone(), r.clone(), b.clone(), main.clone()).await.unwrap();
+        let again = prepare_worktree(h.clone(), r.clone(), task.clone(), b.clone(), main.clone()).await.unwrap();
         assert_eq!(Repo::open(&r).unwrap().open_worktree(&again.path).unwrap().current_branch(), Some(b));
         // Another daemon home never created it.
         let other = tempfile::tempdir().unwrap();
-        let e = prepare_worktree(other.path().to_path_buf(), r, wt.branch, main).await.unwrap_err();
+        let e = prepare_worktree(other.path().to_path_buf(), r.clone(), task.clone(), wt.branch.clone(), main.clone())
+            .await
+            .unwrap_err();
         assert!(e.to_string().contains("did not create it"), "{e}");
+        // Another task in the same repository: the record is per
+        // repository, so the branch's folder must be the task's own.
+        let e = prepare_worktree(h.clone(), r.clone(), "ef56ab78".into(), wt.branch.clone(), main.clone())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("refusing to give branch") && e.contains("another task"), "{e}");
+        // Even a branch the daemon recorded that lies outside any task folder.
+        git(d.path(), &["branch", "flat"]);
+        crate::folders::record_task_branch(&h, &r, "flat").unwrap();
+        let e = prepare_worktree(h, r, task, "flat".into(), main).await.unwrap_err().to_string();
+        assert!(e.contains("another task"), "{e}");
     }
 
     /// SEC-13: the merge approval names the commit the queue merges and

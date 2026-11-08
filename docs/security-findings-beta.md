@@ -389,13 +389,29 @@ Summary:
     but cannot commit. A task agent's branch is `polyph/<task id>/<name>`;
     it writes only its task's folder in `refs/heads/polyph/` and in
     `logs/refs/heads/polyph/` (other entries there at its start stay
-    read-only) and its own `worktrees/<name>/`, whose `commondir`, `gitdir`,
-    `config.worktree` and `objects/info/` stay read-only, as do other
-    worktrees' folders. The shared `objects/`, `main`, every other ref and
-    reflog, and `objects/info/alternates` are read-only (bubblewrap:
+    read-only) and its own `worktrees/<name>/`, whose `commondir`, `gitdir`
+    and `config.worktree` files stay read-only, as do other worktrees'
+    folders. Its own object store, `worktrees/<name>/objects`, is writable
+    but mounted on its own, so it cannot be renamed and replaced; that
+    store's `info/` (where an `alternates` file would go) is read-only.
+    The shared `objects/` with its `info/`, `main`, and every other ref
+    and reflog are read-only (bubblewrap:
     `crates/polyph-sandbox/tests/sandbox.rs`,
     `bubblewrap_lets_a_task_agent_move_only_its_own_branch` and the two
-    earlier cases; Seatbelt: profile unit tests only, not run on a Mac).
+    earlier cases; Seatbelt: profile unit tests and
+    `seatbelt_keeps_the_checkouts_git_directory_read_only` and
+    `seatbelt_lets_a_task_agent_move_only_its_own_branch`, which run on
+    the macOS CI runner and had their first run there).
+  - Hard links into writable folders under Seatbelt (possibly high, found
+    in review: `(allow default)` allowed `file-link`, so an agent could
+    hard-link `~/.profile` into a folder it writes, and the path-only link
+    check runs before git writes): both Seatbelt profiles, the agent's and
+    the daemon's confined git, deny `file-link` except from files in their
+    writable folders, and never from the read-only paths inside them
+    (`polyph-git` test `confine::tests::seatbelt_refuses_hard_links_from_outside`,
+    the Seatbelt task test above; macOS CI only). Under bubblewrap each
+    writable folder is its own mount and Linux refuses the link
+    (`EXDEV`), checked in the bubblewrap task test.
   - Writable `objects/` (high, found in review: an agent replaced a loose
     object or added a pack under an existing hash, so later checkouts and
     the fast-forward of the person's checkout wrote its content, and could
@@ -458,8 +474,10 @@ Summary:
     `info/`, naming the path (`polyph-git` test
     `links_in_the_git_directory_stop_writes`; bubblewrap test
     `a_linked_reflog_stops_the_daemons_commit`, the auditor's repro).
-  - `objects/info/alternates` (medium, found in review): `objects/info/` is
-    read-only to task agents, and the daemon refuses to run git while an
+  - `objects/info/alternates` (medium, found in review): the shared
+    store's `info/` and the task's own store's `info/` are read-only to
+    task agents, the task's store cannot be renamed and replaced (its own
+    mount), and the daemon refuses to run git while an
     `alternates` or `http-alternates` file exists, since it never creates
     one (`polyph-git` test `alternates_are_refused`).
   - The `commondir` redirect found in review: the daemon names the git

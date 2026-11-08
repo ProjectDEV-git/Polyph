@@ -374,7 +374,7 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
             let branch = card.as_ref().and_then(|c| c.branch.clone()).unwrap_or_else(|| {
                 polyph_git::task_branch(card.as_ref().map(|c| c.title.as_str()).unwrap_or(""), &t.short())
             });
-            Some(crate::tasks::prepare_worktree(shared.paths.home.clone(), cwd.clone(), branch, None).await?)
+            Some(crate::tasks::prepare_worktree(shared.paths.home.clone(), cwd.clone(), t.short(), branch, None).await?)
         }
         _ => None,
     };
@@ -602,6 +602,10 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
 /// the agent (Landlock, Windows, container mode; SEC-13).
 pub const GIT_UNPROTECTED: &str = "agent-warning-git-unprotected";
 
+/// Message key: the daemon could not take a task agent's commits into the
+/// shared object store after a turn (SEC-13); `$branch` names the branch.
+pub const TASK_IMPORT_FAILED: &str = "agent-warning-task-import-failed";
+
 /// Whether `mech` mounts the checkout's git directory as
 /// `polyph_git::sandbox_git` asks (with no sandbox there is nothing to keep
 /// from the agent: it runs as the person).
@@ -713,6 +717,19 @@ async fn run_turn(shared: &Shared, rt: &RoomRuntime, h: &AgentHandle, text: Opti
         .await;
         if let Ok(Err(e)) = took {
             warn!(error = %e, "could not take the task's commits into the shared object store");
+            // Until it works, the branch names commits only the task's own
+            // store has: say so where people look.
+            shared.emit(crate::events::ApiEvent::room_kind(
+                &rt.id,
+                "agent_warning",
+                json!({
+                    "agent": h.agent.id.to_hex(),
+                    "label": h.agent.label,
+                    "key": TASK_IMPORT_FAILED,
+                    "branch": h.task_wt.as_ref().map(|w| w.branch.clone()),
+                    "error": e.to_string(),
+                }),
+            ));
         }
     }
     let resp = match r {
@@ -812,6 +829,9 @@ mod tests {
             assert!(l.has(GIT_UNPROTECTED), "{lang}");
             let text = polyph_i18n::tr!(l, GIT_UNPROTECTED, sandbox = "landlock");
             assert!(text.contains("landlock") && text.contains("bubblewrap"), "{lang}: {text}");
+            assert!(l.has(TASK_IMPORT_FAILED), "{lang}");
+            let text = polyph_i18n::tr!(l, TASK_IMPORT_FAILED, branch = "polyph/ab12/x");
+            assert!(text.contains("polyph/ab12/x"), "{lang}: {text}");
         }
     }
 }

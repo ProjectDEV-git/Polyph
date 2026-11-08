@@ -19,15 +19,25 @@ agents doctor` shows the mechanism in use.
   stays read-only, and Polyph copies the task's commits into it at the end
   of each turn and when the task finishes or is handed over, checking
   every object's hash. Other entries in its task folders when it starts,
-  and the `commondir`, `gitdir` and `config.worktree` files and
-  `objects/info/` in its own folder, stay read-only. Every other ref,
+  the `commondir`, `gitdir` and `config.worktree` files in its own folder,
+  and its own store's `info/` (`worktrees/<name>/objects/info/`, where an
+  `alternates` file would go) stay read-only. Its store is mounted on its
+  own, so it cannot be renamed and replaced with one of the agent's
+  making. Every other ref,
   `main` included, and every other reflog are read-only. A branch outside
   its own task's folder gets no commits from the agent; the daemon commits
   the work when the task finishes. Landlock, Windows and container mode do
   not do this (see `docs/security.md`).
 - Polyph's own git writes in a task's folders (its commits for the agent,
   moving branches) run in a sandbox too, bubblewrap or Seatbelt, where
-  only those folders and the worktree are writable.
+  only those folders and the worktree are writable. On Landlock, Windows
+  and in container mode (and where bubblewrap cannot create namespaces)
+  they run unconfined, with only the daemon's check for links in `.git`;
+  the daemon logs one line at start when that is the case.
+- **Hard links** only between files in the folders it may write. Under
+  Seatbelt the profile denies `file-link` from anywhere else, and from the
+  read-only paths inside those folders; under bubblewrap every writable
+  folder is its own mount, and Linux refuses links across mounts.
 - Its own **config/cache directory** (for example `~/.claude` for Claude Code),
   so it can keep its login and session files.
 - A **private temp directory**, exported as `TMPDIR`. The shared `/tmp` is

@@ -136,11 +136,17 @@ async fn folders_for(d: &Daemon, room: Option<&str>, dir: Option<&Path>) -> Resu
 async fn fetch_all(d: &Daemon) {
     for l in crate::folders::load(&d.shared.paths.home) {
         let home = d.shared.paths.home.clone();
-        let _ = tokio::task::spawn_blocking(move || {
+        let path = l.path.clone();
+        let r = tokio::task::spawn_blocking(move || {
             let r = crate::folders::open_for_network(&home, &l.path)?;
             if r.remote_url("origin").is_some() { r.fetch("origin") } else { Ok(()) }
         })
         .await;
+        match r {
+            Ok(Err(e)) => tracing::warn!(folder = %path.display(), error = %e, "background fetch failed"),
+            Err(e) => tracing::warn!(folder = %path.display(), error = %e, "background fetch did not finish"),
+            Ok(Ok(())) => {}
+        }
     }
 }
 

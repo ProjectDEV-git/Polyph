@@ -163,6 +163,7 @@ help-budget-set = Set a budget for the room or one member.
 
 agent-started = Started { $label } (sandbox: { $sandbox }).
 agent-warning-git-unprotected = Warning: the { $sandbox } sandbox does not protect this checkout's git settings from the agent. It can change the config and hooks git runs here. Polyph no longer uses this checkout's own git settings for its fetches and pushes. To avoid this, give the agent a task (`polyph agent start --task ...`) or use bubblewrap.
+agent-warning-task-import-failed = Warning: Polyph could not copy the commits on { $branch } into the repository's shared object store. Until it can, git outside the task's worktree may report a bad object for that branch. Polyph tries again after the agent's next turn, when the task finishes, and when the daemon starts.
 agent-stopped = Stopped.
 agents-empty = No agents are running in this room.
 agent-line = { $label }  { $state }

@@ -148,6 +148,16 @@ later.
   mode, an agent working in your own checkout without a task can change that
   checkout's git settings and hooks, which your own git then runs. The
   agent starts with a warning. Use tasks or bubblewrap there.
+- Under Landlock, on Windows and in container mode, task agents cannot
+  commit either: their task folders in `.git` are not opened to them.
+  Polyph commits their work when the task finishes. Polyph's own git
+  writes run unconfined there too; the daemon logs a line at start.
+- A task agent's own commits live in its worktree's object store until
+  Polyph copies them into the repository's shared store, after each turn,
+  when the task finishes and when the daemon starts. In that window, git
+  run outside the task's worktree (`git log --all`, `git gc`) can report
+  a bad object for the task's branch. If the copy fails, the agent's
+  room shows a warning naming the branch.
 - On macOS and Windows, sandboxing has only been tested in CI.
 - On Windows, the daemon's local API token relies on your user profile's
   folder permissions rather than its own.

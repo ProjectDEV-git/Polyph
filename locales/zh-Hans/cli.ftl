@@ -142,6 +142,7 @@ help-budget-set = 为房间或某位成员设置预算。
 
 agent-started = 已启动 { $label }（沙箱：{ $sandbox }）。
 agent-warning-git-unprotected = 警告：{ $sandbox } 沙箱无法保护此检出的 git 设置不被智能体修改。智能体可以更改 git 在此运行的配置和钩子。Polyph 在获取和推送时将不再使用此检出自身的 git 设置。要避免这种情况，请给智能体分配任务（`polyph agent start --task ...`）或使用 bubblewrap。
+agent-warning-task-import-failed = 警告：Polyph 无法将 { $branch } 上的提交复制到仓库的共享对象库。在复制成功之前，在任务工作树之外运行的 git 可能会对该分支报告 bad object。Polyph 会在智能体的下一轮之后、任务完成时以及守护进程启动时重试。
 agent-stopped = 已停止。
 agents-empty = 此房间没有正在运行的智能体。
 agent-line = { $label }  { $state }

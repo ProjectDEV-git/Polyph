@@ -113,8 +113,33 @@ pub fn record_task_branch(home: &Path, root: &Path, branch: &str) -> std::io::Re
     crate::paths::write_private(&branches_file(home), &serde_json::to_vec_pretty(&all).unwrap_or_default())
 }
 
+/// Takes the commits of every recorded task branch that is checked out in
+/// a worktree into its repository's shared object store (SEC-13). The
+/// daemon does this after each turn; at start it catches up on a turn it
+/// did not finish (a crash, a stop mid-turn). Returns the repository,
+/// branch and error of each that failed.
+pub fn import_task_branches(home: &Path) -> Vec<(PathBuf, String, String)> {
+    let all = {
+        let _g = BRANCHES.lock();
+        created(home)
+    };
+    let mut failed = vec![];
+    for (root, branches) in all {
+        let Ok(main) = polyph_git::Repo::open(&root) else { continue };
+        let Ok(wts) = main.worktrees() else { continue };
+        for (path, branch) in wts {
+            let Some(b) = branch.filter(|b| branches.contains(b)) else { continue };
+            if let Err(e) = main.open_worktree(&path).and_then(|w| w.import_branch(&b)) {
+                failed.push((root.clone(), b, e.to_string()));
+            }
+        }
+    }
+    failed
+}
+
 /// Whether the daemon created `branch` in the repository at `root`
-/// ([`record_task_branch`]).
+/// ([`record_task_branch`]). The record is per repository, not per task:
+/// callers also check that the branch lies in the task's own folder.
 pub fn created_task_branch(home: &Path, root: &Path, branch: &str) -> bool {
     let _g = BRANCHES.lock();
     let root = polyph_git::canonical(root).unwrap_or_else(|_| root.to_path_buf());
@@ -159,6 +184,49 @@ mod tests {
         assert!(room_for(home.path(), home.path()).is_none());
         assert_eq!(unlink(home.path(), Some("r2"), None).unwrap(), 1);
         assert!(load(home.path()).is_empty());
+    }
+
+    /// SEC-13: at start the daemon takes in the commits a task agent made
+    /// in its own object store during a turn it did not finish.
+    #[test]
+    fn recorded_task_branches_are_imported() {
+        let home = tempfile::tempdir().unwrap();
+        let t = tempfile::tempdir().unwrap();
+        let git = |dir: &Path, env: &[(String, String)], args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(["-c", "user.name=a", "-c", "user.email=a@b", "-c", "commit.gpgSign=false"])
+                .args(args)
+                .envs(env.iter().cloned())
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        let repo = t.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &[], &["init", "-q", "-b", "main"]);
+        git(&repo, &[], &["commit", "-q", "--allow-empty", "-m", "first"]);
+        let main = polyph_git::Repo::open(&repo).unwrap();
+        let branch = "polyph/ab12/work";
+        let wt = main.add_worktree(&repo.join(".polyph/worktrees/w"), branch, "main").unwrap();
+        record_task_branch(home.path(), &repo, branch).unwrap();
+        // The agent commits into its own store, as in its sandbox.
+        let env = polyph_git::sandbox_git(wt.root(), Some(branch)).env;
+        assert!(!env.is_empty());
+        std::fs::write(wt.root().join("a.rs"), "fn a() {}\n").unwrap();
+        git(wt.root(), &env, &["add", "a.rs"]);
+        git(wt.root(), &env, &["commit", "-q", "-m", "agent"]);
+        let tip = git(wt.root(), &env, &["rev-parse", "HEAD"]);
+        assert!(main.show(&tip, "a.rs").is_none(), "the shared store has it already");
+        assert!(import_task_branches(home.path()).is_empty());
+        assert_eq!(main.show(&tip, "a.rs").as_deref(), Some("fn a() {}\n"));
+        // A failure is reported, not dropped.
+        std::fs::write(main.common_dir().unwrap().join("worktrees/w/objects/info/alternates"), "/x\n").unwrap();
+        let failed = import_task_branches(home.path());
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert_eq!(failed[0].1, branch);
     }
 
     /// A checkout an agent could write the git settings of is fetched with

@@ -142,6 +142,7 @@ help-budget-set = ルームまたはメンバーの予算を設定します。
 
 agent-started = { $label } を起動しました（サンドボックス: { $sandbox }）。
 agent-warning-git-unprotected = 警告: { $sandbox } サンドボックスでは、このチェックアウトの git 設定をエージェントから保護できません。エージェントは、ここで git が実行する設定やフックを変更できます。Polyph はフェッチとプッシュにこのチェックアウト独自の git 設定を使わなくなります。避けるには、エージェントにタスクを渡す（`polyph agent start --task ...`）か、bubblewrap を使ってください。
+agent-warning-task-import-failed = 警告: Polyph は { $branch } のコミットをリポジトリの共有オブジェクトストアにコピーできませんでした。コピーできるまで、タスクのワークツリー以外で git を実行すると、このブランチについて bad object と表示されることがあります。Polyph はエージェントの次のターンの後、タスクの完了時、デーモンの起動時に再試行します。
 agent-stopped = 停止しました。
 agents-empty = このルームで動いているエージェントはありません。
 agent-line = { $label }  { $state }

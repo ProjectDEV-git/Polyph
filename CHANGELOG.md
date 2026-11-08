@@ -16,7 +16,16 @@ GitHub release page.
   at the end of each turn and when the task finishes, checking every
   object's hash. Polyph's own git writes in a task's folders run in the
   sandbox (bubblewrap or Seatbelt). Merge approvals name the commit to be
-  merged and its diff stat.
+  merged and its diff stat: the approval's branch text now reads
+  `<branch> at <sha12> (<diff stat>)`.
+- **Agents without a task can no longer commit in your own checkout**
+  under bubblewrap and Seatbelt: its `.git` is read-only to them. Give
+  them a task, or commit yourself.
+- **Seatbelt denies hard links from outside an agent's writable folders**,
+  for agents and for Polyph's own git writes.
+- **The daemon logs one line at start when its own git writes run without
+  a sandbox** (Landlock, Windows, container mode), and warns in the room
+  when a task's commits could not be copied into the shared object store.
 - **`polyph feedback`.** Opens a prefilled GitHub issue with your Polyph
   version, OS, architecture, Linux distro, surface and whether the daemon
   runs. It leaves out room names, paths, chat, code, user and host names and
