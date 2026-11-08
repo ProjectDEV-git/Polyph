@@ -353,20 +353,34 @@ fn sb_quote(p: &Path) -> String {
     p.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// A Seatbelt rule for writes and the same for hard links: `verb` is
+/// `allow` or `deny`, `filter` `subpath` or `literal`.
+fn sb_rule(verb: &str, filter: &str, p: &Path) -> String {
+    let q = sb_quote(p);
+    format!("({verb} file-write* ({filter} \"{q}\"))\n({verb} file-link ({filter} \"{q}\"))\n")
+}
+
 /// Seatbelt profile: everything readable except hidden paths; writes only to
 /// the worktree, writable paths and temp; network only to the proxy.
+///
+/// Hard links too (`file-link`): `(allow default)` would let the agent link a
+/// file of the person's (`~/.profile`) into a folder it writes, where git
+/// run by the daemon as the person could append to it. A link is allowed
+/// only from a file in a writable folder, and never from a read-only one
+/// inside it. Bubblewrap needs no rule: every writable folder is its own
+/// mount, and Linux refuses links across mounts.
 pub fn seatbelt_profile(policy: &Policy, proxy_port: u16) -> String {
-    let mut s = String::from("(version 1)\n(allow default)\n(deny file-write*)\n");
+    let mut s = String::from("(version 1)\n(allow default)\n(deny file-write*)\n(deny file-link)\n");
     // Device files only; shared temp folders (/private/tmp, /private/var/folders)
     // stay read-only: the agent gets its own TMPDIR through the policy.
     s.push_str("(allow file-write* (literal \"/dev/null\") (literal \"/dev/tty\") (regex #\"^/dev/fd/\"))\n");
     for w in policy.writable_all() {
-        s.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", sb_quote(&w)));
+        s.push_str(&sb_rule("allow", "subpath", &w));
         // Seatbelt matches resolved paths (/var is /private/var on macOS).
         if let Ok(real) = w.canonicalize()
             && real != w
         {
-            s.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", sb_quote(&real)));
+            s.push_str(&sb_rule("allow", "subpath", &real));
         }
     }
     // Later rules win: read-only paths inside the writable ones, and their
@@ -391,10 +405,10 @@ pub fn seatbelt_profile(policy: &Policy, proxy_port: u16) -> String {
         if late {
             for g in &git {
                 for p in both(g) {
-                    push(format!("(allow file-write* (subpath \"{}\"))\n", sb_quote(&p)));
+                    push(sb_rule("allow", "subpath", &p));
                 }
                 for p in both(g) {
-                    push(format!("(deny file-write* (literal \"{}\"))\n", sb_quote(&p)));
+                    push(sb_rule("deny", "literal", &p));
                 }
             }
         }
@@ -403,7 +417,7 @@ pub fn seatbelt_profile(policy: &Policy, proxy_port: u16) -> String {
             let dir = (!writable.contains(dir) && !git.contains(dir)).then_some(("literal", dir.clone()));
             for (f, p) in std::iter::once((filter, r.clone())).chain(dir) {
                 for p in both(&p) {
-                    push(format!("(deny file-write* ({f} \"{}\"))\n", sb_quote(&p)));
+                    push(sb_rule("deny", f, &p));
                 }
             }
         }
@@ -594,6 +608,12 @@ mod seatbelt_tests {
         }
         assert!(!p.contains("info\""), "{p}");
         assert!(!p.contains("elsewhere-config"), "{p}");
+        // Hard links: denied first, then only from the worktree, and never
+        // from the read-only paths in it.
+        let none = p.find("(deny file-link)\n").unwrap_or_else(|| panic!("{p}"));
+        let link_allow = p.find(&format!("(allow file-link (subpath \"{}\"))", sb_quote(&policy.worktree))).unwrap();
+        let link_deny = p.find(&format!("(deny file-link (literal \"{}\"))", sb_quote(&git.join("config")))).unwrap();
+        assert!(none < link_allow && link_allow < link_deny, "{p}");
         assert!(!p.contains(&format!("(deny file-write* (literal \"{}\"))", sb_quote(&policy.worktree))), "{p}");
     }
 
@@ -618,15 +638,24 @@ mod seatbelt_tests {
 
     /// A task agent: the shared git directory is outside its worktree, so
     /// read-only already; its commit folders are opened, and the files in
-    /// its own worktree folder closed again after them.
+    /// its own worktree folder closed again after them. The shape
+    /// `polyph_git::sandbox_git` gives for branch `polyph/t1/a` (its task
+    /// folders in `refs/` and `logs/`, its own folder, then its own object
+    /// store on its own).
     fn task_policy(t: &Path) -> (Policy, PathBuf, PathBuf) {
         let common = t.join("repo").join(".git");
         let own = common.join("worktrees").join("t1");
-        std::fs::create_dir_all(&own).unwrap();
-        for d in ["objects/info", "refs/heads/polyph", "logs/refs/heads/polyph"] {
+        for d in ["objects/info", "refs/heads/polyph/t1", "logs/refs/heads/polyph/t1", "refs/heads/polyph/t2"] {
             std::fs::create_dir_all(common.join(d)).unwrap();
         }
-        for f in ["refs/heads/main", "refs/heads/polyph/t1", "refs/heads/polyph/t2", "logs/refs/heads/polyph/t2"] {
+        std::fs::create_dir_all(own.join("objects").join("info")).unwrap();
+        for f in [
+            "refs/heads/main",
+            "refs/heads/polyph/t1/a",
+            "refs/heads/polyph/t1/other",
+            "logs/refs/heads/polyph/t1/other",
+            "refs/heads/polyph/t2/b",
+        ] {
             std::fs::write(common.join(f), "").unwrap();
         }
         for f in ["commondir", "gitdir", "config.worktree"] {
@@ -636,13 +665,11 @@ mod seatbelt_tests {
         let worktree = t.join("repo").join(".polyph").join("t1");
         std::fs::create_dir_all(&worktree).unwrap();
         std::fs::write(worktree.join(".git"), "").unwrap();
-        // As `polyph_git::sandbox_git` gives them for branch `polyph/t1`.
-        let mut read_only = vec![common.clone(), worktree.join(".git"), common.join("objects/info")];
-        read_only.extend(["commondir", "gitdir", "config.worktree"].iter().map(|f| own.join(f)));
-        read_only.extend([common.join("refs/heads/polyph/t2"), common.join("logs/refs/heads/polyph/t2")]);
-        let mut git_writable: Vec<PathBuf> =
-            ["objects", "refs/heads/polyph", "logs/refs/heads/polyph"].iter().map(|d| common.join(d)).collect();
-        git_writable.push(own.clone());
+        let (refs, logs) = (common.join("refs/heads/polyph/t1"), common.join("logs/refs/heads/polyph/t1"));
+        let mut read_only = vec![common.clone(), worktree.join(".git")];
+        read_only.extend(["commondir", "gitdir", "config.worktree", "objects/info"].iter().map(|f| own.join(f)));
+        read_only.extend([refs.join("other"), logs.join("other")]);
+        let git_writable = vec![refs, logs, own.clone(), own.join("objects")];
         let policy = Policy {
             worktree,
             writable: vec![],
@@ -671,22 +698,34 @@ mod seatbelt_tests {
             })
         };
         let own_rw = pos(&["--bind", &s(&own), &s(&own)]);
-        let objects = pos(&["--bind", &s(&common.join("objects")), &s(&common.join("objects"))]);
+        let objects = own.join("objects");
+        let objects_rw = pos(&["--bind", &s(&objects), &s(&objects)]);
         let commondir = pos(&["--ro-bind", &s(&own.join("commondir")), &s(&own.join("commondir"))]);
         let gitdir = pos(&["--ro-bind", &s(&own.join("gitdir")), &s(&own.join("gitdir"))]);
         let link = pos(&["--ro-bind", &s(&policy.worktree.join(".git")), &s(&policy.worktree.join(".git"))]);
-        assert!(own_rw < commondir && own_rw < gitdir && objects < commondir && link < own_rw, "{:?}", w.args);
-        // Only the task branch's folders, with the other branches and
-        // `objects/info` read-only again after them.
-        let (refs, logs) = (common.join("refs/heads/polyph"), common.join("logs/refs/heads/polyph"));
+        assert!(own_rw < commondir && own_rw < gitdir && link < own_rw, "{:?}", w.args);
+        // Its own object store is a mount of its own, after its folder, so
+        // it cannot be renamed; its `info/` read-only after that.
+        let info = objects.join("info");
+        assert!(own_rw < objects_rw && objects_rw < pos(&["--ro-bind", &s(&info), &s(&info)]), "{:?}", w.args);
+        // Only the task's folders, with the other branches in them
+        // read-only again after them.
+        let (refs, logs) = (common.join("refs/heads/polyph/t1"), common.join("logs/refs/heads/polyph/t1"));
         let refs_rw = pos(&["--bind", &s(&refs), &s(&refs)]);
         let logs_rw = pos(&["--bind", &s(&logs), &s(&logs)]);
-        for p in [refs.join("t2"), logs.join("t2")] {
+        for p in [refs.join("other"), logs.join("other")] {
             assert!(pos(&["--ro-bind", &s(&p), &s(&p)]) > refs_rw.max(logs_rw), "{:?}", w.args);
         }
-        let info = common.join("objects/info");
-        assert!(pos(&["--ro-bind", &s(&info), &s(&info)]) > objects, "{:?}", w.args);
-        for p in [common.join("refs"), common.join("logs"), common.join("refs/heads"), refs.join("t1")] {
+        for p in [
+            common.join("refs"),
+            common.join("logs"),
+            common.join("refs/heads"),
+            common.join("refs/heads/polyph"),
+            common.join("refs/heads/polyph/t2"),
+            common.join("objects"),
+            common.join("objects/info"),
+            refs.join("a"),
+        ] {
             assert!(!w.args.iter().any(|a| *a == s(&p)), "{p:?} in {:?}", w.args);
         }
         // The shared directory is outside the worktree: read-only already, and
@@ -698,17 +737,31 @@ mod seatbelt_tests {
         let allow = at(format!("(allow file-write* (subpath \"{}\"))", sb_quote(&own)));
         let pin = at(format!("(deny file-write* (literal \"{}\"))", sb_quote(&own)));
         let deny = at(format!("(deny file-write* (literal \"{}\"))", sb_quote(&own.join("commondir"))));
+        let objects_pin = at(format!("(deny file-write* (literal \"{}\"))", sb_quote(&objects)));
         let refs_allow = at(format!("(allow file-write* (subpath \"{}\"))", sb_quote(&refs)));
         at(format!("(allow file-write* (subpath \"{}\"))", sb_quote(&logs)));
-        for d in [refs.join("t2"), logs.join("t2")] {
+        for d in [refs.join("other"), logs.join("other")] {
             assert!(at(format!("(deny file-write* (literal \"{}\"))", sb_quote(&d))) > refs_allow, "{p}");
         }
-        at(format!("(deny file-write* (subpath \"{}\"))", sb_quote(&info)));
-        for d in [common.join("refs"), common.join("logs"), common.join("refs/heads")] {
+        assert!(at(format!("(deny file-write* (subpath \"{}\"))", sb_quote(&info))) > objects_pin, "{p}");
+        for d in [
+            common.join("refs"),
+            common.join("logs"),
+            common.join("refs/heads"),
+            common.join("refs/heads/polyph"),
+            common.join("objects"),
+        ] {
             assert!(!p.contains(&format!("(allow file-write* (subpath \"{}\"))", sb_quote(&d))), "{p}");
         }
         assert!(allow < pin && pin < deny, "{p}");
         assert!(!p.contains(&format!("(allow file-write* (subpath \"{}\"))", sb_quote(&common))), "{p}");
+        // Hard links follow the same rules: none from outside, none from a
+        // read-only file inside a folder it writes.
+        assert!(
+            p.find("(deny file-link)").unwrap() < at(format!("(allow file-link (subpath \"{}\"))", sb_quote(&own)))
+        );
+        assert!(at(format!("(deny file-link (literal \"{}\"))", sb_quote(&own.join("commondir")))) > allow, "{p}");
+        assert!(!p.contains(&format!("(allow file-link (subpath \"{}\"))", sb_quote(&common))), "{p}");
 
         // Mechanisms that cannot narrow a writable folder never open them.
         let l = wrap_inner(

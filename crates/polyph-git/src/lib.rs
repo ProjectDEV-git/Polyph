@@ -1447,9 +1447,10 @@ pub struct SandboxGit {
     /// Folders of the shared git directory the agent writes so it can
     /// commit on its task branch `polyph/<task>/<name>`: its task's folder
     /// in `refs/heads/polyph/` and the matching folder in
-    /// `logs/refs/heads/polyph/`, and its own folder in `worktrees/` (its
-    /// HEAD, index, reflog, per-worktree refs and its own object store).
-    /// Empty unless it commits.
+    /// `logs/refs/heads/polyph/`, its own folder in `worktrees/` (its HEAD,
+    /// index, reflog and per-worktree refs) and, listed on its own so it is
+    /// a mount the agent cannot rename, its own object store in that
+    /// folder. Empty unless it commits.
     pub writable: Vec<PathBuf>,
     /// Paths that stay read-only: the whole shared git directory (its
     /// `objects/` included), a linked worktree's `.git` file and, when it
@@ -1505,7 +1506,10 @@ pub fn sandbox_git(worktree: &Path, branch: Option<&str>) -> SandboxGit {
         if std::fs::symlink_metadata(&per_worktree).is_err() {
             let _ = std::fs::write(&per_worktree, "");
         }
-        g.writable = vec![refs.clone(), logs.clone(), gitdir.clone()];
+        // The object store a second time, after its folder: mounted on its
+        // own, so the agent cannot rename it away and put a store of its
+        // own making (with an `info/alternates`) in its place.
+        g.writable = vec![refs.clone(), logs.clone(), gitdir.clone(), objects.clone()];
         g.read_only.extend(["commondir", "gitdir", "config.worktree"].iter().map(|f| gitdir.join(f)));
         g.read_only.push(info);
         // Everything else in the task folders stays as it is.
@@ -2079,6 +2083,7 @@ mod tests {
     }
 
     /// Plain git, as the person would run it.
+    #[cfg(unix)]
     fn plain_git(dir: &Path, args: &[&str]) {
         let _ = Command::new("git").arg("-C").arg(dir).args(args).env("GIT_TERMINAL_PROMPT", "0").output().unwrap();
     }
@@ -2202,7 +2207,7 @@ mod tests {
         let own = common.join("worktrees").join("t1");
         let (refs, logs) = (common.join("refs/heads/polyph/t1"), common.join("logs/refs/heads/polyph/t1"));
         let g = sandbox_git(wt.root(), Some("polyph/t1/work"));
-        assert_eq!(g.writable, vec![refs.clone(), logs.clone(), own.clone()]);
+        assert_eq!(g.writable, vec![refs.clone(), logs.clone(), own.clone(), own.join("objects")]);
         let mut ro = vec![common.clone(), wt.root().join(".git")];
         ro.extend(["commondir", "gitdir", "config.worktree", "objects/info"].iter().map(|f| own.join(f)));
         ro.extend([refs.join("other"), logs.join("other")]);
@@ -2340,8 +2345,10 @@ mod tests {
         let second = r.commit_all("person", &Signature::agent("Ann", "0")).unwrap().unwrap();
         r.check_branch_logged("main").unwrap();
         // An "agent" makes a commit and writes main's ref file directly.
+        let env = sig_env(&Signature::agent("Evil", "1"));
+        let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
         let evil = r
-            .git_env(&["commit-tree", &format!("{second}^{{tree}}"), "-p", &second, "-m", "evil"], &[], None)
+            .git_env(&["commit-tree", &format!("{second}^{{tree}}"), "-p", &second, "-m", "evil"], &env, None)
             .unwrap()
             .trim()
             .to_string();

@@ -120,16 +120,24 @@ fn sb_quote(p: &Path) -> String {
 }
 
 /// Seatbelt: writes only to `writable` (and `/dev/null`), never to
-/// `read_only`; later rules win.
+/// `read_only`; later rules win. Hard links (`file-link`) likewise: only
+/// from a file in `writable`, never from one in `read_only`, so a git
+/// write never makes a link through which a file outside could change.
+/// (Under bubblewrap each writable folder is its own mount, and Linux
+/// refuses links across mounts.)
 pub(crate) fn seatbelt_profile(writable: &[PathBuf], read_only: &[PathBuf]) -> String {
-    let mut s = String::from("(version 1)\n(allow default)\n(deny file-write*)\n");
+    let mut s = String::from("(version 1)\n(allow default)\n(deny file-write*)\n(deny file-link)\n");
     s.push_str("(allow file-write* (literal \"/dev/null\") (regex #\"^/dev/fd/\"))\n");
+    let rule = |verb: &str, f: &str, p: &Path| {
+        let q = sb_quote(p);
+        format!("({verb} file-write* ({f} \"{q}\"))\n({verb} file-link ({f} \"{q}\"))\n")
+    };
     for w in writable {
-        s.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", sb_quote(w)));
+        s.push_str(&rule("allow", "subpath", w));
     }
     for r in read_only {
         let f = if r.is_dir() { "subpath" } else { "literal" };
-        s.push_str(&format!("(deny file-write* ({f} \"{}\"))\n", sb_quote(r)));
+        s.push_str(&rule("deny", f, r));
     }
     s
 }
@@ -166,5 +174,40 @@ mod tests {
         let allow = p.find(&format!("(allow file-write* (subpath \"{}\"))", s(&w))).unwrap();
         let deny = p.find(&format!("(deny file-write* (literal \"{}\"))", s(&ro))).unwrap();
         assert!(p.starts_with("(version 1)\n(allow default)\n(deny file-write*)") && allow < deny, "{p}");
+        // Hard links: none but from the writable folders, none from the
+        // read-only paths inside them.
+        assert!(p.contains("(deny file-link)\n"), "{p}");
+        let link_allow = p.find(&format!("(allow file-link (subpath \"{}\"))", s(&w))).unwrap();
+        let link_deny = p.find(&format!("(deny file-link (literal \"{}\"))", s(&ro))).unwrap();
+        assert!(p.find("(deny file-link)").unwrap() < link_allow && link_allow < link_deny, "{p}");
+    }
+
+    /// SEC-13: under Seatbelt the daemon's confined git cannot hard-link a
+    /// file from outside its writable folders into them, nor a read-only
+    /// file inside them. Runs on the macOS CI runner.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn seatbelt_refuses_hard_links_from_outside() {
+        let t = tempfile::tempdir().unwrap();
+        let base = crate::canonical(t.path()).unwrap();
+        let (w, outside) = (base.join("w"), base.join("profile"));
+        std::fs::create_dir_all(&w).unwrap();
+        std::fs::write(&outside, "export PATH\n").unwrap();
+        std::fs::write(w.join("config"), "").unwrap();
+        std::fs::write(w.join("mine"), "").unwrap();
+        let ln = |from: &Path, to: &Path| {
+            let mut c = Command::new("/bin/ln");
+            c.arg(from).arg(to);
+            let out =
+                confine_with(Confinement::Seatbelt, c, std::slice::from_ref(&w), &[w.join("config")]).output().unwrap();
+            (out.status.success(), String::from_utf8_lossy(&out.stderr).into_owned())
+        };
+        let (ok, err) = ln(&outside, &w.join("x"));
+        assert!(!ok && !w.join("x").exists(), "linked a file from outside: {err}");
+        let (ok, err) = ln(&w.join("config"), &w.join("y"));
+        assert!(!ok && !w.join("y").exists(), "linked a read-only file: {err}");
+        let (ok, err) = ln(&w.join("mine"), &w.join("z"));
+        assert!(ok && w.join("z").exists(), "a link inside the writable folder must work: {err}");
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "export PATH\n");
     }
 }
