@@ -690,8 +690,9 @@ Summary:
     `/nix/var/nix/daemon-socket`) stays connectable; bubblewrap has no
     seccomp filter. Under Seatbelt, the Mach services on the list stay
     reachable, `com.apple.SecurityServer` included (needed for TLS), so
-    keychain items whose access list allows any program stay readable as
-    before. The Seatbelt profile has never run on a Mac outside CI.
+    the keychain stays open: tools Apple trusts for an item (`security`,
+    `git credential-osxkeychain`, `docker-credential-osxkeychain`) return
+    GitHub, git and Docker tokens without a prompt. The Seatbelt profile has never run on a Mac outside CI.
     Windows is unchanged: this fix does not cover named pipes or COM
     servers a low-integrity process can still reach. Container mode is
     unchanged (it mounts only the worktree and the proxy socket).
