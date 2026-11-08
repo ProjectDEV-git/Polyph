@@ -667,7 +667,8 @@ mod seatbelt_tests {
         std::fs::write(worktree.join(".git"), "").unwrap();
         let (refs, logs) = (common.join("refs/heads/polyph/t1"), common.join("logs/refs/heads/polyph/t1"));
         let mut read_only = vec![common.clone(), worktree.join(".git")];
-        read_only.extend(["commondir", "gitdir", "config.worktree", "objects/info"].iter().map(|f| own.join(f)));
+        read_only.extend(["commondir", "gitdir", "config.worktree"].iter().map(|f| own.join(f)));
+        read_only.push(own.join("objects").join("info"));
         read_only.extend([refs.join("other"), logs.join("other")]);
         let git_writable = vec![refs, logs, own.clone(), own.join("objects")];
         let policy = Policy {
@@ -723,7 +724,7 @@ mod seatbelt_tests {
             common.join("refs/heads/polyph"),
             common.join("refs/heads/polyph/t2"),
             common.join("objects"),
-            common.join("objects/info"),
+            common.join("objects").join("info"),
             refs.join("a"),
         ] {
             assert!(!w.args.iter().any(|a| *a == s(&p)), "{p:?} in {:?}", w.args);

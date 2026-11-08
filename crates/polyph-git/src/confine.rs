@@ -151,7 +151,7 @@ mod tests {
     fn bubblewrap_binds_only_the_writable_folders() {
         let t = tempfile::tempdir().unwrap();
         let base = crate::canonical(t.path()).unwrap();
-        let (w, ro, gone) = (base.join("w"), base.join("w/config"), base.join("missing"));
+        let (w, ro, gone) = (base.join("w"), base.join("w").join("config"), base.join("missing"));
         std::fs::create_dir_all(&w).unwrap();
         std::fs::write(&ro, "").unwrap();
         let mut c = Command::new("git");
