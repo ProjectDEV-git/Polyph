@@ -226,9 +226,18 @@ async fn two_tasks_merge_keeping_both_intents() {
     let e = wait_state(&h, a, &rid, &abr, "merged").await;
     assert_eq!(e["detail"], "Does what the card asks.", "the reviewer's note stays on the entry");
     assert_eq!(std::fs::read_to_string(r.join("src/lib.rs")).unwrap(), with(REFUND));
-    let board = h.nodes[a].call("board.get", json!({ "room": rid })).await.unwrap();
-    let col = |id: &str| board["cards"].as_array().unwrap().iter().find(|c| c["id"] == id).unwrap()["column"].clone();
-    assert_eq!(col(&refunds), "done");
+    // The card moves to done just after the entry reads merged, so wait for it.
+    let mut col = Value::Null;
+    for _ in 0..400 {
+        let board = h.nodes[a].call("board.get", json!({ "room": rid })).await.unwrap();
+        col =
+            board["cards"].as_array().unwrap().iter().find(|c| c["id"] == refunds.as_str()).unwrap()["column"].clone();
+        if col == "done" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(col, "done");
 
     // Finishing released the claim: Bo's agent can write now, on the old base.
     h.until("claim released on Bo's side", || async {
