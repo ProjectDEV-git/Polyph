@@ -120,8 +120,10 @@ impl Policy {
 }
 
 /// Variables that point at the person's IPC endpoints: session and system
-/// bus, ssh-agent, gpg-agent, display servers, window managers, container
-/// engines, systemd notification and WSL interop. Sandboxed agents start
+/// bus, ssh-agent, gpg-agent, the keyring, Kerberos tickets, display and
+/// sound servers, window managers, terminals and editors that take commands
+/// (kitty, WezTerm, Neovim, VS Code), container engines, systemd
+/// notification and WSL interop. Sandboxed agents start
 /// without them (SEC-14); the sockets themselves are out of reach as
 /// `docs/sandbox.md` describes per mechanism.
 pub const IPC_ENV: &[&str] = &[
@@ -139,6 +141,16 @@ pub const IPC_ENV: &[&str] = &[
     "CONTAINER_HOST",
     "NOTIFY_SOCKET",
     "WSL_INTEROP",
+    "DBUS_STARTER_ADDRESS",
+    "XAUTHORITY",
+    "PULSE_SERVER",
+    "PIPEWIRE_REMOTE",
+    "KRB5CCNAME",
+    "GNOME_KEYRING_CONTROL",
+    "VSCODE_IPC_HOOK_CLI",
+    "KITTY_LISTEN_ON",
+    "WEZTERM_UNIX_SOCKET",
+    "NVIM",
 ];
 
 /// Container engine sockets and other host IPC outside `/run`, `/var/run`

@@ -13,8 +13,9 @@
 //! - `lowil --write DIR... -- cmd...` (Windows): label DIRs low integrity
 //!   and run `cmd` at low integrity level, so it can write only there.
 //! - `probe write PATH | connect HOST:PORT | proxy HOST:PORT | unix PATH |
-//!   socketpair | landlock | seccomp`: self-test probes; exit 0 when the
-//!   action succeeded, 3 when blocked. `unix @NAME` is an abstract socket.
+//!   socketpair [stream|seqpacket|dgram|raw] | landlock | seccomp`: self-test
+//!   probes; exit 0 when the action succeeded, 3 when blocked. `unix @NAME`
+//!   is an abstract socket.
 //!
 //! `forward` and `landlock` run `cmd` without the variables in
 //! [`crate::IPC_ENV`], which point at the person's session bus, agents and
@@ -51,6 +52,35 @@ fn split_cmd(args: &[String]) -> (Vec<String>, Vec<String>) {
 fn opt(flags: &[String], name: &str) -> Option<String> {
     flags.iter().position(|a| a == name).and_then(|i| flags.get(i + 1)).cloned()
 }
+
+/// Marks every descriptor above 2 close-on-exec (SEC-14): a descriptor the
+/// daemon or its parent left inheritable (a socket, a credential file) must
+/// not reach the command. The helper's own stay usable until it starts the
+/// command; std opens all of them close-on-exec anyway. Bubblewrap passes
+/// such descriptors on to the helper, so `forward` does this too.
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn close_inherited_fds() {
+    #[cfg(target_os = "linux")]
+    // SAFETY: close_range with CLOSE_RANGE_CLOEXEC only sets a flag; nothing
+    // is closed under code that owns a descriptor.
+    if unsafe { libc::syscall(libc::SYS_close_range, 3_u32, u32::MAX, libc::CLOSE_RANGE_CLOEXEC) } == 0 {
+        return;
+    }
+    // Kernels before 5.11, and macOS: each open descriptor in turn.
+    let dir = if cfg!(target_os = "linux") { "/proc/self/fd" } else { "/dev/fd" };
+    let fds: Vec<libc::c_int> = std::fs::read_dir(dir)
+        .map(|rd| rd.flatten().filter_map(|e| e.file_name().to_str()?.parse().ok()).filter(|fd| *fd > 2).collect())
+        .unwrap_or_default();
+    for fd in fds {
+        // SAFETY: F_SETFD only sets a flag; a descriptor closed meanwhile
+        // (the directory listing's own) gives EBADF, which is fine.
+        unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+    }
+}
+
+#[cfg(not(unix))]
+fn close_inherited_fds() {}
 
 fn run_child(cmd: &[String]) -> i32 {
     let Some(prog) = cmd.first() else {
@@ -101,6 +131,7 @@ fn lowil(args: Vec<String>) -> i32 {
 fn forward(args: Vec<String>) -> i32 {
     use std::net::TcpListener;
     use std::os::unix::net::UnixStream;
+    close_inherited_fds();
     let (flags, cmd) = split_cmd(&args);
     let (Some(sock), Some(port)) = (opt(&flags, "--sock"), opt(&flags, "--port").and_then(|p| p.parse::<u16>().ok()))
     else {
@@ -174,12 +205,12 @@ fn apply_landlock(writable: &[String], proxy_port: Option<u16>) -> Result<bool, 
 }
 
 /// A seccomp filter for Landlock mode (SEC-14), which cannot otherwise
-/// keep an agent from host IPC: `socket(AF_UNIX)` and datagram
-/// `socketpair(AF_UNIX)` fail with `EACCES`, and `io_uring_setup` (which can
+/// keep an agent from host IPC: `socket(AF_UNIX)` and `socketpair(AF_UNIX)`
+/// of any type but `SOCK_STREAM` and `SOCK_SEQPACKET` fail with `EACCES`, and `io_uring_setup` (which can
 /// create sockets without `socket`) with `ENOSYS`. Seccomp cannot read the
 /// address a socket connects to, so this refuses every Unix socket, not
-/// only those outside: connected stream pairs (`socketpair`, which pipes
-/// between processes use) still work, and nothing an agent needs from
+/// only those outside: connected stream and seqpacket pairs (`socketpair`,
+/// which pipes between processes use) still work, and nothing an agent needs from
 /// Polyph uses Unix sockets in this mode (the proxy is a TCP port). Other
 /// architectures' system calls (32-bit `int 0x80`) end the process.
 #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64")))]
@@ -192,7 +223,15 @@ pub fn apply_seccomp() -> Result<(), String> {
     };
     let e = |e: seccompiler::BackendError| e.to_string();
     let unix = || SeccompCondition::new(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Eq, libc::AF_UNIX as u64);
-    let dgram = SeccompCondition::new(1, SeccompCmpArgLen::Dword, SeccompCmpOp::MaskedEq(0xf), libc::SOCK_DGRAM as u64);
+    // A Unix pair of any type but stream and seqpacket: Linux turns
+    // `SOCK_RAW` into a datagram socket, which can `sendto` any datagram
+    // socket by path (journald, `/dev/log`, `$NOTIFY_SOCKET`). The type is
+    // the low four bits (`SOCK_TYPE_MASK`); the rest are flags.
+    let mut pairs = vec![];
+    for ty in (0..=0xf_u64).filter(|t| ![libc::SOCK_STREAM as u64, libc::SOCK_SEQPACKET as u64].contains(t)) {
+        let kind = SeccompCondition::new(1, SeccompCmpArgLen::Dword, SeccompCmpOp::MaskedEq(0xf), ty).map_err(e)?;
+        pairs.push(SeccompRule::new(vec![unix().map_err(e)?, kind]).map_err(e)?);
+    }
     let arch = TargetArch::try_from(std::env::consts::ARCH).map_err(e)?;
     let build = |rules: Vec<(i64, Vec<SeccompRule>)>, errno: i32| -> Result<BpfProgram, String> {
         let mut map: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
@@ -209,7 +248,7 @@ pub fn apply_seccomp() -> Result<(), String> {
     let sockets = build(
         vec![
             (libc::SYS_socket, vec![SeccompRule::new(vec![unix().map_err(e)?]).map_err(e)?]),
-            (libc::SYS_socketpair, vec![SeccompRule::new(vec![unix().map_err(e)?, dgram.map_err(e)?]).map_err(e)?]),
+            (libc::SYS_socketpair, pairs),
         ],
         libc::EACCES,
     )?;
@@ -234,6 +273,7 @@ fn landlock(args: Vec<String>) -> i32 {
     let (flags, cmd) = split_cmd(&args);
     let writable: Vec<String> = flags.windows(2).filter(|w| w[0] == "--write").map(|w| w[1].clone()).collect();
     let port = opt(&flags, "--proxy-port").and_then(|p| p.parse().ok());
+    close_inherited_fds();
     match apply_landlock(&writable, port) {
         Ok(true) => {
             if let Err(e) = apply_seccomp() {
@@ -276,10 +316,22 @@ fn probe(args: Vec<String>) -> i32 {
         .is_ok(),
         "proxy" => proxy_connect(&target),
         "unix" => unix_connect(&target),
-        "socketpair" => socket_pair(),
+        "socketpair" => match target.as_str() {
+            "" | "stream" => socket_pair(),
+            kind => unix_pair(kind),
+        },
         "landlock" => apply_landlock(&[], None).unwrap_or(false),
-        // The filter applies and refuses a Unix socket afterwards.
-        "seccomp" => apply_seccomp().is_ok() && unix_socket_refused() && socket_pair(),
+        // The filter applies and refuses a Unix socket and datagram pairs
+        // (`SOCK_RAW` pairs are datagram pairs) afterwards; stream and
+        // seqpacket pairs still work.
+        "seccomp" => {
+            apply_seccomp().is_ok()
+                && unix_socket_refused()
+                && socket_pair()
+                && unix_pair("seqpacket")
+                && !unix_pair("dgram")
+                && !unix_pair("raw")
+        }
         _ => return 2,
     };
     if ok { 0 } else { BLOCKED }
@@ -330,6 +382,45 @@ fn socket_pair() -> bool {
 #[cfg(not(unix))]
 fn socket_pair() -> bool {
     false
+}
+
+/// A connected pair of Unix sockets of type `kind` (`stream`, `seqpacket`,
+/// `dgram` or `raw`), one byte sent through it.
+#[cfg(target_os = "linux")]
+#[allow(unsafe_code)]
+fn unix_pair(kind: &str) -> bool {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    let ty = match kind {
+        "stream" => libc::SOCK_STREAM,
+        "seqpacket" => libc::SOCK_SEQPACKET,
+        "dgram" => libc::SOCK_DGRAM,
+        "raw" => libc::SOCK_RAW,
+        _ => return false,
+    };
+    let mut fds = [-1 as libc::c_int; 2];
+    // SAFETY: `fds` is a valid array of two ints for the kernel to fill.
+    if unsafe { libc::socketpair(libc::AF_UNIX, ty | libc::SOCK_CLOEXEC, 0, fds.as_mut_ptr()) } != 0 {
+        return false;
+    }
+    // SAFETY: socketpair succeeded, so both are new descriptors owned here.
+    let (a, b) = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+    let mut buf = [0u8; 1];
+    // SAFETY: valid descriptors and one-byte buffers that outlive the calls.
+    let (sent, got) = unsafe {
+        (
+            libc::send(a.as_raw_fd(), b"x".as_ptr().cast(), 1, 0),
+            libc::recv(b.as_raw_fd(), buf.as_mut_ptr().cast(), 1, 0),
+        )
+    };
+    sent == 1 && got == 1
+}
+
+#[cfg(not(target_os = "linux"))]
+fn unix_pair(kind: &str) -> bool {
+    match kind {
+        "stream" => socket_pair(),
+        _ => false,
+    }
 }
 
 /// CONNECT through the proxy named in HTTPS_PROXY; true when it answered 200.

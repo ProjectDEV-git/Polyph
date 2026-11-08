@@ -152,7 +152,16 @@ async fn run_with(
     let mut w = polyph_sandbox::wrap(mech, &policy, "sh", &["-c".into(), script.into()]).unwrap();
     // As the daemon sets them for a task agent: its own object store.
     w.env.extend(g.env);
-    let out = std::process::Command::new(&w.program)
+    // Started with descriptor 7 open and inheritable, as a daemon started
+    // from a shell or service manager may have one (see `INHERITED_FD`).
+    let secret = base.join("inherited-fd");
+    std::fs::write(&secret, "inherited\n").unwrap();
+    let out = std::process::Command::new("sh")
+        .arg("-c")
+        .arg("exec 7<\"$1\"; shift; exec \"$@\"")
+        .arg("sh")
+        .arg(&secret)
+        .arg(&w.program)
         .args(&w.args)
         .current_dir(&w.cwd)
         .envs(env.iter().copied())
@@ -585,13 +594,25 @@ async fn seatbelt_lets_a_task_agent_move_only_its_own_branch() {
 /// Variables naming the person's IPC endpoints, as a desktop session sets
 /// them; none may reach an agent (SEC-14).
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-const IPC_VARS: [(&str, &str); 6] = [
+const IPC_VARS: [(&str, &str); 18] = [
     ("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus"),
     ("XDG_RUNTIME_DIR", "/run/user/1000"),
     ("SSH_AUTH_SOCK", "/tmp/ssh-polyph/agent.1"),
     ("GPG_AGENT_INFO", "/run/user/1000/gnupg/S.gpg-agent"),
     ("DISPLAY", ":0"),
     ("WAYLAND_DISPLAY", "wayland-0"),
+    ("XAUTHORITY", "/home/ann/.Xauthority"),
+    ("PULSE_SERVER", "unix:/run/user/1000/pulse/native"),
+    ("PIPEWIRE_REMOTE", "pipewire-0"),
+    ("KRB5CCNAME", "FILE:/tmp/krb5cc_1000"),
+    ("DBUS_STARTER_ADDRESS", "unix:path=/run/user/1000/bus"),
+    ("DBUS_SYSTEM_BUS_ADDRESS", "unix:path=/run/dbus/system_bus_socket"),
+    ("VSCODE_IPC_HOOK_CLI", "/run/user/1000/vscode-ipc-1.sock"),
+    ("KITTY_LISTEN_ON", "unix:/tmp/kitty-1"),
+    ("WEZTERM_UNIX_SOCKET", "/run/user/1000/wezterm/gui-sock-1"),
+    ("NVIM", "/run/user/1000/nvim.1.0"),
+    ("GNOME_KEYRING_CONTROL", "/run/user/1000/keyring"),
+    ("NOTIFY_SOCKET", "/run/systemd/notify"),
 ];
 
 /// A script that tries each socket in `sockets` with the helper (printing
@@ -621,6 +642,22 @@ fn assert_cut_off(said: &str, refused: &[&str]) {
         assert!(said.contains(ok), "the agent's normal work failed ({ok}): {said}");
     }
     assert!(!said.contains("leaked"), "a variable naming host IPC reached the agent: {said}");
+}
+
+/// Lines for a script that report a descriptor inherited from outside the
+/// sandbox ([`run_with`] starts it with descriptor 7 open) and the Unix
+/// pairs that reach other sockets by path: datagram, and raw, which Linux
+/// makes a datagram pair (SEC-14).
+#[cfg(target_os = "linux")]
+const INHERITED_FD: &str = "[ -e /proc/$$/fd/7 ] && echo fd-leaked; ls -l /proc/$$/fd | grep inherited-fd\n\
+                            \"$H\" probe socketpair dgram; echo dgrampair=$?\n\
+                            \"$H\" probe socketpair raw; echo rawpair=$?\n\
+                            \"$H\" probe socketpair seqpacket; echo seqpair=$?\n";
+
+#[cfg(target_os = "linux")]
+fn assert_no_inherited_fd(said: &str) {
+    assert!(!said.contains("fd-leaked") && !said.contains("inherited-fd"), "an inherited descriptor got in: {said}");
+    assert!(said.contains("seqpair=0"), "seqpacket pairs must work: {said}");
 }
 
 /// A listening Unix socket at `path`, checked to be reachable from here.
@@ -677,15 +714,17 @@ async fn bubblewrap_cuts_the_agent_off_from_host_ipc() {
     let _x11 = listen_abstract(&name);
     sockets.push(("abstract", format!("@{name}")));
 
-    let script = ipc_script(&sockets);
+    let script = ipc_script(&sockets) + INHERITED_FD;
     let said = run_with(Mechanism::Bubblewrap, helper, &base, &repo, None, vec![docker], &IPC_VARS, &script).await;
     let names: Vec<&str> = sockets.iter().map(|(n, _)| *n).collect();
     assert_cut_off(&said, &names);
+    assert_no_inherited_fd(&said);
 }
 
 /// SEC-14: in Landlock mode the seccomp filter refuses Unix sockets, path
 /// and abstract alike (and from Landlock ABI 6 the scope refuses abstract
-/// ones too); the variables are gone, and the agent's normal work runs.
+/// ones too), and datagram and raw pairs; the variables and inherited
+/// descriptors are gone, and the agent's normal work runs.
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn landlock_cuts_the_agent_off_from_host_ipc() {
@@ -705,9 +744,10 @@ async fn landlock_cuts_the_agent_off_from_host_ipc() {
     let _x11 = listen_abstract(&name);
     let sockets = [("bus", bus.to_string_lossy().into_owned()), ("abstract", format!("@{name}"))];
 
-    let script = ipc_script(&sockets);
+    let script = ipc_script(&sockets) + INHERITED_FD;
     let said = run_with(Mechanism::Landlock, helper, &base, &repo, None, vec![], &IPC_VARS, &script).await;
-    assert_cut_off(&said, &["bus", "abstract"]);
+    assert_cut_off(&said, &["bus", "abstract", "dgrampair", "rawpair"]);
+    assert_no_inherited_fd(&said);
 }
 
 /// SEC-14 under Seatbelt: `open` and `osascript` do not run (nor a copy of
