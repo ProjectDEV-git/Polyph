@@ -773,6 +773,7 @@ mod seatbelt_tests {
 
     /// SEC-14: bubblewrap empties `/run` and `/var/run` before binding the
     /// agent's paths back, and gets its own IPC and UTS namespaces.
+    #[cfg(target_os = "linux")]
     #[test]
     fn bubblewrap_empties_run_before_the_agents_paths() {
         let t = tempfile::tempdir().unwrap();
