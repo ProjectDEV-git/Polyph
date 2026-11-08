@@ -181,6 +181,8 @@ async fn github_issues_and_pull_requests() {
     git(r, &["add", "-A"]);
     git(r, &["commit", "-qm", "init"]);
     git(r, &["remote", "add", "origin", &remote.path().to_string_lossy()]);
+    // `[merge] via` only applies once the file is trusted, as `polyph trust` does.
+    h.nodes[0].trust_project(r).unwrap();
 
     // Issues become cards once; pull requests in the list are skipped.
     let imp = call(&h, "github.import", json!({ "room": rid, "cwd": r })).await;

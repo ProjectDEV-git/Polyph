@@ -86,8 +86,18 @@ async fn scripted_task_completes_and_teammates_see_it() {
         { "usage": { "input": 100, "output": 20 } }
     ]] });
     let dir = worktree(script, "checks = [\"sh -c 'echo 3 passed, 0 failed'\"]\n");
+    // `checks` only apply once a person trusts the file, as `polyph trust` does.
+    h.trust_project(dir.path()).unwrap();
     let id = start_agent(&h, b, &rid, dir.path(), "default").await;
-    let r = h.nodes[b].call("agent.prompt", json!({ "agent": id, "text": "add a login function" })).await.unwrap();
+    // A check that is not honored waits for an approval nobody answers; fail
+    // with that explanation instead of hanging.
+    let r = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        h.nodes[b].call("agent.prompt", json!({ "agent": id, "text": "add a login function" })),
+    )
+    .await
+    .expect("agent.prompt did not finish in 60s: the run is probably waiting for an approval (is polyph.toml trusted?)")
+    .unwrap();
     assert_eq!(r["stop_reason"], "end_turn");
     assert_eq!(
         std::fs::read_to_string(dir.path().join("src/login.rs")).unwrap(),
@@ -193,6 +203,42 @@ async fn budget_stops_further_prompts() {
     h.nodes[b].call("agent.prompt", json!({ "agent": id, "text": "one" })).await.unwrap();
     let second = h.nodes[b].call("agent.prompt", json!({ "agent": id, "text": "two" })).await;
     assert!(second.unwrap_err().to_string().contains("budget"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn untrusted_prices_stop_dollar_budgets_until_polyph_trust() {
+    let (h, rid) = room_of_two().await;
+    let (a, b) = (0, 1);
+    h.nodes[a]
+        .call(
+            "budget.set",
+            json!({ "room": rid, "budgets": [{ "scope": "room", "limit": { "unit": "dollars", "amount": 5.0 } }] }),
+        )
+        .await
+        .unwrap();
+    let script = json!({ "turns": [[ { "message": "first" } ], [ { "message": "second" } ]] });
+    // A file that zeroes prices would count every turn as $0.
+    let dir = worktree(script, "[prices.\"free\"]\ninput = 0.0\noutput = 0.0\n");
+    h.until("budget reached Bo", || async {
+        let u = h.nodes[b].call("usage.get", json!({ "room": rid })).await.unwrap();
+        !u["budgets"].as_array().unwrap().is_empty()
+    })
+    .await
+    .unwrap();
+    // What usage shows comes from the same trusted load as what is enforced.
+    let u = h.nodes[b].call("usage.get", json!({ "room": rid, "cwd": dir.path() })).await.unwrap();
+    assert_eq!(u["untrusted"]["ignored"], json!(["prices"]), "{u}");
+    let id = start_agent(&h, b, &rid, dir.path(), "auto").await;
+    let e = h.nodes[b].call("agent.prompt", json!({ "agent": id, "text": "one" })).await.unwrap_err().to_string();
+    assert!(e.contains("dollar budget") && e.contains("`polyph trust`"), "{e}");
+
+    // Trusted, a new agent counts with the file's prices and runs.
+    h.trust_project(dir.path()).unwrap();
+    let u = h.nodes[b].call("usage.get", json!({ "room": rid, "cwd": dir.path() })).await.unwrap();
+    assert!(u["untrusted"].is_null(), "{u}");
+    h.nodes[b].call("agent.stop", json!({ "agent": id })).await.unwrap();
+    let id = start_agent(&h, b, &rid, dir.path(), "auto").await;
+    h.nodes[b].call("agent.prompt", json!({ "agent": id, "text": "one" })).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

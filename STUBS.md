@@ -69,6 +69,20 @@ lists notes and agents write them.
 - **Smoke tests against real agents** (`POLYPH_SMOKE=1`) exist for Claude
   Code, Codex and Ollama but have not been run: none is installed here.
 - **Security contact address** in `docs/security.md` is not set.
+- **Project file trust (SEC-12, KAO-73).** `polyph trust` shows the
+  security sections it is about to trust, but not a diff against the last
+  trusted version, so a person who trusts right after an agent edited the
+  file in the main checkout (agents started without a task worktree run
+  there) can miss that edit. The `project_untrusted` event
+  is sent, but only the CLI (`polyph agent start`) shows the notice; the web
+  client and TUI do not render it yet. The trust record lives in Polyph's
+  data directory and relies on the sandbox keeping that directory read-only
+  to agents. The merge queue is tested end to end with an untrusted file;
+  for `agent.start` no test checks end to end that an untrusted sandbox or
+  agent section is ignored, only the loader the daemon uses. The check that
+  keeps agent worktrees off the data directory compares resolved paths
+  only; it does not detect bind mounts or Linux casefold directories. The
+  `untrusted` field `usage.get` returns is not shown by any client yet.
 - **Adding your own device (SEC-3).** A join request carries no proof that
   it comes from the member it names, so only the device that made a
   `phone.pair` or `host.invite` code can approve a knock naming its own

@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 polyph-proto = { workspace = true }
 polyph-sandbox = { workspace = true }
+polyph-git = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -22,6 +23,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 which = "8"
 similar = "2"
+sha2 = "0.10"
 
 [dev-dependencies]
 agent-client-protocol-schema = "1.15"
