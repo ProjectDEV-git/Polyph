@@ -90,10 +90,15 @@ mode is the strong option on Windows; AppContainer support is listed in
 A read-only mount does not stop a program connecting to a Unix socket, so
 each mechanism handles IPC separately (SEC-14):
 
-- **bubblewrap**: `/run` and `/var/run` are empty (that is where
+- **bubblewrap**: `/run` and `/var/run` are empty, at the real folder
+  each one points to when it is a link (that is where
   `/run/user/<uid>` with the session bus, `systemd --user`, keyring and
   gpg sockets lives, and the system `docker.sock`); links in `/run` to
   folders outside it, such as NixOS's `/run/current-system`, are kept.
+  If `/var/run` points at `/` or at a folder holding a writable path, that
+  folder is not emptied and the container sockets in it are hidden one by
+  one instead. The helper marks every inherited file descriptor above 2
+  close-on-exec before it starts the agent.
   `/tmp` was already empty (X11 and ssh-agent sockets). Container sockets
   elsewhere are hidden: `~/.docker`, `~/.colima`, `~/.rd`, `~/.lima`,
   `~/.orbstack`, Podman machine sockets, `/mnt/wslg`, and whatever
@@ -102,18 +107,23 @@ each mechanism handles IPC separately (SEC-14):
   Still allowed: a Unix socket in any other readable place (for example
   the Nix daemon's socket under `/nix/var`).
 - **Landlock**: a seccomp filter refuses creating Unix sockets
-  (`socket(AF_UNIX)`), datagram socket pairs and `io_uring`. Seccomp
+  (`socket(AF_UNIX)`), socket pairs of any type but stream and seqpacket
+  (a datagram pair, or a raw one, which Linux turns into a datagram pair,
+  can `sendto` any datagram socket by path, such as journald's) and
+  `io_uring`. Inherited file descriptors above 2 are closed before the
+  agent starts. Seccomp
   cannot see where a socket connects, so this refuses all Unix sockets,
   the agent's own included. Connected stream pairs (`socketpair`, which
-  Node, Python and shells use for pipes) still work. On Linux 6.12 and
+  Node, Python and shells use for pipes) and seqpacket pairs still work. On Linux 6.12 and
   later (Landlock ABI 6) Landlock also refuses abstract sockets and
   signals outside the sandbox. What breaks there: tools that open a Unix
   socket of their own (Python `multiprocessing` managers, test servers on
   a socket path, `git credential-cache`, the fsmonitor daemon), user
   lookups through `sssd` or `nscd`, and 32-bit programs, which are ended.
-  Without seccomp (an architecture other than x86_64, aarch64 or riscv64)
-  the helper says so on stderr, `polyph sandbox test` names it, and Unix
-  sockets stay reachable. Still allowed everywhere in this mode: UDP and
+  Install bubblewrap to avoid all of this. Without seccomp (an
+  architecture other than x86_64, aarch64 or riscv64) agents still start,
+  the helper says so on stderr, `polyph agents doctor` and `polyph
+  sandbox test` say what is left open, and Unix sockets stay reachable. Still allowed everywhere in this mode: UDP and
   other non-TCP traffic (see `STUBS.md`), and reading hidden paths.
 - **Seatbelt**: the profile starts from `(deny default)`. Allowed: running
   programs (not `/usr/bin/open`, `osascript` or `osacompile`), reading
@@ -126,8 +136,12 @@ each mechanism handles IPC separately (SEC-14):
   settings (`configd`), `networkd`, FSEvents and power management. Not on
   the list: LaunchServices (so a copy of `open` fails too), Apple Events,
   the pasteboard and the window server. DNS lookups do not work inside;
-  names resolve through the proxy. Keychain items that any program may
-  read stay readable through the security server. The profile is tested
+  names resolve through the proxy. The keychain is not closed off:
+  `com.apple.SecurityServer` is on the list (for TLS), and tools Apple
+  trusts for a keychain item, such as `security`, `git
+  credential-osxkeychain` and `docker-credential-osxkeychain`, return
+  stored GitHub, git and Docker tokens to the agent without a prompt.
+  This stays open until a follow-up change (see `STUBS.md`). The profile is tested
   only on the macOS CI runner; if a tool you rely on fails under it, the
   denial is in Console (`sandboxd`), and the Mach service list is
   `SEATBELT_MACH_SERVICES` in `crates/polyph-sandbox/src/lib.rs`.

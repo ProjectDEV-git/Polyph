@@ -30,7 +30,7 @@ Summary:
 | SEC-11 | low | Relay | First `X-Forwarded-For` entry is trusted from loopback |
 | SEC-12 | low | Sandbox | `polyph.toml` in the worktree turns the sandbox off and defines agent commands (fixed in PR #14, with residuals) |
 | SEC-13 | critical | Sandbox | Agents can write git configuration that the daemon then executes unsandboxed |
-| SEC-14 | critical | Sandbox | Host IPC (D-Bus session bus, Unix sockets, LaunchServices) is reachable from the sandbox |
+| SEC-14 | critical, now high per mode (open items below) | Sandbox | Host IPC (D-Bus session bus, Unix sockets, LaunchServices) is reachable from the sandbox |
 | SEC-15 | high | Sandbox (Landlock) | Landlock mode hides nothing and silently drops its network rule on older kernels |
 | SEC-16 | high | Sandbox / daemon | The daemon follows agent-made symlinks and returns hidden files to the agent |
 | SEC-17 | high | Sandbox (Windows) | Low-integrity agents can read the API token and drive the daemon API |
@@ -609,18 +609,39 @@ Summary:
   `(deny default)` and allow what agents need; deny `process-exec` of
   `/usr/bin/open` and `osascript` and restrict `mach-lookup`.
 - Wire change: no.
-- Status: fixed under bubblewrap and Landlock (tested on Linux); fixed
-  under Seatbelt in code, with tests that run only on the macOS CI runner;
-  partly open (KAO-75, branch `beta/kao-75-sandbox-ipc`). Every mechanism
-  that runs the agent through the helper or `sandbox-exec` starts it
-  without `DBUS_SESSION_BUS_ADDRESS`, `DBUS_SYSTEM_BUS_ADDRESS`,
-  `XDG_RUNTIME_DIR`, `SSH_AUTH_SOCK`, `GPG_AGENT_INFO`, `DISPLAY`,
-  `WAYLAND_DISPLAY`, `SWAYSOCK`, `I3SOCK`, `TMUX`, `DOCKER_HOST`,
-  `CONTAINER_HOST`, `NOTIFY_SOCKET` and `WSL_INTEROP`
-  (`polyph_sandbox::IPC_ENV`).
-  - bubblewrap: `/run` and `/var/run` (when it is not a link to `/run`)
-    are empty tmpfs mounts, with links in `/run` to folders outside it
-    (NixOS `/run/current-system`) recreated; the agent's writable paths
+- Status: partly fixed (KAO-75, PR #21, branch
+  `beta/kao-75-sandbox-ipc`); the critical paths (session bus,
+  `systemd --user`, `docker.sock`, LaunchServices) are closed, and what
+  stays open is rated high per mode:
+  - bubblewrap: high. Open: LXD sockets, ssh-agent sockets outside `/run`
+    and `/tmp` (a custom `SSH_AUTH_SOCK` path), the Nix daemon socket, the
+    kernel keyring.
+  - Landlock: high. Open: `TIOCSTI` through the controlling terminal the
+    agent shares with the person, the kernel keyring; without seccomp
+    (other architectures) every Unix socket, reported by `polyph agents
+    doctor` and `polyph sandbox test`.
+  - Seatbelt: high. Open: the macOS keychain (tools Apple trusts for an
+    item, such as `security`, `git credential-osxkeychain` and
+    `docker-credential-osxkeychain`, return GitHub, git and Docker tokens
+    without a prompt), `process-info*`.
+  These go to a follow-up PR. Every mechanism that runs the agent through
+  the helper or `sandbox-exec` starts it without the variables in
+  `polyph_sandbox::IPC_ENV`: `DBUS_SESSION_BUS_ADDRESS`,
+  `DBUS_SYSTEM_BUS_ADDRESS`, `DBUS_STARTER_ADDRESS`, `XDG_RUNTIME_DIR`,
+  `SSH_AUTH_SOCK`, `GPG_AGENT_INFO`, `GNOME_KEYRING_CONTROL`,
+  `KRB5CCNAME`, `DISPLAY`, `WAYLAND_DISPLAY`, `XAUTHORITY`,
+  `PULSE_SERVER`, `PIPEWIRE_REMOTE`, `SWAYSOCK`, `I3SOCK`, `TMUX`,
+  `KITTY_LISTEN_ON`, `WEZTERM_UNIX_SOCKET`, `NVIM`,
+  `VSCODE_IPC_HOOK_CLI`, `DOCKER_HOST`, `CONTAINER_HOST`,
+  `NOTIFY_SOCKET` and `WSL_INTEROP`. Under bubblewrap and Landlock the
+  helper marks inherited file descriptors above 2 close-on-exec before
+  it starts the agent (tested with a descriptor left open by the
+  launching process).
+  - bubblewrap: the real folders behind `/run` and `/var/run` (links
+    resolved, each once; never `/` or a folder holding a writable path,
+    whose container sockets are then hidden one by one) are empty tmpfs
+    mounts, with links in them to folders outside (NixOS
+    `/run/current-system`) recreated; the agent's writable paths
     and the proxy socket are bound back after them. Container sockets
     outside those folders (`~/.colima`, `~/.rd`, `~/.lima`, `~/.orbstack`,
     podman machine, `$DOCKER_HOST`, `$CONTAINER_HOST`; `~/.docker` was
@@ -629,9 +650,13 @@ Summary:
     `bubblewrap_cuts_the_agent_off_from_host_ipc` (a socket in `/run` or
     `$XDG_RUNTIME_DIR`, a hidden `docker.sock`, an abstract socket, the
     variables, and the agent's write, `git status` and proxy still
-    working) and `bubblewrap_empties_run_before_the_agents_paths`.
+    working), `bubblewrap_empties_run_before_the_agents_paths` and
+    `run_folders_are_emptied_wherever_they_point` (a fake root with
+    `/run` and `/var/run` as links).
   - Landlock: a seccomp filter (`seccompiler`) refuses `socket(AF_UNIX)`,
-    datagram `socketpair(AF_UNIX)` (whose `sendto` could reach a path) and
+    `socketpair(AF_UNIX)` of any type but stream and seqpacket (a datagram
+    pair, or a raw one, which Linux makes a datagram pair, could `sendto`
+    a path) and
     `io_uring_setup` (which can create sockets without `socket`), x32
     numbers included; other architectures' calls end the process. Seccomp
     cannot read the address passed to `connect`, so every Unix socket is
@@ -640,8 +665,11 @@ Summary:
     abstract Unix sockets and signals to the sandbox. Without a filter
     (an architecture other than x86_64, aarch64 or riscv64, or a kernel
     without seccomp) the helper says so on stderr and `polyph sandbox
-    test` / `agents doctor` name it in the Landlock line. Test:
-    `landlock_cuts_the_agent_off_from_host_ipc`.
+    test` / `agents doctor` name it in the Landlock line and say what is
+    left open. `probe seccomp` checks that datagram and raw pairs are
+    refused and stream and seqpacket pairs work. Test:
+    `landlock_cuts_the_agent_off_from_host_ipc` (also raw and datagram
+    pairs, and an inherited descriptor).
   - Seatbelt: `(deny default)` with an allow list: fork and exec (not
     `/usr/bin/open`, `osascript`, `osacompile`), reads except hidden
     paths, the existing write and hard-link rules, `sysctl-read`,
