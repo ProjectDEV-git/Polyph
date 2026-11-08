@@ -25,8 +25,9 @@ disconnect-done = Disconnected { $client }.
 disconnect-nothing = None of your agents has Polyph in its settings.
 
 start-ask-name = Your name, as teammates will see it [{ $guess }]:
-start-needs-name = Polyph needs your name first: polyph config set name "Your Name"
+start-needs-name = Polyph needs your name. Pass --me "Your Name" or run: polyph config set name "Your Name"
 start-name-set = You are { $name } in Polyph.
+start-name-git = Using your git name, { $name }. Change it with: polyph config set name "Your Name"
 start-room-existing = This folder belongs to the room { $name }.
 start-room-created = Made the room { $name } for { $dir }.
 start-ready = Ready. Agents you start in { $dir } join { $room } as { $name }/<agent>.

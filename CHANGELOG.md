@@ -5,6 +5,15 @@ GitHub release page.
 
 ## Unreleased
 
+- **`polyph start` finds your name.** With no saved name, `start` uses
+  `git config user.name` and says so; otherwise it asks, or fails with a
+  message naming `--me` and `polyph config set name` when it cannot ask
+  (`--yes` or no terminal). New `--me <NAME>` on `start` and `join` saves it.
+- **`--name` is now `--room` in `polyph start` and `--me` in `polyph join`.**
+  It meant the room's name in one and the person's name in the other. The old
+  `--name` still works in both, hidden from help. `polyph start --yes` now
+  has a help line.
+
 - **`polyph feedback`.** Opens a prefilled GitHub issue with your Polyph
   version, OS, architecture, Linux distro, surface and whether the daemon
   runs. It leaves out room names, paths, chat, code, user and host names and

@@ -25,8 +25,9 @@ disconnect-done = ยกเลิกการเชื่อมต่อ { $clie
 disconnect-nothing = ไม่มีเอเจนต์ใดที่มี Polyph อยู่ในการตั้งค่า
 
 start-ask-name = ชื่อของคุณที่เพื่อนร่วมทีมจะเห็น [{ $guess }]:
-start-needs-name = Polyph ต้องรู้ชื่อของคุณก่อน: polyph config set name "ชื่อของคุณ"
+start-needs-name = Polyph ต้องรู้ชื่อของคุณ ใส่ --me "ชื่อของคุณ" หรือรัน: polyph config set name "ชื่อของคุณ"
 start-name-set = คุณคือ { $name } ใน Polyph
+start-name-git = ใช้ชื่อ git ของคุณ คือ { $name } เปลี่ยนได้ด้วย: polyph config set name "ชื่อของคุณ"
 start-room-existing = โฟลเดอร์นี้เป็นของห้อง { $name }
 start-room-created = สร้างห้อง { $name } สำหรับ { $dir } แล้ว
 start-ready = พร้อมแล้ว เอเจนต์ที่คุณเริ่มใน { $dir } จะเข้าห้อง { $room } ในชื่อ { $name }/<เอเจนต์>
