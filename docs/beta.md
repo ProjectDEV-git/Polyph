@@ -48,6 +48,10 @@ On macOS and Windows, agent sandboxing is weaker than on Linux (see
 - Bringing agents you already run (Claude Code, Codex, Cursor, VS Code,
   Gemini CLI, Windsurf, Zed, OpenCode) into a room with `polyph connect`.
   `polyph doctor` checks the setup and prints a fix for each problem.
+  The entry is named `polyph` for the default data folder and
+  `polyph-<hash of the folder>` for any other, so a second home never
+  replaces yours. `polyph start` prints which agent settings it changed;
+  pass `--no-connect` in scripts and tests to leave them alone.
 - Claims on files, folders and functions; the planner; agent-to-agent
   messages; handoff; the reviewer agent; the merge queue.
 - The board, threads, activity feed, whiteboards, shared terminals.

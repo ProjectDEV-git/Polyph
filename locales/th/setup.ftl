@@ -126,3 +126,9 @@ relay-fix-timeout = รีเลย์ไม่ตอบภายในเวล
 relay-fix-http = รีเลย์ตอบกลับด้วยข้อผิดพลาด HTTP (อาจเป็นพร็อกซีหรือที่อยู่ผิด) ตรวจสอบ polyph config get relay
 relay-fix-rejected = รีเลย์ปฏิเสธอุปกรณ์เครื่องนี้ ตรวจสอบ polyph config get relay และบันทึกของรีเลย์
 relay-fix-other = ตรวจสอบที่อยู่ด้วย polyph config get relay แล้วดูข้อผิดพลาดเต็มในบันทึกของ daemon
+
+connect-wrote = เขียนแล้ว: { $entries }
+connect-kept = { $client }: ไม่แตะรายการ "{ $entry }" ที่มีอยู่ รายการนี้เริ่ม Polyph ด้วย { $home } หากต้องการแทนที่ ให้รัน connect ในเทอร์มินัลโดยไม่ใส่ --yes
+connect-replace-ask = { $client } มีรายการ "{ $entry }" ที่เริ่ม Polyph ด้วย { $home } อยู่แล้ว ต้องการแทนที่หรือไม่? [y/N]
+start-agents-changed = การตั้งค่าเอเจนต์ที่เปลี่ยน: { $entries }
+start-agents-none = ไม่ได้เปลี่ยนการตั้งค่าเอเจนต์ใด ๆ รัน polyph connect เพื่อเพิ่มเอเจนต์ของคุณ หรือใส่ --no-connect ในสคริปต์และการทดสอบ

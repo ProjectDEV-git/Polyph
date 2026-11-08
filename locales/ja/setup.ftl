@@ -126,3 +126,9 @@ relay-fix-timeout = リレーから時間内に応答がありません。ネッ
 relay-fix-http = リレーが HTTP エラーを返しました（プロキシかアドレスの誤り）。polyph config get relay を確認してください。
 relay-fix-rejected = リレーがこのデバイスを拒否しました。polyph config get relay とリレーのログを確認してください。
 relay-fix-other = polyph config get relay でアドレスを確認し、完全なエラーはデーモンのログで確認してください。
+
+connect-wrote = 書き込み済み: { $entries }。
+connect-kept = { $client }: 既存の "{ $entry }" エントリはそのままにしました。このエントリは { $home } で Polyph を起動します。置き換えるには、ターミナルで --yes なしの connect を実行してください。
+connect-replace-ask = { $client } には、{ $home } で Polyph を起動する "{ $entry }" エントリが既にあります。置き換えますか？ [y/N]
+start-agents-changed = 変更したエージェント設定: { $entries }。
+start-agents-none = エージェント設定は変更しませんでした。エージェントを追加するには polyph connect を実行してください。スクリプトやテストでは --no-connect を付けます。

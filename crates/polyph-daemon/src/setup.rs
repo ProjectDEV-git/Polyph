@@ -31,11 +31,11 @@ fn env() -> Result<Env, ApiError> {
 
 /// Clients to connect: those named, or every installed one that has no
 /// Polyph entry and does not get Polyph from an extension or plugin.
-fn targets(env: &Env, ids: &[String]) -> Result<Vec<&'static Client>, ApiError> {
+fn targets(env: &Env, name: &str, ids: &[String]) -> Result<Vec<&'static Client>, ApiError> {
     if ids.is_empty() {
         return Ok(CLIENTS
             .iter()
-            .filter(|c| c.installed(env) && !c.registered_by_extension(env) && clients::current(c, env).is_none())
+            .filter(|c| c.installed(env) && !c.registered_by_extension(env) && clients::current(c, env, name).is_none())
             .collect());
     }
     ids.iter().map(|i| clients::find(i).ok_or_else(|| ApiError::BadRequest(format!("unknown agent {i}")))).collect()
@@ -51,6 +51,7 @@ pub async fn call(d: &Arc<Daemon>, method: &str, params: Value) -> ApiResult {
     match method {
         "setup.status" => {
             let env = Env::current();
+            let name = clients::entry_name(home_override(d).as_deref());
             let list: Vec<Value> = match &env {
                 Some(env) => CLIENTS
                     .iter()
@@ -60,14 +61,14 @@ pub async fn call(d: &Arc<Daemon>, method: &str, params: Value) -> ApiResult {
                             "id": c.id,
                             "name": c.name,
                             "installed": c.installed(env) || via_extension,
-                            "connected": via_extension || clients::current(c, env).is_some(),
+                            "connected": via_extension || clients::current(c, env, &name).is_some(),
                             "via_extension": via_extension,
                         })
                     })
                     .collect(),
                 None => vec![],
             };
-            let name = d.shared.config.lock().name.clone().filter(|n| !n.trim().is_empty());
+            let person = d.shared.config.lock().name.clone().filter(|n| !n.trim().is_empty());
             let rooms = d.room_list().await;
             let folders = crate::folders::load(&d.shared.paths.home);
             let local = d.agents.map.lock().await.values().filter(|h| !h.helper).count();
@@ -81,7 +82,7 @@ pub async fn call(d: &Arc<Daemon>, method: &str, params: Value) -> ApiResult {
                 members = members.max(all.len());
             }
             Ok(json!({
-                "name": name,
+                "name": person,
                 "rooms": rooms.len(),
                 "folders": folders,
                 "clients": list,
@@ -94,9 +95,10 @@ pub async fn call(d: &Arc<Daemon>, method: &str, params: Value) -> ApiResult {
                 serde_json::from_value(params).map_err(|e| ApiError::BadRequest(format!("invalid parameters: {e}")))?;
             let env = env()?;
             let t = transport(d)?;
+            let entry = clients::entry_name(home_override(d).as_deref());
             let mut out = vec![];
-            for c in targets(&env, &p.clients)? {
-                let change = clients::plan_add(c, &env, &t).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+            for c in targets(&env, &entry, &p.clients)? {
+                let change = clients::plan_add(c, &env, &entry, &t).map_err(|e| ApiError::BadRequest(e.to_string()))?;
                 if change.is_noop() {
                     continue;
                 }

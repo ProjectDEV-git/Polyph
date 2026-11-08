@@ -127,3 +127,9 @@ relay-fix-timeout = The relay did not answer in time. Check the network, or a pr
 relay-fix-http = The relay answered with an HTTP error (a proxy or wrong address). Check polyph config get relay.
 relay-fix-rejected = The relay refused this device. Check polyph config get relay and the relay logs.
 relay-fix-other = Check the address with polyph config get relay, then see the daemon log for the full error.
+
+connect-wrote = Wrote: { $entries }.
+connect-kept = { $client }: left the existing "{ $entry }" entry alone. It starts Polyph with { $home }. Run connect without --yes in a terminal to replace it.
+connect-replace-ask = { $client } already has a "{ $entry }" entry that starts Polyph with { $home }. Replace it? [y/N]
+start-agents-changed = Changed agent settings: { $entries }.
+start-agents-none = Changed no agent settings. Run polyph connect to add your agents, or pass --no-connect in scripts and tests.

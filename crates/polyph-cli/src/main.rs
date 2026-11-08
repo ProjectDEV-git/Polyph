@@ -229,7 +229,7 @@ enum Cmd {
         /// Never ask: take your name from --me or git, and connect agents without confirming.
         #[arg(long, short = 'y')]
         yes: bool,
-        /// Do not connect agents.
+        /// Do not connect agents or touch their settings (use it in scripts and tests).
         #[arg(long)]
         no_connect: bool,
     },

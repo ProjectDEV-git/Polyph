@@ -126,3 +126,9 @@ relay-fix-timeout = 中继没有及时响应。请检查网络，或是否有代
 relay-fix-http = 中继返回了 HTTP 错误（可能是代理或地址错误）。请检查 polyph config get relay。
 relay-fix-rejected = 中继拒绝了这台设备。请检查 polyph config get relay 和中继日志。
 relay-fix-other = 用 polyph config get relay 检查地址，完整错误见守护进程日志。
+
+connect-wrote = 已写入：{ $entries }。
+connect-kept = { $client }：保留了现有的 "{ $entry }" 条目，它用 { $home } 启动 Polyph。要替换它，请在终端中不带 --yes 运行 connect。
+connect-replace-ask = { $client } 已有一个用 { $home } 启动 Polyph 的 "{ $entry }" 条目。要替换吗？[y/N]
+start-agents-changed = 已更改的智能体设置：{ $entries }。
+start-agents-none = 没有更改任何智能体设置。运行 polyph connect 添加你的智能体；在脚本和测试中使用 --no-connect。
