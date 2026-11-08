@@ -310,19 +310,27 @@ SEC-15/17 (KAO-76, KAO-81).
   trial) for Kao. Opus rework of #21 running. Usage 63% at 08:54: no new
   dispatches until the reset; KAO-106 waits.
 
+- 09:05 UTC: #21 rework pushed at 5432c6d (SOCK_RAW refused; /run and
+  /var/run resolved before emptying; fds above 2 closed; 11 more IPC env
+  vars; seccomp-missing warning in doctor and sandbox test; docs, SEC-14
+  high per mode). Lead's local verification running. Usage 75%: PAUSED.
+  Expected reset about 12:47 UTC (window started about 07:47).
+
 ### Next after the pause
 
-1. Usage: get_session, and Kao's figure if given. Continue only under 75%.
-2. #16 c33287e: one narrow review of the merge resolution, one agent
-   covering both roles' questions (security auditor, Opus): the trusted
-   load in `project.rs` now reads through `read_text_under`, so a
-   symlinked or hard-linked `polyph.toml` in the person's checkout is
-   refused, not followed. Then watch CI and merge.
-3. Next M-B1 security work: KAO-75 (SEC-14, critical: host IPC reachable
-   from the sandbox), KAO-76 (SEC-15), KAO-81 (SEC-17). Then the follow-ups:
-   KAO-98 (trust redirect), KAO-101 (bad-object window), KAO-103
-   (`connect` rewrites ~/.claude.json), KAO-104 (m4_merge flake).
-4. Dogfood room retry with the merged DF-1 build (relay TLS fix is on Main).
+1. Usage: get_session and the usage check. Continue only under 75%.
+2. Read `kao75-verify2.txt` in the session scratchpad (lead's check of
+   5432c6d). Check #21 CI on 5432c6d (macOS runs the Seatbelt profile).
+3. #21: security auditor and architect re-review of 5432c6d (one each, or
+   one Opus security auditor covering the architect's two items: SOCK_RAW
+   and /run symlinks). Worker's open question for review: `/run` is
+   emptied even when TMPDIR lives under it; writable paths are bound back
+   after. Then merge.
+4. KAO-106 (SEC-14 follow-up, release-blocker): LXD sockets, SSH agent
+   sockets, TIOCSTI/setsid, macOS keychain, keyring syscalls, Seatbelt
+   process-info, launchctl test, person-level Mach services. Opus.
+5. KAO-105 (m4 claims race), KAO-98, KAO-101, KAO-102, KAO-76, KAO-81.
+6. Dogfood room retry with Main's relay TLS fix.
 
 ## Proposed edits (awaiting Kao)
 
