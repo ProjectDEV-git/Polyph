@@ -20,3 +20,4 @@ activity-agent-connected = connected { $client }
 activity-task-finished = finished a task: { $summary }
 activity-brief-updated = updated the project brief
 activity-task-taken = took the task { $title }
+activity-certificates-reissued = re-issued certificates for { $names }, with the role Member at most

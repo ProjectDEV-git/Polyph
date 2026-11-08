@@ -20,3 +20,4 @@ activity-agent-connected = เชื่อมต่อ { $client }
 activity-task-finished = ทำงานเสร็จ: { $summary }
 activity-brief-updated = แก้ไขสรุปโปรเจกต์
 activity-task-taken = รับงาน { $title }
+activity-certificates-reissued = ออกใบรับรองใหม่ให้ { $names } (บทบาทสูงสุดคือสมาชิก)

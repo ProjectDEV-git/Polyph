@@ -12,6 +12,9 @@ mod setup;
 mod update;
 mod work;
 
+#[cfg(test)]
+mod arg_tests;
+
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -84,9 +87,9 @@ enum Cmd {
     },
     Join {
         code: String,
-        /// Your display name.
-        #[arg(long)]
-        name: Option<String>,
+        /// Your name as teammates see it (saved if you have none yet).
+        #[arg(long = "me", alias = "name")]
+        me: Option<String>,
         /// Relay URL to use (for example a LAN address from `polyph discover`).
         #[arg(long)]
         relay: Option<String>,
@@ -212,13 +215,18 @@ enum Cmd {
     Disconnect {
         /// Clients to disconnect (default: all).
         clients: Vec<String>,
+        /// Remove Polyph without asking.
         #[arg(long, short = 'y')]
         yes: bool,
     },
     Start {
         /// Name for a new room (default: the folder's name).
+        #[arg(long = "room", alias = "name")]
+        room: Option<String>,
+        /// Your name as teammates see it. Saved, and used as your name in the room.
         #[arg(long)]
-        name: Option<String>,
+        me: Option<String>,
+        /// Never ask: take your name from --me or git, and connect agents without confirming.
         #[arg(long, short = 'y')]
         yes: bool,
         /// Do not connect agents.
@@ -884,7 +892,7 @@ async fn run(ctx: &Ctx, cmd: Option<Cmd>) -> anyhow::Result<()> {
         Cmd::Mcp { client, room } => setup::mcp(ctx, client, room).await,
         Cmd::Connect { clients, http, yes } => setup::connect(ctx, &clients, http, yes).await.map(|_| ()),
         Cmd::Disconnect { clients, yes } => setup::disconnect(ctx, &clients, yes).await,
-        Cmd::Start { name, yes, no_connect } => setup::start(ctx, name, yes, no_connect).await,
+        Cmd::Start { room, me, yes, no_connect } => setup::start(ctx, room, me, yes, no_connect).await,
         Cmd::Doctor => setup::doctor(ctx).await,
         Cmd::Trust { revoke, yes } => trust(ctx, revoke, yes),
         Cmd::Hook { cmd: HookCmd::PreEdit { client } } => {
@@ -980,7 +988,7 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                 print_invite(ctx, &inv);
             }
         }
-        Cmd::Join { code, name, relay, lan, clone, no_clone } => {
+        Cmd::Join { code, me: name, relay, lan, clone, no_clone } => {
             if !ctx.json {
                 ctx.out(l.t("join-connecting"));
             }
@@ -1167,6 +1175,16 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                             .unwrap_or_else(|| l.t("quick-session-name"))
                     ));
                     ctx.out(if s["connected"] == true { l.t("status-connected") } else { l.t("status-disconnected") });
+                    if s["connected"] != true
+                        && let Ok(info) = call(&mut api, "room.get", json!({ "room": s["room"] })).await
+                        && let Some(m) = info["relay_error"]["message"].as_str()
+                    {
+                        ctx.out(format!("  {}", tr!(l, "relay-error-last", message = m)));
+                        ctx.out(format!(
+                            "  {}",
+                            setup::relay_fix(l, info["relay_error"]["kind"].as_str().unwrap_or_default())
+                        ));
+                    }
                     ctx.out(tr!(l, "status-members", count = s["members_online"].as_u64().unwrap_or(0)));
                     ctx.out(tr!(
                         l,
@@ -1879,12 +1897,9 @@ async fn room_cmd(ctx: &Ctx, api: &mut Api, cmd: RoomCmd) -> anyhow::Result<()> 
             } else {
                 for k in v.as_array().into_iter().flatten() {
                     let id: String = k["id"].as_str().unwrap_or_default().chars().take(6).collect();
-                    ctx.out(tr!(
-                        l,
-                        "knock-line",
-                        id = id.clone(),
-                        name = k["display_name"].as_str().unwrap_or_default()
-                    ));
+                    // Another device joining as this person says so plainly.
+                    let line = if k["own_device"] == true { "knock-line-own-device" } else { "knock-line" };
+                    ctx.out(tr!(l, line, id = id.clone(), name = k["display_name"].as_str().unwrap_or_default()));
                     ctx.out(tr!(l, "knock-hint", id = id));
                 }
             }

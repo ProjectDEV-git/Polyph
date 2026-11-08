@@ -47,6 +47,13 @@ async fn events(h: &Harness, i: usize, rid: &str, agent: &str) -> Vec<Value> {
     t["events"].as_array().unwrap().clone()
 }
 
+/// Like `messages`, but `None` while this node has not yet heard of the agent
+/// (the room replicates it from the device that runs it), so a poll can wait.
+async fn messages_if_known(h: &Harness, i: usize, rid: &str, agent: &str) -> Option<Vec<String>> {
+    h.nodes[i].call("agent.transcript", json!({ "room": rid, "agent": agent })).await.ok()?;
+    Some(messages(h, i, rid, agent).await)
+}
+
 async fn messages(h: &Harness, i: usize, rid: &str, agent: &str) -> Vec<String> {
     events(h, i, rid, agent)
         .await
@@ -286,7 +293,7 @@ async fn secrets_are_redacted_before_leaving_the_device() {
     let bid = start_agent(&h, b, &rid, bo.path()).await;
     prompt(&h, b, &bid, "look around").await;
     h.until("Ann sees the transcript", || async {
-        messages(&h, a, &rid, &bid).await.iter().any(|m| m.starts_with("run: exit"))
+        messages_if_known(&h, a, &rid, &bid).await.is_some_and(|m| m.iter().any(|m| m.starts_with("run: exit")))
     })
     .await
     .unwrap();

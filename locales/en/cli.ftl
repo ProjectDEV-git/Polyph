@@ -87,6 +87,7 @@ member-offline = offline
 member-you = (you)
 knocks-empty = Nobody is waiting to join.
 knock-line = { $id }  { $name } wants to join
+knock-line-own-device = { $id }  a new device wants to join as you ({ $name }); let it in only if you just paired a phone or set up an agent host
 knock-hint = Approve with `polyph approve { $id }` or deny with `polyph deny { $id }`.
 settings-approval-on = Joining requires approval.
 settings-approval-off = Anyone with a code joins without approval.

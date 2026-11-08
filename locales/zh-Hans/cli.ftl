@@ -83,6 +83,7 @@ member-offline = 离线
 member-you = （你）
 knocks-empty = 没有人在等待加入。
 knock-line = { $id }  { $name } 请求加入
+knock-line-own-device = { $id }  一台新设备请求以你的身份（{ $name }）加入；仅当你刚刚配对了手机或设置了智能体主机时才允许
 knock-hint = 用 `polyph approve { $id }` 批准，或用 `polyph deny { $id }` 拒绝。
 settings-approval-on = 加入需要批准。
 settings-approval-off = 持有加入码即可直接加入，无需批准。

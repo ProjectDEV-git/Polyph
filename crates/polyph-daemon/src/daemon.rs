@@ -243,6 +243,9 @@ pub struct RoomInfo {
     pub role: Role,
     pub relay: String,
     pub connected: bool,
+    /// Why the relay is unreachable, when it is. Absent while connected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay_error: Option<crate::runtime::RelayErrorInfo>,
     pub open: bool,
     pub members_online: usize,
     pub members: usize,
@@ -470,6 +473,7 @@ impl Daemon {
             role: ctx.core.role(),
             relay: ctx.relay.url.clone(),
             connected: ctx.connected,
+            relay_error: ctx.relay_error.clone(),
             open,
             members_online: ctx
                 .core
@@ -740,53 +744,8 @@ impl Daemon {
                 }
                 let p: P = param(&params)?;
                 let rt = self.find(&p.room).await?;
-                let kind = if p.reusable { CodeKind::Reusable { max_uses: p.max_uses } } else { CodeKind::OneTime };
-                let ttl = p.expires_secs.unwrap_or(if p.reusable { 7 * 86_400 } else { 15 * 60 });
-                // A freshly opened or joined room may still be connecting.
-                if self.open.lock().await.contains(&rt.id) {
-                    for _ in 0..200 {
-                        if rt.ctx.lock().await.connected {
-                            break;
-                        }
-                        tokio::time::sleep(Duration::from_millis(50)).await;
-                    }
-                }
-                for _ in 0..4 {
-                    let (code, waiter, lan, relay) = {
-                        let mut c = rt.ctx.lock().await;
-                        if c.core.quick && p.reusable {
-                            return Err(ApiError::BadRequest("quick sessions only have one-time codes".into()));
-                        }
-                        if !c.core.role().can_write() {
-                            return Err(ApiError::Forbidden("viewers cannot invite people".into()));
-                        }
-                        let (code, waiter) = host_code(&mut c, kind.clone(), now + ttl).await?;
-                        // Browsers reach internet relays only, not a LAN relay with its own certificate.
-                        let relay = c.relay.pin.is_none().then(|| c.relay.url.clone());
-                        (code, waiter, c.lan.as_ref().map(|l| l.addr.to_string_with_pin()), relay)
-                    };
-                    // Wait (without holding the room lock) until the relay hosts it,
-                    // so a joiner who types the code immediately finds it.
-                    let hosted = match waiter {
-                        Some(rx) => tokio::time::timeout(Duration::from_secs(10), rx).await.ok().and_then(|r| r.ok()),
-                        None => Some(true),
-                    };
-                    match hosted {
-                        Some(true) => {
-                            let pending = !rt.ctx.lock().await.connected;
-                            return ok(
-                                json!({ "code": code.to_string(), "expires_at": now + ttl, "reusable": p.reusable, "lan": lan, "pending": pending, "relay": relay }),
-                            );
-                        }
-                        Some(false) => continue,
-                        None => {
-                            return Err(ApiError::Failed(
-                                "the relay did not confirm the code; check the connection and try again".into(),
-                            ));
-                        }
-                    }
-                }
-                Err(ApiError::Failed("could not find a free code; try again".into()))
+                // Plain invites never let the joiner claim this member id.
+                self.invite(&rt, p.reusable, p.expires_secs, p.max_uses, false).await
             }
             "phone.pair" => {
                 // A one-time code plus this person's member id, as a link for
@@ -804,7 +763,8 @@ impl Daemon {
                         "this room uses a LAN relay with its own certificate, which phone browsers cannot reach; host it on an internet relay to pair a phone".into(),
                     ));
                 }
-                let inv = self.call_nested("room.invite", json!({ "room": rt.id.to_hex() })).await?;
+                // A one-time code for another device of this member.
+                let inv = self.invite(&rt, false, None, None, true).await?;
                 let code = inv["code"].as_str().unwrap_or_default().to_string();
                 let member = self.shared.member_id()?.to_hex();
                 let base = p.base.unwrap_or_else(crate::phone::default_base);
@@ -923,7 +883,21 @@ impl Daemon {
                 let p: RoomParam = param(&params)?;
                 let rt = self.find(&p.room).await?;
                 let c = rt.ctx.lock().await;
-                ok(c.core.knocks.values().cloned().collect::<Vec<_>>())
+                // `own_device`: another device joining as this member, through
+                // a code `phone.pair` or `host.invite` made here.
+                let list: Vec<Value> = c
+                    .core
+                    .knocks
+                    .values()
+                    .map(|k| {
+                        let mut v = serde_json::to_value(k).unwrap_or(Value::Null);
+                        if let Some(o) = v.as_object_mut() {
+                            o.insert("own_device".into(), c.core.is_own_device_knock(&k.id).into());
+                        }
+                        v
+                    })
+                    .collect();
+                ok(list)
             }
             "knock.decide" => {
                 #[derive(Deserialize)]
@@ -2154,6 +2128,75 @@ impl Daemon {
             }
         }
         Err(last)
+    }
+
+    /// Makes a join code and waits until the relay hosts it. `own_device` is
+    /// set only by `phone.pair` and `host.invite`: a knock through the code may
+    /// then name this member, as another device of theirs, and still needs a
+    /// person to approve it here.
+    pub(crate) async fn invite(
+        self: &Arc<Self>,
+        rt: &RoomRuntime,
+        reusable: bool,
+        expires_secs: Option<i64>,
+        max_uses: Option<u32>,
+        own_device: bool,
+    ) -> ApiResult {
+        let now = self.shared.clock.now();
+        let kind = if reusable { CodeKind::Reusable { max_uses } } else { CodeKind::OneTime };
+        let ttl = expires_secs.unwrap_or(if reusable { 7 * 86_400 } else { 15 * 60 });
+        // A freshly opened or joined room may still be connecting.
+        if self.open.lock().await.contains(&rt.id) {
+            for _ in 0..200 {
+                if rt.ctx.lock().await.connected {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+        for _ in 0..4 {
+            let (code, waiter, lan, relay) = {
+                let mut c = rt.ctx.lock().await;
+                if c.core.quick && reusable {
+                    return Err(ApiError::BadRequest("quick sessions only have one-time codes".into()));
+                }
+                // A knock naming this member is let in only by this device,
+                // so a role that cannot approve joins cannot add a device.
+                if own_device && !c.core.role().can_approve_joins() {
+                    let lang = self.shared.config.lock().lang.clone();
+                    let l = polyph_i18n::Localizer::new(&polyph_i18n::detect(lang.as_deref()));
+                    return Err(ApiError::Forbidden(l.t("error-add-device-needs-approver")));
+                }
+                if !c.core.role().can_write() {
+                    return Err(ApiError::Forbidden("viewers cannot invite people".into()));
+                }
+                let (code, waiter) = host_code(&mut c, kind.clone(), now + ttl, own_device).await?;
+                // Browsers reach internet relays only, not a LAN relay with its own certificate.
+                let relay = c.relay.pin.is_none().then(|| c.relay.url.clone());
+                (code, waiter, c.lan.as_ref().map(|l| l.addr.to_string_with_pin()), relay)
+            };
+            // Wait (without holding the room lock) until the relay hosts it,
+            // so a joiner who types the code immediately finds it.
+            let hosted = match waiter {
+                Some(rx) => tokio::time::timeout(Duration::from_secs(10), rx).await.ok().and_then(|r| r.ok()),
+                None => Some(true),
+            };
+            match hosted {
+                Some(true) => {
+                    let pending = !rt.ctx.lock().await.connected;
+                    return ok(
+                        json!({ "code": code.to_string(), "expires_at": now + ttl, "reusable": reusable, "lan": lan, "pending": pending, "relay": relay }),
+                    );
+                }
+                Some(false) => continue,
+                None => {
+                    return Err(ApiError::Failed(
+                        "the relay did not confirm the code; check the connection and try again".into(),
+                    ));
+                }
+            }
+        }
+        Err(ApiError::Failed("could not find a free code; try again".into()))
     }
 
     async fn join_via(

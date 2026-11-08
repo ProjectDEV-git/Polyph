@@ -17,3 +17,4 @@ column-claimed = Claimed
 column-in-progress = In progress
 column-review = Review
 column-done = Done
+error-add-device-needs-approver = Only an Owner or Maintainer can add another device of theirs to this room, because only they can approve its join. Ask an Owner to change your role.

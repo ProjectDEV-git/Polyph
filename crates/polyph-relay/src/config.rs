@@ -45,6 +45,9 @@ pub struct RelayConfig {
     /// Failed attempts before a code dies (one-time) or locks (reusable).
     pub code_max_failures: u32,
     pub code_lock_secs: u64,
+    /// Seconds a joiner has to prove the code; a join still unconfirmed by the
+    /// host after this ends and counts as a failed attempt.
+    pub join_handshake_secs: u64,
     /// Longest a host may keep a code alive.
     pub code_max_lifetime_secs: u64,
     /// Public URL clients should use, reported by `/healthz`.
@@ -75,6 +78,7 @@ impl Default for RelayConfig {
             frames_per_sec: 200,
             code_max_failures: 5,
             code_lock_secs: 600,
+            join_handshake_secs: 120,
             code_max_lifetime_secs: 30 * 24 * 3600,
             public_url: None,
             tls_cert: None,
