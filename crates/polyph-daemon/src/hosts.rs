@@ -268,7 +268,8 @@ async fn handle(d: Arc<Daemon>, rt: Arc<RoomRuntime>, h: HostEvent) {
 
 /// An enrollment for a new agent host: the command to run on the server.
 pub async fn invite(d: &Arc<Daemon>, rt: &RoomRuntime) -> ApiResult {
-    let inv = d.call_nested("room.invite", json!({ "room": rt.id.to_hex() })).await?;
+    // A one-time code for another device of this member.
+    let inv = d.invite(rt, false, None, None, true).await?;
     let code = inv["code"].as_str().unwrap_or_default().to_string();
     let member = d.shared.member_id()?.to_hex();
     let relay = rt.ctx.lock().await.relay.to_string_with_pin();

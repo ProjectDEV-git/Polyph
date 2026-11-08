@@ -53,6 +53,7 @@ app-approve-task = 批准整个任务
 app-deny = 拒绝
 app-deny-send = 附说明拒绝
 app-knock = { $name } 请求加入此房间。
+app-knock-own-device = 一台新设备请求以你的身份（{ $name }）加入。仅当你刚刚配对了手机或设置了智能体主机时才允许。
 app-knock-approve = 允许加入
 app-knock-let-in = 已允许加入。
 

@@ -11,6 +11,26 @@ GitHub release page.
   relay addresses. `--print` prints the link instead of opening a browser.
 - **`polyph agent message <agent> <text>`.** Leaves a message in an agent's
   inbox from the command line.
+- **Viewers no longer upload snapshots.** The relay now refuses snapshots
+  from Viewers. A Viewer on Polyph 0.1.2 connected to an upgraded relay logs
+  one harmless relay error each snapshot interval (5 minutes) until it
+  updates.
+- **Pairing a phone or adding an agent host needs an Owner or Maintainer.**
+  Only those roles can approve the new device's join, so `phone.pair` and
+  `host.invite` now refuse up front for Members and Viewers.
+- **Rooms from 0.1.2.** On the first connect after updating, an Owner's or
+  Maintainer's daemon re-issues certificates for people let in by a
+  Maintainer whose role changed since, so devices that join later accept
+  them. Re-issued people get their role back at most as Member, and the
+  activity feed lists them; raise a role again with `polyph room role`. It
+  runs once per room. If the room owner's role was changed in 0.1.2, the
+  owner's device goes back to Owner. In a room where some devices still run
+  0.1.2, update the Owner and Maintainer devices first: a role change made
+  from a 0.1.2 device leaves the people that member let in cut off on
+  updated devices.
+- **Removed devices.** Re-inviting someone from a device that was removed
+  from the room now says so; they join again from another machine or a
+  separate `POLYPH_HOME`.
 
 ## 0.1.2
 

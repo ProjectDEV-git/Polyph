@@ -17,3 +17,4 @@ column-claimed = 担当決定
 column-in-progress = 作業中
 column-review = レビュー
 column-done = 完了
+error-add-device-needs-approver = このルームに自分の別のデバイスを追加できるのはオーナーとメンテナーだけです。参加を承認できるのがこの 2 つのロールだけだからです。オーナーにロールの変更を依頼してください。

@@ -83,6 +83,7 @@ member-offline = オフライン
 member-you = （あなた）
 knocks-empty = 参加を待っている人はいません。
 knock-line = { $id }  { $name } さんが参加を希望しています
+knock-line-own-device = { $id }  新しいデバイスがあなた（{ $name }）として参加を希望しています。スマートフォンをペアリングした、またはエージェントホストを設定した直後の場合のみ許可してください
 knock-hint = `polyph approve { $id }` で承認、`polyph deny { $id }` で拒否できます。
 settings-approval-on = 参加には承認が必要です。
 settings-approval-off = コードを持っていれば承認なしで参加できます。
