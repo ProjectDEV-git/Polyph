@@ -60,7 +60,7 @@ fn trust_from_a_task_worktree_trusts_the_main_checkout() {
 
     let record: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(home.join("trusted-projects.json")).unwrap()).unwrap();
-    let main_dir = std::fs::canonicalize(&main).unwrap();
+    let main_dir = polyph_git::canonical(&main).unwrap();
     let keys: Vec<&String> = record.as_object().unwrap().keys().collect();
     assert_eq!(keys, vec![&main_dir.to_string_lossy().into_owned()]);
 }
