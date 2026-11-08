@@ -222,20 +222,36 @@ five-hour flag.
   The first triage worker hung on a Bash permission prompt and was stopped;
   briefs for log reading now say Grep/Read only.
 
+Session 2026-11-08 (after two container restarts, 02:47 and ~03:10 UTC):
+- #15 merged into Main as 1f418dd (architect APPROVE, security SIGN-OFF on
+  SEC-1..4, all CI green on ccd1a36). KAO-78/79/80 Done; residuals in
+  KAO-100; wire-change items in KAO-95; Thai read and core error i18n in
+  KAO-99.
+- #14 8e2eb31: Windows `\\?\` path fixed; Windows stack overflow in the
+  trust test remains. Escalated to Opus (second failure).
+- #16 50abf02: lead verified (all checks; 13 removed asserts all have
+  renamed or stricter replacements). Security: both earlier highs fixed on
+  Linux, SEC-13 to medium, one open check (macOS hard links under Seatbelt).
+  Architect: design sound, CI red (ubuntu author identity, windows dead
+  code). Opus rework running (CI, Seatbelt `file-link` deny with macOS
+  tests, gc.auto, import at start and warning, per-task branch record).
+  Lead accepted the "bad object" window for beta; follow-up KAO-101.
+  Low follow-ups in a separate issue.
+- #17: security SIGN-OFF; macOS CI red (known m4 race, new m6 Thai TUI
+  failure). Sonnet worker cherry-picks the m4 fix and investigates m6.
+- Usage: plan shows only `seven_day` `allowed_warning`; no five-hour flag.
+
 ### Next after the pause
 
-1. Usage check with the plan signal: run get_session, then
-   `RATE_TYPE=<rateLimitType> RATE_STATUS=<status> RATE_RESETS_AT=<resetsAt>
-   POLYPH_TOKEN_LIMIT=62000000 .claude/scripts/usage-check.sh`. Continue only
-   on CONTINUE and when Kao's figure (if given) is under 75%.
-2. Merge #14 when its CI is green.
-3. Verify #15 cf4b47e (proto/core/relay/daemon tests, m2/m8/m9, i18n,
-   clippy, fmt; check removed assertions), then security auditor and
-   architect.
-4. #16 82ce0e7 to the security auditor and the architect. Rebase onto Main
-   after #14 merges (both touch agents.rs and project.rs).
-5. #17 to the security auditor.
-6. KAO-93 and KAO-94 to a builder; dogfood room retry with the DF-1 build.
+1. Usage: get_session first; pause on any `five_hour` status other than
+   `allowed` or a Kao figure at or over 75%.
+2. Verify each of the three running reworks (#14, #16, #17) with their
+   Done-when commands; watch CI on each PR.
+3. Merge #14 and #17 when CI is green (both have their sign-offs).
+4. #16: after CI is green, the security auditor confirms the macOS
+   hard-link result from CI, then merge. Rebase or merge Main first if
+   needed (merge-tree showed no conflicts with #15).
+5. KAO-93 and KAO-94 to a builder; dogfood room retry with the DF-1 build.
 
 ## Proposed edits (awaiting Kao)
 
