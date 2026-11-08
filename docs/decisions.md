@@ -106,6 +106,15 @@ architecture decisions stay in `DECISIONS.md` at the root.
   the loop to watch the 5-hour window. The loop stops for the week only
   when the weekly status is `rejected` or Kao says so. A `five_hour` status
   other than `allowed` always pauses.
+- **SEC-14 in two PRs.** The security auditor signed off on merging PR #21
+  (SEC-14 drops from critical to high in every mode) but found four
+  beta-blocking holes (LXD sockets, SSH agent sockets outside /run, TIOCSTI
+  under Landlock, macOS keychain). Lead's call: PR #21 fixes the
+  architect's blockers (SOCK_RAW seccomp bypass, /run symlinks) and the
+  small items, then merges; the four go to KAO-106. Landlock without
+  seccomp keeps starting with a warning that `agents doctor` also shows.
+  A person-level Mach-services setting goes with KAO-106; a real-Mac trial
+  is Kao's (KAO-107, `human-only`).
 - **5-hour token limit is about 62M tokens** (Kao, 2026-11-07). ccusage
   counts cache reads in that total, and so does the 75% rule.
   `.claude/scripts/usage-check.sh` takes it as `POLYPH_TOKEN_LIMIT`. Cloud

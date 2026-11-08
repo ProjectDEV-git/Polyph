@@ -304,6 +304,12 @@ SEC-15/17 (KAO-76, KAO-81).
   Seatbelt profile); triage reading both logs. Reviews after CI is green.
   Usage 08:19 UTC: 40% (ccusage block from 07:00).
 
+- 08:55 UTC: #21 reviews in. Architect CHANGES REQUESTED (SOCK_RAW
+  seccomp bypass; /run symlink fail-open). Security: merge OK, SEC-14 now
+  high per mode, four beta blockers filed as KAO-106. KAO-107 (real-Mac
+  trial) for Kao. Opus rework of #21 running. Usage 63% at 08:54: no new
+  dispatches until the reset; KAO-106 waits.
+
 ### Next after the pause
 
 1. Usage: get_session, and Kao's figure if given. Continue only under 75%.
