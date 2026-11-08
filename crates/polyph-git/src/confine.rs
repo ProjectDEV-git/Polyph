@@ -171,14 +171,14 @@ mod tests {
         assert_eq!(n.get_current_dir(), Some(base.as_path()));
 
         let p = seatbelt_profile(std::slice::from_ref(&w), std::slice::from_ref(&ro));
-        let allow = p.find(&format!("(allow file-write* (subpath \"{}\"))", s(&w))).unwrap();
-        let deny = p.find(&format!("(deny file-write* (literal \"{}\"))", s(&ro))).unwrap();
+        let allow = p.find(&format!("(allow file-write* (subpath \"{}\"))", sb_quote(&w))).unwrap();
+        let deny = p.find(&format!("(deny file-write* (literal \"{}\"))", sb_quote(&ro))).unwrap();
         assert!(p.starts_with("(version 1)\n(allow default)\n(deny file-write*)") && allow < deny, "{p}");
         // Hard links: none but from the writable folders, none from the
         // read-only paths inside them.
         assert!(p.contains("(deny file-link)\n"), "{p}");
-        let link_allow = p.find(&format!("(allow file-link (subpath \"{}\"))", s(&w))).unwrap();
-        let link_deny = p.find(&format!("(deny file-link (literal \"{}\"))", s(&ro))).unwrap();
+        let link_allow = p.find(&format!("(allow file-link (subpath \"{}\"))", sb_quote(&w))).unwrap();
+        let link_deny = p.find(&format!("(deny file-link (literal \"{}\"))", sb_quote(&ro))).unwrap();
         assert!(p.find("(deny file-link)").unwrap() < link_allow && link_allow < link_deny, "{p}");
     }
 
