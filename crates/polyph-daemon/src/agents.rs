@@ -999,6 +999,11 @@ mod tests {
             assert!(l.has(GIT_UNPROTECTED), "{lang}");
             let text = polyph_i18n::tr!(l, GIT_UNPROTECTED, sandbox = "landlock");
             assert!(text.contains("landlock") && text.contains("bubblewrap"), "{lang}: {text}");
+            // Landlock without seccomp (SEC-14), as `polyph agents doctor`
+            // and `polyph sandbox test` show it.
+            assert!(l.has(polyph_sandbox::NO_SECCOMP), "{lang}");
+            let text = l.t(polyph_sandbox::NO_SECCOMP);
+            assert!(text.contains("seccomp") && text.contains("bubblewrap"), "{lang}: {text}");
             assert!(l.has(TASK_IMPORT_FAILED), "{lang}");
             let text = polyph_i18n::tr!(l, TASK_IMPORT_FAILED, branch = "polyph/ab12/x");
             assert!(text.contains("polyph/ab12/x"), "{lang}: {text}");

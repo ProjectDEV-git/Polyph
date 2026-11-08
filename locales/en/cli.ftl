@@ -200,6 +200,7 @@ sandbox-check-host-ipc = Unix sockets outside the sandbox (session bus, ssh-agen
 sandbox-pass = ok
 sandbox-fail = FAILED
 sandbox-none = No sandbox mechanism works on this machine. Agents will not start until one does; install bubblewrap on Linux.
+sandbox-warning-no-seccomp = There is no seccomp filter here, so Landlock alone does not keep agents from host IPC: they can connect to Unix sockets (the session bus, ssh-agent, docker.sock, systemd and journald) and use io_uring. Agents still start. Install bubblewrap to close this.
 usage-room = Room: { $tokens } tokens, ${ $cost } estimated
 usage-line = { $who }: { $tokens } tokens, ${ $cost } estimated
 usage-unknown = { $count ->

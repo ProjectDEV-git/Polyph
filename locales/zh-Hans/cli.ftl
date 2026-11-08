@@ -179,6 +179,7 @@ sandbox-check-host-ipc = 无法连接沙箱外的 Unix 套接字（会话总线�
 sandbox-pass = 通过
 sandbox-fail = 未通过
 sandbox-none = 此机器上没有可用的沙箱。在有可用沙箱之前智能体无法启动；Linux 上请安装 bubblewrap。
+sandbox-warning-no-seccomp = 此机器上没有 seccomp 过滤器，仅靠 Landlock 无法让智能体远离主机 IPC：它们可以连接 Unix 套接字（会话总线、ssh-agent、docker.sock、systemd 和 journald）并使用 io_uring。智能体仍会启动。安装 bubblewrap 即可堵住这一缺口。
 usage-room = 房间：{ $tokens } 个令牌，预估 ${ $cost }
 usage-line = { $who }：{ $tokens } 个令牌，预估 ${ $cost }
 usage-unknown = 有 { $count } 轮没有报告用量。

@@ -584,6 +584,10 @@ pub fn seatbelt_profile(policy: &Policy, proxy_port: u16) -> String {
     s.push_str("(allow signal (target same-sandbox))\n");
     s.push_str("(allow file-read*)\n(allow file-map-executable)\n(allow sysctl-read)\n(allow user-preference-read)\n");
     // ioctls, but none on terminals (TIOCSTI types into the person's shell).
+    // No Seatbelt-wrapped program owns a terminal: shared terminals
+    // (`polyph-term`, opened by `polyph term`) run the person's own shell
+    // unsandboxed, and agents and their ACP terminals get pipes, so no
+    // exception for a sandboxed shell's own tty is needed.
     s.push_str("(allow file-ioctl)\n");
     s.push_str("(deny file-ioctl (literal \"/dev/tty\") (literal \"/dev/console\") (regex #\"^/dev/ttys[0-9]+$\"))\n");
     s.push_str("(allow ipc-posix-sem)\n(allow ipc-posix-shm*)\n(allow system-socket)\n");
@@ -680,6 +684,27 @@ pub struct Availability {
     pub mechanism: Mechanism,
     pub available: bool,
     pub detail: String,
+    /// Message keys for what this mechanism leaves open here, shown by
+    /// `polyph agents doctor` and `polyph sandbox test`.
+    pub warnings: Vec<String>,
+}
+
+/// Message key: Landlock is enforced but the seccomp filter is missing, so
+/// agents start (with a warning) yet can reach host IPC over Unix sockets
+/// and use io_uring (SEC-14).
+pub const NO_SECCOMP: &str = "sandbox-warning-no-seccomp";
+
+fn landlock_availability(landlock: bool, seccomp: bool) -> Availability {
+    let (detail, warnings) = match (landlock, seccomp) {
+        (true, true) => ("Landlock is enforced by this kernel; seccomp blocks Unix sockets", vec![]),
+        (true, false) => (
+            "Landlock is enforced by this kernel, but there is no seccomp filter: agents can reach host IPC (the \
+             session bus, ssh-agent, docker.sock) over Unix sockets",
+            vec![NO_SECCOMP.to_string()],
+        ),
+        _ => ("Landlock is not available in this kernel", vec![]),
+    };
+    Availability { mechanism: Mechanism::Landlock, available: landlock, detail: detail.into(), warnings }
 }
 
 /// Which mechanisms this machine supports, best first.
@@ -702,6 +727,7 @@ pub fn detect(helper: &[String]) -> Vec<Availability> {
                 (true, false) => "bubblewrap is installed but cannot create namespaces here".into(),
                 _ => "bubblewrap is not installed".into(),
             },
+            warnings: vec![],
         });
         let probe = |what: &str| {
             helper.first().is_some_and(|h| {
@@ -714,17 +740,7 @@ pub fn detect(helper: &[String]) -> Vec<Availability> {
             })
         };
         let ll = probe("landlock");
-        v.push(Availability {
-            mechanism: Mechanism::Landlock,
-            available: ll,
-            detail: match (ll, ll && probe("seccomp")) {
-                (true, true) => "Landlock is enforced by this kernel; seccomp blocks Unix sockets".into(),
-                (true, false) => "Landlock is enforced by this kernel, but there is no seccomp filter: agents can \
-                                  reach host IPC (the session bus, ssh-agent, docker.sock) over Unix sockets"
-                    .into(),
-                _ => "Landlock is not available in this kernel".into(),
-            },
-        });
+        v.push(landlock_availability(ll, ll && probe("seccomp")));
     }
     if cfg!(target_os = "macos") {
         let ok = Path::new("/usr/bin/sandbox-exec").exists();
@@ -732,6 +748,7 @@ pub fn detect(helper: &[String]) -> Vec<Availability> {
             mechanism: Mechanism::Seatbelt,
             available: ok,
             detail: if ok { "sandbox-exec works".into() } else { "sandbox-exec is missing".into() },
+            warnings: vec![],
         });
     }
     if cfg!(windows) {
@@ -739,6 +756,7 @@ pub fn detect(helper: &[String]) -> Vec<Availability> {
             mechanism: Mechanism::WindowsJob,
             available: true,
             detail: "low integrity level and a job object; network isolation is limited".into(),
+            warnings: vec![],
         });
     }
     let c = container_engine();
@@ -746,6 +764,7 @@ pub fn detect(helper: &[String]) -> Vec<Availability> {
         mechanism: Mechanism::Container,
         available: c.is_some(),
         detail: c.unwrap_or_else(|| "neither podman nor docker is installed".into()),
+        warnings: vec![],
     });
     v
 }
@@ -914,6 +933,16 @@ mod seatbelt_tests {
         let (_t, root) = fake(None, None);
         let run = run_tmpfs_in(&root, &[root.join("run/user/1000/polyph")]);
         assert_eq!(run, [root.join("run"), root.join("var/run")]);
+    }
+
+    /// Landlock without seccomp still starts agents, but says what is open.
+    #[test]
+    fn landlock_without_seccomp_is_reported() {
+        let a = landlock_availability(true, false);
+        assert!(a.available && a.warnings == [NO_SECCOMP], "{a:?}");
+        let a = landlock_availability(true, true);
+        assert!(a.available && a.warnings.is_empty() && a.detail.contains("seccomp blocks"), "{a:?}");
+        assert!(landlock_availability(false, false).warnings.is_empty());
     }
 
     #[test]

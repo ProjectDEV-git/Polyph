@@ -21,6 +21,8 @@ pub struct MechanismReport {
     pub mechanism: Mechanism,
     pub available: bool,
     pub detail: String,
+    /// Message keys for what the mechanism leaves open ([`crate::Availability::warnings`]).
+    pub warnings: Vec<String>,
     pub checks: Vec<Check>,
 }
 
@@ -78,6 +80,7 @@ pub async fn run_all(helper: Vec<String>) -> anyhow::Result<Vec<MechanismReport>
             mechanism: a.mechanism,
             available: a.available,
             detail: a.detail.clone(),
+            warnings: a.warnings.clone(),
             checks: vec![],
         };
         if a.available && a.mechanism != Mechanism::Container {
