@@ -1,10 +1,16 @@
 # Handoff
 
-> **Paused for the 5-hour usage limit (2026-11-08 09:05 UTC, 75%).**
-> Expected reset about 12:47 UTC. Merged into Main: #14 to #20. Open: #21
-> (SEC-14, rework at 5432c6d awaiting re-review). Kao: KAO-107 (real-Mac
-> trial), KAO-95, KAO-99. Resume from `docs/progress.md` ("Next after the
-> pause"). Weekly limit at warning level (resets 2026-11-13).
+> **Stopped for the weekly usage limit (2026-11-08 ~10:10 UTC).** Kao
+> reported the weekly limit at 82% and asked to stop. It resets
+> 2026-11-13 05:00 UTC (12:00 Thailand time). Do not resume before then
+> unless Kao says so. No workers are running.
+>
+> Merged into Main: #14 to #20. Open: #21 (SEC-14) at 5432c6d, verified
+> by the lead locally; it needs the security and architect re-review,
+> green CI, then merge. Next after that: KAO-106 (SEC-14 follow-up,
+> release-blocker). Waiting on Kao: KAO-107 (real-Mac trial), KAO-95
+> (wire-change decisions), KAO-99 (Thai read). Full next steps in
+> `docs/progress.md` ("Next after the pause").
 
 Read this first when continuing the build. Then `PLAN.md` (checklist),
 `STUBS.md` (what is not done), `DECISIONS.md` (why things are the way they

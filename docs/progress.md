@@ -316,6 +316,11 @@ SEC-15/17 (KAO-76, KAO-81).
   high per mode). Lead's local verification running. Usage 75%: PAUSED.
   Expected reset about 12:47 UTC (window started about 07:47).
 
+- ~10:10 UTC: STOPPED for the weekly limit (Kao: 82%). Resets
+  2026-11-13 05:00 UTC. 10:05 check: 5-hour window at 81%. #21 5432c6d
+  verified by the lead (all tests pass; the one removed assertion has a
+  stricter replacement). No workers running, no pending wake-ups.
+
 ### Next after the pause
 
 1. Usage: get_session and the usage check. Continue only under 75%.
@@ -334,7 +339,47 @@ SEC-15/17 (KAO-76, KAO-81).
 
 ## Proposed edits (awaiting Kao)
 
-None yet.
+### 2026-11-08
+
+1. Usage was misread twice. At 13:45 on 2026-11-07 Kao reported 96%
+   while ccusage said 66%, because a container restart wiped its logs.
+   Later the plan showed no five-hour flag at 72%.
+   Edit `CLAUDE.md`, "Usage limits", after the usage-check line: "After a
+   container restart, ccusage undercounts. Ask Kao for the figure, or
+   treat the window as at least 75% until it resets."
+2. Workers stopped at permission prompts nobody answered. A triage
+   worker's `sed | grep | cut` over a CI log hung.
+   Edit `.claude/agents/triage.md`: "Read saved logs with the Grep and Read
+   tools, never Bash pipelines. Fetch logs with one plain
+   `gh api .../jobs/<id>/logs > file` command."
+3. A live CLI check rewrote the real `~/.claude.json` (KAO-103). The brief
+   gave a temp POLYPH_HOME but kept the real HOME.
+   Edit `.claude/agents/rust-engineer.md` and `builder.md`: "Live checks
+   of `polyph start`, `connect` or `join` use a temp `HOME` and
+   `--no-connect`, and check `sha256sum ~/.claude.json` before and after."
+4. Three PRs went red on Windows or macOS after passing locally:
+   - the `\\?\` path prefix and test path separators (#14, #16);
+   - a missing global git identity on CI (#16);
+   - a bubblewrap test on macOS and Windows (#21).
+
+   Edit `.claude/agents/rust-engineer.md`: "Before pushing, also run
+   `cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu
+   -- -D warnings` and run the tests with `GIT_CONFIG_GLOBAL=/dev/null`.
+   Build expected paths with `Path::join` and the product's own helpers.
+   Put `#[cfg(target_os = ...)]` on tests of OS-only code."
+5. Merges with Main caused conflicts and an extra Opus pass (#16 after
+   #14). Two PRs touched the same agent-start and `polyph.toml` code.
+   Edit `CLAUDE.md`, "Rules": "When two open PRs touch the same files,
+   merge one, then bring the other up to date before its final review,
+   not after."
+6. Security reviews of #16 and #21 kept finding new highs after earlier
+   sign-offs: object swap, a TOCTOU race, SOCK_RAW, TIOCSTI, the keychain.
+   Each round cost an Opus rework and a review.
+   Edit `.claude/agents/security-auditor.md`: "On a first review of
+   sandbox or git-isolation changes, list every escape class you checked:
+   sockets, fds, terminals, IPC, object stores, races between check and
+   use, links, platform services. Say which you did not check."
+
 
 ## Applied edits
 

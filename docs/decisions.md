@@ -115,6 +115,10 @@ architecture decisions stay in `DECISIONS.md` at the root.
   seccomp keeps starting with a warning that `agents doctor` also shows.
   A person-level Mach-services setting goes with KAO-106; a real-Mac trial
   is Kao's (KAO-107, `human-only`).
+- **Weekly stop at 82% (Kao, 2026-11-08).** Kao asked to stop at 82% of
+  the weekly limit, before the plan reported `rejected`. Their figure wins
+  over the plan's `allowed_warning`. Work resumes after the weekly reset
+  (2026-11-13 05:00 UTC) or when Kao says so.
 - **5-hour token limit is about 62M tokens** (Kao, 2026-11-07). ccusage
   counts cache reads in that total, and so does the 75% rule.
   `.claude/scripts/usage-check.sh` takes it as `POLYPH_TOKEN_LIMIT`. Cloud
