@@ -273,6 +273,11 @@ green CI). After #16, M-B1's three critical findings SEC-12, SEC-13 and
 SEC-14 still need SEC-14 (KAO-75, host IPC reachable from the sandbox) and
 SEC-15/17 (KAO-76, KAO-81).
 
+- 05:58 UTC: Kao reported 72% of the 5-hour window. No new dispatches.
+  The #16 merge worker runs to completion; the lead verifies it locally,
+  saves state and pauses until the window resets. The plan's get_session
+  shows no five-hour flag, so Kao's figure is the one to follow.
+
 ### Next after the pause
 
 1. Usage: get_session first; pause on any `five_hour` status other than
