@@ -296,6 +296,14 @@ SEC-15/17 (KAO-76, KAO-81).
   KAO-103 connect writes the real ~/.claude.json (Sonnet), KAO-104
   m4_merge flake (Sonnet, qa-engineer).
 
+- 08:00-08:50 UTC: merged #19 (2ecc098, KAO-104 m4_merge race) and #20
+  (8381268, KAO-103: per-home agent entries; ~/.claude.json untouched by
+  the worker). KAO-105 filed (m4 claims race on macOS). #21 (KAO-75,
+  SEC-14) opened at 9118a3d: lead verified locally (all tests, no removed
+  asserts); macOS and Windows CI red (first real run of the deny-default
+  Seatbelt profile); triage reading both logs. Reviews after CI is green.
+  Usage 08:19 UTC: 40% (ccusage block from 07:00).
+
 ### Next after the pause
 
 1. Usage: get_session, and Kao's figure if given. Continue only under 75%.

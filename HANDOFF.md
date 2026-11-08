@@ -1,9 +1,9 @@
 # Handoff
 
-> **Status 2026-11-08 08:00 UTC.** Merged into Main: #14 (SEC-12), #15
-> (SEC-1..4), #16 (SEC-13, SEC-16), #17 (relay TLS), #18 (`polyph start`).
-> In progress: KAO-75 (SEC-14, critical), KAO-103, KAO-104. Weekly limit at
-> warning level (resets 2026-11-13). Next steps in `docs/progress.md`.
+> **Status 2026-11-08 08:50 UTC.** Merged into Main: #14, #15, #16, #17,
+> #18, #19, #20. Open: #21 (SEC-14, critical; macOS/Windows CI red, being
+> read). Weekly limit at warning level (resets 2026-11-13). Next steps in
+> `docs/progress.md`.
 
 Read this first when continuing the build. Then `PLAN.md` (checklist),
 `STUBS.md` (what is not done), `DECISIONS.md` (why things are the way they
