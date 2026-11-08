@@ -1,10 +1,10 @@
 # Handoff
 
-> **Status 2026-11-08 06:00 UTC.** Merged into Main: #15 (SEC-1..4), #17
-> (relay TLS), #18 (`polyph start`), #14 (SEC-12). Open: #16 (SEC-13/16),
-> being merged with Main. The weekly limit is at warning level (resets
-> 2026-11-13 05:00 UTC). Current state and next steps are in
-> `docs/progress.md`.
+> **Paused for the 5-hour usage limit (2026-11-08 06:10 UTC).** Kao
+> reported 72% at 05:58 UTC. Merged: #15, #17, #18, #14. Open: #16, merged
+> with Main at c33287e and verified locally; it needs one review of the
+> merge resolution, then green CI. Resume from `docs/progress.md` ("Next
+> after the pause"). Weekly limit at warning level (resets 2026-11-13).
 
 Read this first when continuing the build. Then `PLAN.md` (checklist),
 `STUBS.md` (what is not done), `DECISIONS.md` (why things are the way they

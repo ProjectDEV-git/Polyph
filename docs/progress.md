@@ -278,17 +278,24 @@ SEC-15/17 (KAO-76, KAO-81).
   saves state and pauses until the window resets. The plan's get_session
   shows no five-hour flag, so Kao's figure is the one to follow.
 
+- 06:10 UTC: #16 merged with Main as c33287e (keeps #14's trust rules and
+  data-dir check and #16's `read_text_under`, git isolation and warnings).
+  Lead verified: all tests, clippy, fmt; no function from either parent
+  missing. Paused for the 5-hour window (Kao: 72% at 05:58).
+
 ### Next after the pause
 
-1. Usage: get_session first; pause on any `five_hour` status other than
-   `allowed` or a Kao figure at or over 75%.
-2. Verify each of the three running reworks (#14, #16, #17) with their
-   Done-when commands; watch CI on each PR.
-3. (done) #14 and #17 merged.
-4. #16: after CI is green, the security auditor confirms the macOS
-   hard-link result from CI, then merge. Rebase or merge Main first if
-   needed (merge-tree showed no conflicts with #15).
-5. KAO-93 and KAO-94 to a builder; dogfood room retry with the DF-1 build.
+1. Usage: get_session, and Kao's figure if given. Continue only under 75%.
+2. #16 c33287e: one narrow review of the merge resolution, one agent
+   covering both roles' questions (security auditor, Opus): the trusted
+   load in `project.rs` now reads through `read_text_under`, so a
+   symlinked or hard-linked `polyph.toml` in the person's checkout is
+   refused, not followed. Then watch CI and merge.
+3. Next M-B1 security work: KAO-75 (SEC-14, critical: host IPC reachable
+   from the sandbox), KAO-76 (SEC-15), KAO-81 (SEC-17). Then the follow-ups:
+   KAO-98 (trust redirect), KAO-101 (bad-object window), KAO-103
+   (`connect` rewrites ~/.claude.json), KAO-104 (m4_merge flake).
+4. Dogfood room retry with the merged DF-1 build (relay TLS fix is on Main).
 
 ## Proposed edits (awaiting Kao)
 
