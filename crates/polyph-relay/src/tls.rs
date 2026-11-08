@@ -136,3 +136,72 @@ fn verifier_client(fp: Option<[u8; 32]>, seen: Seen) -> anyhow::Result<Arc<Clien
         .with_no_client_auth();
     Ok(Arc::new(cfg))
 }
+
+/// Trust roots for public relays: the operating system store, certificates in
+/// the file named by `SSL_CERT_FILE`, and the bundled webpki roots as a
+/// fallback. The system store matters behind a TLS-inspecting proxy, whose
+/// private CA is installed there and not in the webpki bundle.
+pub fn public_root_store() -> rustls::RootCertStore {
+    let file = std::env::var_os("SSL_CERT_FILE").filter(|v| !v.is_empty()).map(std::path::PathBuf::from);
+    build_root_store(file.as_deref())
+}
+
+pub fn build_root_store(ssl_cert_file: Option<&std::path::Path>) -> rustls::RootCertStore {
+    use rustls_pki_types::pem::PemObject;
+    let mut roots = rustls::RootCertStore::empty();
+    let native = rustls_native_certs::load_native_certs();
+    for e in &native.errors {
+        tracing::debug!(error = %e, "could not read part of the system trust store");
+    }
+    let (added, _) = roots.add_parsable_certificates(native.certs);
+    tracing::debug!(added, "system trust store loaded");
+    if let Some(path) = ssl_cert_file {
+        match CertificateDer::pem_file_iter(path) {
+            Ok(it) => {
+                let certs: Vec<CertificateDer<'static>> = it.filter_map(Result::ok).collect();
+                roots.add_parsable_certificates(certs);
+            }
+            Err(e) => tracing::warn!(file = %path.display(), error = %e, "could not read SSL_CERT_FILE"),
+        }
+    }
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    roots
+}
+
+pub fn public_client() -> anyhow::Result<Arc<ClientConfig>> {
+    let cfg = ClientConfig::builder_with_provider(provider())
+        .with_safe_default_protocol_versions()?
+        .with_root_certificates(public_root_store())
+        .with_no_client_auth();
+    Ok(Arc::new(cfg))
+}
+
+#[cfg(test)]
+mod root_tests {
+    use super::*;
+
+    const CN: &str = "polyph-test-proxy-ca";
+
+    fn has_subject(r: &rustls::RootCertStore) -> bool {
+        r.roots.iter().any(|a| a.subject.as_ref().windows(CN.len()).any(|w| w == CN.as_bytes()))
+    }
+
+    #[test]
+    fn ssl_cert_file_adds_its_certificates() {
+        let mut params = rcgen::CertificateParams::new(vec!["proxy-ca.test".to_string()]).unwrap();
+        params.distinguished_name.push(rcgen::DnType::CommonName, CN);
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let key = rcgen::KeyPair::generate().unwrap();
+        let ca = params.self_signed(&key).unwrap();
+        let dir = std::env::temp_dir().join(format!("polyph-roots-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("ca.pem");
+        std::fs::write(&file, ca.pem()).unwrap();
+        let without = build_root_store(None);
+        let with = build_root_store(Some(&file));
+        assert!(!without.roots.is_empty(), "webpki fallback must be present");
+        assert!(!has_subject(&without));
+        assert!(has_subject(&with));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}

@@ -116,3 +116,13 @@ connect-by-extension = { $client } gets Polyph from its Polyph extension or plug
 doctor-client-extension = { $client } gets Polyph from its Polyph extension or plugin.
 help-hook = Hooks for agents' editors (the Claude Code plugin runs these).
 help-hook-pre-edit = Before an agent edits a file: block the edit when another agent holds the file, otherwise claim it.
+
+# Why the relay is unreachable (polyph status and polyph doctor)
+relay-error-last = Last relay error: { $message }
+relay-fix-certificate = The relay certificate is not trusted. If a company proxy inspects TLS, its CA must be in the system trust store or in the file named by SSL_CERT_FILE.
+relay-fix-dns = The relay address did not resolve. Check the network and the address with polyph config get relay.
+relay-fix-refused = The relay refused the connection. Check that the address is right with polyph config get relay and that a firewall allows outbound port 443.
+relay-fix-timeout = The relay did not answer in time. Check the network, or a proxy that blocks WebSocket connections.
+relay-fix-http = The relay answered with an HTTP error (a proxy or wrong address). Check polyph config get relay.
+relay-fix-rejected = The relay refused this device. Check polyph config get relay and the relay logs.
+relay-fix-other = Check the address with polyph config get relay, then see the daemon log for the full error.

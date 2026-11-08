@@ -43,6 +43,13 @@ async fn room() -> (Harness, String, tempfile::TempDir, tokio::task::JoinHandle<
         .await
         .unwrap();
     h.join(&rid, a, b, a, "member").await.unwrap();
+    // Bo's name reaches Ann by replication after the join; the rail needs it.
+    h.until("Ann knows Bo's name", || async {
+        let m = call(&h, a, "room.members", json!({ "room": rid })).await;
+        m.as_array().unwrap().iter().any(|x| x["name"] == "Bo")
+    })
+    .await
+    .unwrap();
     call(&h, a, "chat.send", json!({ "room": rid, "text": "Shall we split billing?" })).await;
     h.clock.advance(1);
     call(&h, b, "chat.send", json!({ "room": rid, "text": "Yes, I take invoices." })).await;

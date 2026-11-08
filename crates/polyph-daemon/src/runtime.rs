@@ -99,6 +99,8 @@ pub struct RoomCtx {
     pub core: RoomCore,
     pub sender: Option<RelaySender>,
     pub connected: bool,
+    /// The last failed relay connect, cleared once connected.
+    pub relay_error: Option<RelayErrorInfo>,
     pub offline: bool,
     pub dirty: bool,
     pub relay: RelayAddr,
@@ -129,6 +131,14 @@ pub struct RoomCtx {
     pub terms: crate::terms::Terminals,
 }
 
+/// Why the last relay connect attempt failed, for logs, status and doctor.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RelayErrorInfo {
+    /// One of certificate, dns, refused, timeout, http-STATUS, rejected, other.
+    pub kind: String,
+    pub message: String,
+}
+
 impl std::fmt::Debug for RoomCtx {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "RoomCtx({:?}, connected {})", self.core, self.connected)
@@ -157,6 +167,7 @@ impl RoomRuntime {
                 core,
                 sender: None,
                 connected: false,
+                relay_error: None,
                 offline: false,
                 dirty: true,
                 relay,
@@ -339,8 +350,12 @@ async fn finish_knocked_join(ctx: &mut RoomCtx, knock: ObjectId, reply: &JoinRep
     }
 }
 
+/// Failed relay connects are logged at most this often.
+const RELAY_LOG_EVERY: Duration = Duration::from_secs(60);
+
 async fn connection_loop(rt: Arc<RoomRuntime>, shared: Arc<Shared>) {
     let mut backoff = Duration::from_millis(500);
+    let mut last_logged: Option<tokio::time::Instant> = None;
     loop {
         let (addr, offline) = {
             let c = rt.ctx.lock().await;
@@ -353,7 +368,12 @@ async fn connection_loop(rt: Arc<RoomRuntime>, shared: Arc<Shared>) {
         let client = match RelayClient::connect_with(&addr.url, &shared.identity, addr.tls()).await {
             Ok(c) => c,
             Err(e) => {
-                debug!(error = %e, "relay connect failed");
+                let info = RelayErrorInfo { kind: e.failure().code(), message: e.to_string() };
+                if last_logged.is_none_or(|t| t.elapsed() >= RELAY_LOG_EVERY) {
+                    warn!(room = %rt.id.short(), kind = %info.kind, error = %e, "relay connect failed");
+                    last_logged = Some(tokio::time::Instant::now());
+                }
+                rt.ctx.lock().await.relay_error = Some(info);
                 tokio::select! {
                     _ = tokio::time::sleep(backoff) => {}
                     _ = rt.kick.notified() => {}
@@ -363,6 +383,8 @@ async fn connection_loop(rt: Arc<RoomRuntime>, shared: Arc<Shared>) {
             }
         };
         backoff = Duration::from_millis(500);
+        last_logged = None;
+        rt.ctx.lock().await.relay_error = None;
         let (sender, mut rx, task) = client.into_parts();
         if let Err(e) = on_connect(&rt, &shared, &sender).await {
             warn!(error = %e, "room setup on connect failed");
