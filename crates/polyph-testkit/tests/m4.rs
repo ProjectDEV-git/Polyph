@@ -289,6 +289,7 @@ async fn secrets_are_redacted_before_leaving_the_device() {
     );
     // The command is a declared check, so it runs without asking anyone.
     std::fs::write(bo.path().join("polyph.toml"), format!("checks = [\"sh -c 'echo GITHUB_TOKEN={key}'\"]\n")).unwrap();
+    h.nodes[b].trust_project(bo.path()).unwrap();
     let bid = start_agent(&h, b, &rid, bo.path()).await;
     prompt(&h, b, &bid, "look around").await;
     h.until("Ann sees the transcript", || async {

@@ -152,6 +152,8 @@ pub struct VerifiedMember {
     pub device: DevicePublic,
     pub role: Role,
     pub name_commit: [u8; 32],
+    /// When the leaf certificate was issued; newer certificates supersede older ones.
+    pub issued_at: i64,
     pub expires_at: Option<i64>,
     pub capabilities: Vec<String>,
     pub owner: DeviceId,
@@ -219,6 +221,11 @@ impl CertChain {
             if c.issued_at > now + 300 {
                 return Err(ProtoError::InvalidChain("certificate issued in the future"));
             }
+            // Only the owner's first certificate is its own issuer; a device
+            // re-certifying itself could otherwise restamp an old role as new.
+            if i > 0 && c.device.sign == issuer_dev {
+                return Err(ProtoError::InvalidChain("certificate issued by its own device"));
+            }
             issuer_dev = c.device.sign;
             issuer_role = c.role;
             last = Some(c);
@@ -233,6 +240,7 @@ impl CertChain {
             device: c.device,
             role: c.role,
             name_commit: c.name_commit,
+            issued_at: c.issued_at,
             expires_at: c.expires_at,
             capabilities: c.capabilities,
             owner: genesis.owner.sign,
@@ -308,6 +316,20 @@ mod tests {
         let u = DeviceIdentity::generate().unwrap();
         let bad = mchain.issue(&m, &cert_for(&chain, &u, Role::Viewer)).unwrap();
         assert!(bad.verify(NOW, &no_revoked).is_err());
+    }
+
+    #[test]
+    fn only_the_owner_certifies_itself() {
+        let (owner, chain) = room();
+        let m = DeviceIdentity::generate().unwrap();
+        let mchain = chain.issue(&owner, &cert_for(&chain, &m, Role::Maintainer)).unwrap();
+        // A Maintainer restamping its own certificate with a later date.
+        let mut again = cert_for(&chain, &m, Role::Maintainer);
+        again.issued_at = NOW + 60;
+        let restamped = mchain.issue(&m, &again).unwrap();
+        assert!(restamped.verify(NOW + 60, &no_revoked).is_err());
+        // The owner's own chain starts with a self-issued certificate.
+        assert!(chain.verify(NOW, &no_revoked).is_ok());
     }
 
     #[test]

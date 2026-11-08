@@ -171,6 +171,7 @@ async fn two_tasks_merge_keeping_both_intents() {
     .unwrap();
     git(r, &["add", "-A"]);
     git(r, &["commit", "-q", "-m", "initial"]);
+    h.trust_project(r).unwrap();
 
     let card = |title: &'static str| {
         let (h, rid) = (&h, rid.clone());
@@ -260,6 +261,15 @@ async fn two_tasks_merge_keeping_both_intents() {
 
 /// Ann and Bo in a room, a repo on main with `toml`, and the given agent kinds.
 async fn setup(kinds: Vec<(&str, Value)>, toml: &str) -> (Harness, String, tempfile::TempDir, tempfile::TempDir) {
+    setup_with(kinds, toml, true).await
+}
+
+/// As [`setup`]; `trust` says whether the nodes trust the repo's polyph.toml.
+async fn setup_with(
+    kinds: Vec<(&str, Value)>,
+    toml: &str,
+    trust: bool,
+) -> (Harness, String, tempfile::TempDir, tempfile::TempDir) {
     let scripts = scripts_dir();
     let mut h = Harness::new().await.unwrap();
     h.agents = Some(bins());
@@ -286,6 +296,9 @@ async fn setup(kinds: Vec<(&str, Value)>, toml: &str) -> (Harness, String, tempf
     std::fs::write(r.join("polyph.toml"), toml).unwrap();
     git(r, &["add", "-A"]);
     git(r, &["commit", "-q", "-m", "initial"]);
+    if trust {
+        h.trust_project(r).unwrap();
+    }
     (h, rid, repo, scripts)
 }
 
@@ -414,6 +427,69 @@ async fn a_reviewer_can_send_a_task_back() {
     let said = messages(&h, 0, &rid, &aid).await;
     let p = said.iter().rev().find(|m| m.starts_with("prompt:")).unwrap();
     assert!(p.contains("The reviewer asked for changes") && p.contains("must reject negative amounts"), "{p}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_untrusted_project_file_cannot_skip_approval_or_checks() {
+    // A polyph.toml nobody on this device trusted: `approval = false` and
+    // `run_checks = false` fall back to the fail-closed defaults, and its
+    // push and pull request settings are dropped, so the task merges locally.
+    let (h, rid, repo, _s) = setup_with(
+        vec![("fake-a", json!({ "turns": [[ { "write": { "path": "src/lib.rs", "content": with(REFUND) } } ]] }))],
+        "[merge]\napproval = false\nrun_checks = false\nvia = \"github\"\nremote = \"fork\"\n",
+        false,
+    )
+    .await;
+    let r = repo.path();
+    let c = add_card(&h, &rid, "Add refunds", "").await;
+    let (aid, abr) = start_task(&h, 0, &rid, "fake-a", r, &c).await;
+    h.nodes[0].call("agent.prompt", json!({ "agent": aid, "text": "refunds" })).await.unwrap();
+    let f = h.nodes[0].call("task.finish", json!({ "agent": aid })).await.unwrap();
+    // The task says the file's push and pull request settings were ignored.
+    let notice = f["notice"].as_str().unwrap_or_default();
+    assert!(
+        notice.contains("merge.via, merge.remote")
+            && notice.contains("merges locally")
+            && notice.contains("`polyph trust`"),
+        "{f}"
+    );
+    // It still waits for a person's approval.
+    let e = wait_state(&h, 0, &rid, &abr, "awaiting_approval").await;
+    assert!(e["detail"].as_str().unwrap_or_default().contains("merges locally"), "{e}");
+    approve_merge(&h, 0, &rid, &abr).await;
+    // No pull request: Polyph merges it into main itself.
+    let e = wait_state(&h, 0, &rid, &abr, "merged").await;
+    assert!(e["pr"].is_null(), "{e}");
+    assert_eq!(std::fs::read_to_string(r.join("src/lib.rs")).unwrap(), with(REFUND));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn untrusted_checks_stop_the_merge_before_anyone_is_asked_to_approve_it() {
+    // Its checks are dropped; the merge fails and says how to fix it, instead
+    // of skipping them, and before a person is asked to approve it.
+    let (h, rid, repo, _s) = setup_with(
+        vec![("fake-a", json!({ "turns": [[ { "write": { "path": "src/lib.rs", "content": with(REFUND) } } ]] }))],
+        "checks = [\"sh -c 'exit 0'\"]\n\n[merge]\napproval = false\nrun_checks = false\n",
+        false,
+    )
+    .await;
+    let r = repo.path();
+    let c = add_card(&h, &rid, "Add refunds", "").await;
+    let (aid, abr) = start_task(&h, 0, &rid, "fake-a", r, &c).await;
+    h.nodes[0].call("agent.prompt", json!({ "agent": aid, "text": "refunds" })).await.unwrap();
+    h.nodes[0].call("task.finish", json!({ "agent": aid })).await.unwrap();
+    let e = h
+        .until_value("the merge fails", || async {
+            entry(&h, 0, &rid, &abr).await.filter(|e| e["state"] == "failed" || e["state"] == "merged")
+        })
+        .await
+        .unwrap();
+    assert_eq!(e["state"], "failed", "{e}");
+    let detail = e["detail"].as_str().unwrap_or_default();
+    assert!(detail.contains("Checks did not run") && detail.contains("`polyph trust`"), "{detail}");
+    assert_eq!(std::fs::read_to_string(r.join("src/lib.rs")).unwrap(), LIB, "main did not move");
+    let pending = h.nodes[0].call("approvals.list", json!({ "room": rid })).await.unwrap();
+    assert!(!pending.as_array().unwrap().iter().any(|a| a["kind"]["t"] == "merge"), "{pending}");
 }
 
 async fn cards(h: &Harness, i: usize, rid: &str) -> Vec<Value> {

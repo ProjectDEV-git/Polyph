@@ -53,6 +53,7 @@ app-approve-task = このタスクで承認
 app-deny = 拒否
 app-deny-send = メモを付けて拒否
 app-knock = { $name } さんがこのルームへの参加を求めています。
+app-knock-own-device = 新しいデバイスがあなた（{ $name }）として参加を求めています。スマートフォンをペアリングした、またはエージェントホストを設定した直後の場合のみ許可してください。
 app-knock-approve = 参加を許可
 app-knock-let-in = 参加を許可しました。
 

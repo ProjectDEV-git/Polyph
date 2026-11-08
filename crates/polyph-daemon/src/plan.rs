@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use polyph_agents::project::ProjectConfig;
 use polyph_core::docs;
 use polyph_proto::crdt::{Board, NewCard, card};
 use polyph_proto::ids::ObjectId;
@@ -78,7 +77,8 @@ pub async fn create(daemon: Arc<Daemon>, p: PlanParams) -> Result<Value, ApiErro
         return Err(ApiError::BadRequest("the goal is empty".into()));
     }
     let cwd = polyph_git::canonical(&p.cwd).map_err(|e| ApiError::BadRequest(format!("{}: {e}", p.cwd.display())))?;
-    let project = ProjectConfig::load(&cwd).unwrap_or_default();
+    // The person's checkout decides the planner, not a task worktree.
+    let project = crate::agents::main_checkout_project(&daemon.shared, &cwd).unwrap_or_default().config;
     let kind = p.kind.or(project.planner.agent.clone()).ok_or_else(|| {
         ApiError::BadRequest("no planner agent: pass one or set [planner] agent in polyph.toml".into())
     })?;

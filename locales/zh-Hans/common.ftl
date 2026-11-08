@@ -17,3 +17,4 @@ column-claimed = 已认领
 column-in-progress = 进行中
 column-review = 审查中
 column-done = 已完成
+error-add-device-needs-approver = 只有所有者或维护者可以把自己的另一台设备加入此房间，因为只有他们能批准加入。请让所有者更改你的角色。

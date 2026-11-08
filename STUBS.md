@@ -98,6 +98,69 @@ lists notes and agents write them.
 - **Smoke tests against real agents** (`POLYPH_SMOKE=1`) exist for Claude
   Code, Codex and Ollama but have not been run: none is installed here.
 - **Security contact address** in `docs/security.md` is not set.
+- **Project file trust (SEC-12, KAO-73).** `polyph trust` shows the
+  security sections it is about to trust, but not a diff against the last
+  trusted version, so a person who trusts right after an agent edited the
+  file in the main checkout (agents started without a task worktree run
+  there) can miss that edit. The `project_untrusted` event
+  is sent, but only the CLI (`polyph agent start`) shows the notice; the web
+  client and TUI do not render it yet. The trust record lives in Polyph's
+  data directory and relies on the sandbox keeping that directory read-only
+  to agents. The merge queue is tested end to end with an untrusted file;
+  for `agent.start` no test checks end to end that an untrusted sandbox or
+  agent section is ignored, only the loader the daemon uses. The check that
+  keeps agent worktrees off the data directory compares resolved paths
+  only; it does not detect bind mounts or Linux casefold directories. The
+  `untrusted` field `usage.get` returns is not shown by any client yet.
+- **Adding your own device (SEC-3).** A join request carries no proof that
+  it comes from the member it names, so only the device that made a
+  `phone.pair` or `host.invite` code can approve a knock naming its own
+  member id. A Member (who cannot approve joins) cannot pair a phone or add
+  an agent host; both commands say so up front. Needs a device-link
+  signature in `JoinRequest` (wire change, Kao).
+- **Device ids in join requests (SEC-3).** A join request carries no proof
+  that the joiner holds the device key it names. Clients refuse knocks that
+  name a known, removed or the owner's device, and keep the certificate
+  held for a known device, but a device that never saw the victim device
+  accepts a certificate an older client issued for it under another key.
+  Needs proof of key possession in `JoinRequest` (wire change, Kao).
+- **Demotion (SEC-2) is client logic.** A client that has not seen a
+  demotion, directly or in a snapshot, still accepts chains issued through
+  the old certificate; revocations in snapshots are not signed records
+  (wire change, Kao). A role change re-issues only the devices the changer
+  holds; others drop a device whose chain runs through the demoted
+  certificate until someone re-issues it, and if the Owner never held it,
+  it has to join again. On the first connect after loading a room saved by
+  0.1.2, an Owner or Maintainer re-issues held peers whose chain runs
+  through a superseded certificate and that were let in before it was
+  superseded, at most as Member, and logs who in the activity feed;
+  `issued_at` is set by the issuer, so a chain backdated by a modified
+  client passes that date check. In rooms that still have 0.1.2 Owner or
+  Maintainer devices, a role change made on one re-issues only the member's
+  devices, and upgraded clients drop the people that member let in; only a
+  device that still holds them can re-issue them, otherwise they join again
+  (re-issuing them at once on upgraded devices conflicts with the current
+  rule that such chains are dropped; lead to decide). A Maintainer can re-issue another
+  Maintainer at the same role and so cut off that Maintainer's invitees
+  silently. A Maintainer can give an Owner-ranked device that is not the
+  room owner's a newer, lower certificate, which a client that has not met
+  that device keeps; two Maintainers demoting each other at once can leave
+  clients disagreeing. These need signed supersession records (wire change,
+  Kao, KAO-95). Only the room owner's device issues Owner certificates: once
+  its state is lost, no Owner certificate can be issued or lowered, and a
+  stolen second Owner device can only be removed. A
+  Maintainer whose own chain runs through a member cannot change that
+  member's role. Certificates are ordered by the issuer's clock, so role
+  changes made from devices whose clocks differ by more than the time
+  between the changes can apply in the wrong order. An approved re-join of
+  a known device is issued at the role the approver picks, not the role it
+  held.
+- **Join-code guessing (SEC-4).** Per-IP join limits key on the full
+  address, so each IPv6 /128 has its own budget (should be /64), and there
+  is no per-IP cap on sessions in progress, so holding sessions open can
+  keep a code's in-progress slots busy. A successful join resets the host's
+  failure count for that code. Hosts on 0.1.2 and earlier still send their
+  confirmation tag before checking the joiner's.
 
 ## Milestone 4 gaps
 

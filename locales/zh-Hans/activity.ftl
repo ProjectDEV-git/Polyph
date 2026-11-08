@@ -20,3 +20,4 @@ activity-agent-connected = 连接了 { $client }
 activity-task-finished = 完成了一项任务：{ $summary }
 activity-brief-updated = 更新了项目简介
 activity-task-taken = 接手了任务 { $title }
+activity-certificates-reissued = 为 { $names } 重新签发了证书（角色最高为成员）

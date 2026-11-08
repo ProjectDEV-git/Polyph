@@ -27,6 +27,84 @@ pub enum ClientError {
     Protocol(String),
 }
 
+/// What kind of failure stopped a relay connect attempt. Drives the fix text
+/// in `polyph doctor` and `polyph status`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectFailure {
+    Certificate,
+    Dns,
+    Refused,
+    Timeout,
+    Http(u16),
+    Rejected,
+    Other,
+}
+
+impl ConnectFailure {
+    pub fn code(self) -> String {
+        match self {
+            Self::Certificate => "certificate".into(),
+            Self::Dns => "dns".into(),
+            Self::Refused => "refused".into(),
+            Self::Timeout => "timeout".into(),
+            Self::Http(s) => format!("http-{s}"),
+            Self::Rejected => "rejected".into(),
+            Self::Other => "other".into(),
+        }
+    }
+
+    /// Classifies the text of a connect error.
+    pub fn classify(reason: &str) -> Self {
+        let r = reason.to_lowercase();
+        if r.contains("certificate") || r.contains("unknownissuer") || r.contains("invalid peer") {
+            Self::Certificate
+        } else if r.contains("dns")
+            || r.contains("failed to lookup")
+            || r.contains("name or service")
+            || r.contains("resolve")
+        {
+            Self::Dns
+        } else if r.contains("refused") {
+            Self::Refused
+        } else if r.contains("timed out") {
+            Self::Timeout
+        } else if let Some(rest) = r.split("http error:").nth(1) {
+            rest.trim()
+                .split(|c: char| !c.is_ascii_digit())
+                .next()
+                .and_then(|n| n.parse().ok())
+                .map_or(Self::Other, Self::Http)
+        } else {
+            Self::Other
+        }
+    }
+}
+
+impl ClientError {
+    pub fn failure(&self) -> ConnectFailure {
+        match self {
+            Self::Connect { reason, .. } => ConnectFailure::classify(reason),
+            Self::Rejected(_) => ConnectFailure::Rejected,
+            _ => ConnectFailure::Other,
+        }
+    }
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use super::ConnectFailure as F;
+
+    #[test]
+    fn classifies_connect_errors() {
+        assert_eq!(F::classify("IO error: invalid peer certificate: UnknownIssuer"), F::Certificate);
+        assert_eq!(F::classify("IO error: failed to lookup address information: Name or service not known"), F::Dns);
+        assert_eq!(F::classify("IO error: Connection refused (os error 111)"), F::Refused);
+        assert_eq!(F::classify("timed out"), F::Timeout);
+        assert_eq!(F::classify("HTTP error: 502 Bad Gateway"), F::Http(502));
+        assert_eq!(F::classify("something odd"), F::Other);
+    }
+}
+
 type Ws = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// How to verify the relay's TLS certificate.
@@ -105,7 +183,7 @@ impl RelayClient {
         wscfg.max_frame_size = Some(MAX_FRAME);
         let cerr = |e: anyhow::Error| ClientError::Connect { url: url.into(), reason: e.to_string() };
         let connector = match mode {
-            TlsMode::Public => None,
+            TlsMode::Public => Some(Connector::Rustls(crate::tls::public_client().map_err(cerr)?)),
             TlsMode::Pinned(fp) => Some(Connector::Rustls(crate::tls::pinned_client(fp).map_err(cerr)?)),
             TlsMode::Record(slot) => Some(Connector::Rustls(crate::tls::recording_client(slot).map_err(cerr)?)),
         };

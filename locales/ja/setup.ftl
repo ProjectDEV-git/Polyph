@@ -25,8 +25,9 @@ disconnect-done = { $client } の接続を解除しました。
 disconnect-nothing = 設定に Polyph が入っているエージェントはありません。
 
 start-ask-name = チームメイトに表示される名前 [{ $guess }]:
-start-needs-name = まず名前を設定してください: polyph config set name "あなたの名前"
+start-needs-name = 名前が必要です。--me "あなたの名前" を付けるか、次を実行してください: polyph config set name "あなたの名前"
 start-name-set = Polyph でのあなたの名前は { $name } です。
+start-name-git = git の名前 { $name } を使います。変更するには: polyph config set name "あなたの名前"
 start-room-existing = このフォルダーはルーム { $name } のものです。
 start-room-created = { $dir } のためにルーム { $name } を作りました。
 start-ready = 準備ができました。{ $dir } で起動したエージェントは { $name }/<エージェント> として { $room } に参加します。
@@ -115,3 +116,13 @@ connect-by-extension = { $client } は Polyph 拡張機能またはプラグイ�
 doctor-client-extension = { $client } は Polyph 拡張機能またはプラグインから Polyph を使います。
 help-hook = エージェントのエディター用フック（Claude Code プラグインが実行します）。
 help-hook-pre-edit = エージェントがファイルを編集する前に: 他のエージェントが確保していれば編集を止め、そうでなければ確保します。
+
+# リレーに接続できない理由 (polyph status と polyph doctor)
+relay-error-last = 直近のリレーエラー: { $message }
+relay-fix-certificate = リレーの証明書が信頼されていません。社内プロキシが TLS を検査している場合は、そのプロキシの CA をシステムの信頼ストア、または SSL_CERT_FILE で指定したファイルに入れてください。
+relay-fix-dns = リレーのアドレスを名前解決できません。ネットワークと、polyph config get relay のアドレスを確認してください。
+relay-fix-refused = リレーが接続を拒否しました。polyph config get relay のアドレスと、ファイアウォールが外向きのポート 443 を許可しているかを確認してください。
+relay-fix-timeout = リレーから時間内に応答がありません。ネットワークと、WebSocket を遮断するプロキシがないかを確認してください。
+relay-fix-http = リレーが HTTP エラーを返しました（プロキシかアドレスの誤り）。polyph config get relay を確認してください。
+relay-fix-rejected = リレーがこのデバイスを拒否しました。polyph config get relay とリレーのログを確認してください。
+relay-fix-other = polyph config get relay でアドレスを確認し、完全なエラーはデーモンのログで確認してください。

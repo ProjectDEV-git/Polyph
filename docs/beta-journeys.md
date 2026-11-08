@@ -33,7 +33,7 @@ subscription, working on one private repository.
 2. Write the project brief every agent reads:
    `polyph brief set docs/overview.md` (or `polyph brief edit`).
 3. Teammates install, then join in an empty folder:
-   `mkdir payments && cd payments && polyph join A1B2-CDEF --name Bo`.
+   `mkdir payments && cd payments && polyph join A1B2-CDEF --me Bo`.
    Polyph offers to clone the room's repository with their own git login.
 4. The host lets them in: `polyph room knocks`, then
    `polyph approve <id>` for each person (or `--role maintainer`).
@@ -72,7 +72,7 @@ need to be working within minutes. Some have no paid agent subscription.
    chat. For a one-off event, `polyph host --quick` makes a throwaway
    session that is deleted when it ends.
 3. Each teammate installs and joins in an empty folder:
-   `mkdir hack && cd hack && polyph join A1B2-CDEF --name Mai --clone`.
+   `mkdir hack && cd hack && polyph join A1B2-CDEF --me Mai --clone`.
    Target: under two minutes from receiving the code to being in the room.
 4. A teammate with only a browser opens the link that `polyph room invite`
    prints. It opens the phone app on the website with the code filled in;
@@ -98,7 +98,7 @@ need to be working within minutes. Some have no paid agent subscription.
 A maintainer and regular contributors, each with their own agents, on one
 public repository, with the community watching.
 
-1. In the repository: `polyph start --name <project>`.
+1. In the repository: `polyph start --room <project>`.
 2. Describe the code areas so the planner and `next_task` route work to the
    right people: Polyph reads `.polyph/AREAS` or `CODEOWNERS`. Check it with
    `polyph areas` and `polyph areas src/parser/lexer.rs`.
@@ -118,14 +118,16 @@ public repository, with the community watching.
    as backlog cards. Pull requests for tasks are checked about every minute.
 8. Late joiners catch up with `polyph catchup` and `polyph search <words>`.
 9. Change roles as people come and go: `polyph room role <member> member`,
-   `polyph room remove <member>`.
+   `polyph room remove <member>`. A removed device cannot join that room
+   again; to let the person back in, they join from another machine or with
+   a separate `POLYPH_HOME`.
 
 ## 4. Agencies and freelancers
 
 A small team working on a client's repository, with the client watching
 progress.
 
-1. In the client repository: `polyph start --name <client>-site`.
+1. In the client repository: `polyph start --room <client>-site`.
 2. Apply a template if one fits: `polyph template list`,
    `polyph template apply <name>`.
 3. Teammates join and connect their agents as in the startup journey.
@@ -167,7 +169,7 @@ under ten minutes.
 |---|---|---|---|---|---|
 | 1 | All three, at once | Run the install line, then `polyph --version` | The version prints | 1:00 | 1:00 |
 | 2 | Ann | `cd <repo> && polyph start`; type her name; accept connecting agents | It prints `Teammates join with: polyph join <code>` | 1:00 | 2:00 |
-| 3 | Bo, Cy | `mkdir app && cd app && polyph join <code> --name Bo --clone` | `Waiting for someone in the room to approve you…` | 0:30 | 2:30 |
+| 3 | Bo, Cy | `mkdir app && cd app && polyph join <code> --me Bo --clone` | `Waiting for someone in the room to approve you…` | 0:30 | 2:30 |
 | 4 | Ann | `polyph room knocks`, then `polyph approve <id>` for each | Bo and Cy see the room; the repository is cloned | 0:30 | 3:00 |
 | 5 | All three | `polyph doctor` | `Everything looks right.` | 0:30 | 3:30 |
 | 6 | Ann | `polyph plan new "Add a /health endpoint that returns the version, with a test"`, then `polyph plan accept <plan>` | Cards are in Ready on everyone's `polyph board` | 2:00 | 5:30 |

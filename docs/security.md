@@ -74,12 +74,87 @@ relay (no certificate) and by clients. Revoking the link stops new content.
 
 ### Someone guessing a join code
 
-Online guessing only: each attempt is a full PAKE with the host. With the
-first half known (worst case: the relay is the attacker), 20 bits remain;
-five failures kill a one-time code or lock a reusable one for 10 minutes and
-notify the owner, and approval to join is on by default. Per-IP limits slow
-spraying across codes. Probability of a correct guess before lockout: about 5
-in 2^20 (≈ 0.0005%) per code.
+Online guessing only: each attempt is a full PAKE with the host, and the
+host sends its confirmation tag only after the joiner's tag has verified, so
+a wrong guess teaches the guesser nothing it can test offline. With the
+first half known (worst case: the relay is the attacker), 20 bits remain.
+
+- The relay counts failures: five kill a one-time code or lock a reusable
+  one for 10 minutes and notify the owner. A join attempt that is abandoned
+  or stalls for 2 minutes counts as a failure, and a code never has more
+  attempts in progress than it has failures left. Per-IP limits slow
+  spraying across codes.
+- The host daemon counts its own: a wrong tag, a malformed message, or a
+  session that ends before the joiner's tag verified. After five in a row it
+  stops accepting the code. This is the limit that holds when the relay
+  operator is the attacker.
+
+Probability of a correct guess: about 5 in 2^20 (≈ 0.0005%) per one-time
+code, and the same between successful joins on a reusable code. Hosts on
+Polyph 0.1.2 and earlier send their tag before checking the joiner's, so
+against a relay operator guessing through such a host this bound does not
+hold. Approval to join is on by default, so a correct guess still only
+produces a knock.
+
+### Someone claiming to be an existing member
+
+A join request names a member id, and nothing in it proves the joiner is
+that person. Clients refuse to approve a knock that names a member already in
+the room, with two exceptions: a code that `phone.pair` or `host.invite` made
+on the approving device for its own person (recorded on that device only;
+the approval says a new device is joining as you), and a device already in
+the room re-joining with the same keys its certificate names. Such knocks are
+never approved automatically. Plain invite codes never let a joiner take an
+existing member id. A Member, who cannot approve joins, is told it cannot
+pair a phone or add an agent host. A knock that names a device already in
+the room (or removed from it, or the owner's device) is refused unless it is
+that device re-joining with the same keys, so a joiner cannot take over a
+device id. A removed device stays removed: a removed person rejoins from a
+new device identity (another machine, or a separate `POLYPH_HOME`), and the
+approver is told that the device was removed. A request does not prove that the joiner holds the device key it
+names, so a client that never saw that device can still accept a
+certificate an older client issued for it.
+
+### A demoted Maintainer
+
+A role change re-issues a certificate for every device of the member, dated
+after the one it replaces; clients keep the newest certificate per device.
+A chain whose issuing link is older than the certificate a client holds for
+that issuer is refused, and no device may certify itself, so a demoted
+Maintainer cannot restore its role or certify a new device from its old
+chain. A new certificate replaces the one held only when it keeps the
+device's member id and encryption key and its issuer ranks at least as high
+as the role held; only the room owner's device re-issues an Owner, so a
+Maintainer cannot demote the Owner. After a replacement, clients drop chains
+issued through the superseded certificate, and they check again whenever
+they take a device they did not hold, so the order of a snapshot does not
+matter. A client that has not yet seen the demotion, directly or in a
+snapshot, still accepts the old chain until it does.
+
+Limits of this client-side scheme (signed supersession records would close
+them; see `STUBS.md`):
+
+- A Maintainer can re-issue another Maintainer at the same role. That
+  supersedes the old certificate without changing the role, and clients
+  then drop the people the other Maintainer let in unless the re-issuer
+  re-issued them too. A modified client can do this silently.
+- An Owner-ranked device other than the room owner's can be given a newer,
+  lower certificate by a Maintainer on a client that has not met that
+  device yet; that client keeps the lower one.
+- Two Maintainers who demote each other at the same time can leave clients
+  disagreeing about which demotion won, depending on arrival order.
+- `issued_at` is written by the issuer. A modified client can backdate a
+  certificate, so a demoted Maintainer can issue a chain dated before its
+  demotion that passes the "let in before it was superseded" check (and the
+  0.1.2 re-issue on load, which is why that re-issue gives Member at most).
+- Only the room owner's device issues or re-issues Owner certificates. If
+  that device's state is lost, no Owner certificate can be issued or lowered
+  any more; a second Owner device that is stolen can only be removed.
+
+Rooms saved by 0.1.2: on load, the room owner's device goes back to its
+genesis chain, and on the first connect an Owner or Maintainer re-issues
+people let in by a Maintainer whose role changed since, at most as Member,
+listed in the activity feed so the Owner can check them.
 
 ### A network attacker between a member and the relay
 
@@ -111,6 +186,17 @@ enabled) that limits writes to its worktree and temp directories. Outbound
 network goes through the daemon's allowlisting proxy; anything else becomes an
 approval request. `polyph sandbox test` reports which protections work on a
 given machine. See `docs/sandbox.md` (M3).
+
+A repository's `polyph.toml` cannot weaken this on its own. Its `[sandbox]`
+(mode, image, allow_hosts), `[agents.*]`, `checks`, `[policy] preset`,
+`[merge] approval`, `run_checks`, `via`, `remote` and `[prices]` sections only
+apply once a person on that device ran `polyph trust` for that exact content (a
+per-user record of folder and SHA-256 in Polyph's data directory); the file is
+read from the person's checkout, never the agent's worktree, and any edit voids
+the record. It is read once, like the worktree files below (no symbolic or hard
+links, size cap), and the bytes read are the ones hashed, shown and parsed; a
+parse error names the line and column but quotes nothing from the file.
+See "Trusting a project file" in `docs/sandbox.md`.
 
 The daemon treats an agent's worktree as hostile input:
 

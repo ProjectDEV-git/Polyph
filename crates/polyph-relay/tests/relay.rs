@@ -332,6 +332,30 @@ async fn snapshots_survive_everyone_leaving_and_only_members_write() {
 }
 
 #[tokio::test]
+async fn viewers_cannot_store_snapshots() {
+    let h = start(RelayConfig::ephemeral(), None).await;
+    let r = new_room();
+    let v = add_member(&r, Role::Viewer);
+    let mut cv = client(&h, &v.id).await;
+    assert!(subscribe(&mut cv, r.room, Some(&v.chain), None).await);
+    cv.send(ClientFrame::PutSnapshot { room: r.room, epoch: 1, blob: vec![0; 10] }).await.unwrap();
+    expect(&mut cv, "not member", |f| matches!(f, RelayFrame::Error { code: ErrorCode::NotMember, .. })).await;
+    let m = add_member(&r, Role::Member);
+    let mut cm = client(&h, &m.id).await;
+    subscribe(&mut cm, r.room, Some(&m.chain), None).await;
+    cm.send(ClientFrame::PutSnapshot { room: r.room, epoch: 1, blob: vec![7; 10] }).await.unwrap();
+    cm.send(ClientFrame::GetSnapshots { room: r.room }).await.unwrap();
+    let RelayFrame::Snapshots { items, .. } =
+        expect(&mut cm, "snapshots", |f| matches!(f, RelayFrame::Snapshots { .. })).await
+    else {
+        unreachable!()
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].from, m.id.device_id());
+    h.shutdown().await;
+}
+
+#[tokio::test]
 async fn plan_member_limit_is_enforced() {
     let mut cfg = RelayConfig::ephemeral();
     cfg.limits = Limits { max_members: Some(2), retention_days: Some(7) };
@@ -639,6 +663,46 @@ async fn abandoned_join_attempts_count_as_failures() {
         expect(&mut host, "ended", |f| matches!(f, RelayFrame::PakeEnded { .. })).await;
     }
     expect(&mut host, "code failed", |f| matches!(f, RelayFrame::CodeClosed { reason: CodeClosed::Failed, .. })).await;
+    h.shutdown().await;
+}
+
+#[tokio::test]
+async fn stalled_join_sessions_count_as_failures_and_lock_the_code() {
+    let mut cfg = RelayConfig::ephemeral();
+    // Every unconfirmed session is stale at the next sweep.
+    cfg.join_handshake_secs = 0;
+    let h = start(cfg, None).await;
+    let r = new_room();
+    let code = JoinCode::generate().unwrap();
+    let mut host = client(&h, &r.owner.id).await;
+    host.send(ClientFrame::HostCode {
+        rendezvous: code.rendezvous(),
+        kind: CodeKind::Reusable { max_uses: None },
+        expires_at: now() + 86_400,
+    })
+    .await
+    .unwrap();
+    expect(&mut host, "hosted", |f| matches!(f, RelayFrame::CodeHosted { .. })).await;
+    // Five joiners start and stay connected without ever proving the code.
+    let mut stalled = Vec::new();
+    for _ in 0..5 {
+        let mut j = client(&h, &DeviceIdentity::generate().unwrap()).await;
+        j.send(ClientFrame::JoinCode { rendezvous: code.rendezvous() }).await.unwrap();
+        expect(&mut j, "started", |f| matches!(f, RelayFrame::JoinStarted { .. })).await;
+        stalled.push(j);
+    }
+    // A sixth parallel attempt would exceed the failures left; it is refused.
+    let mut sixth = client(&h, &DeviceIdentity::generate().unwrap()).await;
+    sixth.send(ClientFrame::JoinCode { rendezvous: code.rendezvous() }).await.unwrap();
+    expect(&mut sixth, "refused", |f| matches!(f, RelayFrame::Error { code: ErrorCode::RateLimited, .. })).await;
+    h.hub.sweep();
+    for j in &mut stalled {
+        expect(j, "ended", |f| matches!(f, RelayFrame::PakeEnded { ok: false, .. })).await;
+    }
+    expect(&mut host, "locked", |f| matches!(f, RelayFrame::CodeLocked { .. })).await;
+    let attacker = DeviceIdentity::generate().unwrap();
+    let mut j = client(&h, &attacker).await;
+    assert_eq!(join_with(&mut j, &attacker, &code).await.unwrap_err(), ErrorCode::CodeLocked);
     h.shutdown().await;
 }
 

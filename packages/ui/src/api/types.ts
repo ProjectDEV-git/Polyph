@@ -206,4 +206,6 @@ export interface Knock {
   device: Hex;
   requested_role: string;
   at: number;
+  /** Another device joining as this person, through a pairing or agent host code made here. */
+  own_device?: boolean;
 }

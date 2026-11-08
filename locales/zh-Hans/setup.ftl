@@ -25,8 +25,9 @@ disconnect-done = 已断开 { $client }。
 disconnect-nothing = 你的智能体设置中都没有 Polyph。
 
 start-ask-name = 队友看到的你的名字 [{ $guess }]：
-start-needs-name = Polyph 需要先知道你的名字：polyph config set name "你的名字"
+start-needs-name = Polyph 需要你的名字。加上 --me "你的名字"，或运行：polyph config set name "你的名字"
 start-name-set = 你在 Polyph 中的名字是 { $name }。
+start-name-git = 使用你的 git 名字 { $name }。要修改，请运行：polyph config set name "你的名字"
 start-room-existing = 此文件夹属于房间 { $name }。
 start-room-created = 已为 { $dir } 创建房间 { $name }。
 start-ready = 准备就绪。你在 { $dir } 中启动的智能体会以 { $name }/<智能体> 的身份加入 { $room }。
@@ -115,3 +116,13 @@ connect-by-extension = { $client } 已通过 Polyph 扩展或插件使用 Polyph
 doctor-client-extension = { $client } 通过 Polyph 扩展或插件使用 Polyph。
 help-hook = 智能体编辑器的钩子（由 Claude Code 插件运行）。
 help-hook-pre-edit = 在智能体编辑文件之前：若其他智能体已认领该文件则阻止编辑，否则为其认领。
+
+# 无法连接中继的原因（polyph status 和 polyph doctor）
+relay-error-last = 最近的中继错误：{ $message }
+relay-fix-certificate = 中继的证书不受信任。如果公司代理会检查 TLS，需要把该代理的 CA 放进系统信任库，或放进 SSL_CERT_FILE 指向的文件。
+relay-fix-dns = 无法解析中继地址。请检查网络，并用 polyph config get relay 检查地址。
+relay-fix-refused = 中继拒绝了连接。请用 polyph config get relay 检查地址，并确认防火墙允许出站 443 端口。
+relay-fix-timeout = 中继没有及时响应。请检查网络，或是否有代理拦截了 WebSocket 连接。
+relay-fix-http = 中继返回了 HTTP 错误（可能是代理或地址错误）。请检查 polyph config get relay。
+relay-fix-rejected = 中继拒绝了这台设备。请检查 polyph config get relay 和中继日志。
+relay-fix-other = 用 polyph config get relay 检查地址，完整错误见守护进程日志。

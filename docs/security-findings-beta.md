@@ -28,7 +28,7 @@ Summary:
 | SEC-9 | medium | Relay | Unbounded room entries and chain verification per frame allow memory and CPU exhaustion |
 | SEC-10 | low | Relay | Relay authentication is not bound to the relay |
 | SEC-11 | low | Relay | First `X-Forwarded-For` entry is trusted from loopback |
-| SEC-12 | critical | Sandbox | `polyph.toml` in the worktree turns the sandbox off and defines agent commands |
+| SEC-12 | low | Sandbox | `polyph.toml` in the worktree turns the sandbox off and defines agent commands (fixed in PR #14, with residuals) |
 | SEC-13 | critical | Sandbox | Agents can write git configuration that the daemon then executes unsandboxed |
 | SEC-14 | critical | Sandbox | Host IPC (D-Bus session bus, Unix sockets, LaunchServices) is reachable from the sandbox |
 | SEC-15 | high | Sandbox (Landlock) | Landlock mode hides nothing and silently drops its network rule on older kernels |
@@ -123,6 +123,29 @@ Summary:
   certificate to a fresh device key.
 - Wire change: "newest wins" is client logic, no. A signed revocation or
   supersession record would be; needs Kao.
+- Status: partly open. Branch `beta/kao-78-80-room-relay` (client logic,
+  no wire change):
+  - Fixed: a newer certificate replaces the one held for a device (live
+    `RoleChanged`, `Hello`, relay snapshots, this device's own) only if it
+    keeps the member id and encryption key and its issuer's role is at
+    least the held role. An Owner's certificate is replaced only by the
+    room owner's device, and the owner's device holds only its self-issued
+    certificate. A Maintainer can no longer demote the Owner anywhere,
+    including on the Owner's own device (`a_maintainer_cannot_demote_the_owner_on_any_path`).
+  - Fixed: chains issued through a superseded certificate are refused, and
+    after any replacement every held chain is checked again, so devices
+    that joined later drop chains issued through a demoted certificate
+    (`chains_through_a_demoted_certificate_are_dropped_after_any_replacement`).
+    `change_role` re-issues the devices that depend on the changed one.
+  - Fixed (upgrade): on the first connect after loading a room, an Owner or
+    Maintainer re-issues held peers whose chain runs through a superseded
+    certificate and that were let in before it was superseded, as rooms
+    saved by 0.1.2 have (`an_owner_reissues_members_of_a_room_saved_by_0_1_2_on_load`).
+  - Open: a client that has not seen a demotion still accepts the old
+    chain; revocations in snapshots are not signed records (wire change,
+    Kao). A device that the changer did not hold is dropped by others until
+    someone re-issues it. An approved re-join issues the role the approver
+    picks. Certificates are ordered by the issuer's clock. See `STUBS.md`.
 
 ## SEC-3: A joiner chooses its own member id and can become an existing member
 
@@ -158,6 +181,25 @@ Summary:
   requested capabilities explicitly.
 - Wire change: refusing collisions, no. Adding a device-link proof to
   `JoinRequest` is a new optional field; needs Kao.
+- Status: partly open. Branch `beta/kao-78-80-room-relay`:
+  - Fixed: a knock naming an existing member id is refused unless it came
+    through a `phone.pair` or `host.invite` code made on the approving
+    device for its own member, or it is the same device re-joining with the
+    encryption key its certificate names. Such knocks are never approved
+    automatically. A Member is told up front that it cannot pair a phone or
+    add an agent host.
+  - Fixed: a knock naming this device, the owner's device, a known peer or a
+    removed device is refused and never approved automatically, unless it
+    is the same device re-joining (same member id and same `kx`). A
+    `MemberAdded`, `RoleChanged` or snapshot chain for a known device under
+    another member id or key does not replace the held certificate
+    (`a_knock_cannot_take_over_an_existing_device`).
+  - Fixed: the own-device mark on a knock goes when the knock is decided,
+    its join session ends, or it expires after 20 minutes.
+  - Open (wire change, Kao): `JoinRequest` has no device-link proof and no
+    proof that the joiner holds the device key it names, so a device that
+    never saw the victim device accepts a certificate an older client
+    issued for it under another key.
 
 ## SEC-4: Join-code lockout is bypassed by abandoning a session
 
@@ -195,6 +237,17 @@ Summary:
   - Relay: key per-IP limits on /64 for IPv6 and cap concurrent sessions
     per code.
 - Wire change: no.
+- Status: partly open. Branch `beta/kao-78-80-room-relay`: the host sends
+  its tag only after the joiner's verified (joiners already sent theirs
+  first, so the order they receive is unchanged) and counts `PakeEnded`
+  before that point as a failure; the relay counts stalled sessions and caps
+  sessions in progress per code. The host retires a one-time code as soon
+  as a joiner's tag verifies, so a reconnect that loses the relay's
+  `CodeClosed` does not host it again. Open (`STUBS.md`): per-IP limits
+  still key on the full IPv6 address and there is no per-IP cap on
+  sessions in progress, so holding sessions keeps a code's slots busy; a
+  successful join resets the host's failure count; 0.1.2 hosts keep the
+  old order.
 
 ## SEC-5: Epoch u64::MAX makes later key rotations silently fail
 
@@ -326,7 +379,8 @@ Summary:
 
 ## SEC-12: `polyph.toml` in the worktree turns the sandbox off and defines agent commands
 
-- Severity: critical
+- Severity: low
+- Status: Fixed in PR #14, with residuals
 - Area: Sandbox
 - Evidence:
   - `crates/polyph-daemon/src/agents.rs:349-360`: `[sandbox] mode = "off"`
@@ -354,6 +408,20 @@ Summary:
   (similar to `direnv allow`). Read the project file from the base commit,
   not from the agent's worktree, and mount it read-only inside the sandbox.
 - Wire change: no.
+- Residuals:
+  - Medium (fix with SEC-13): an agent without a task worktree, running in the
+    person's checkout, can replace `.git` with a `gitdir:` file pointing at
+    another repository, so the next agent started there reads that other
+    project's trusted settings (`crates/polyph-daemon/src/agents.rs:359`,
+    `crates/polyph-git/src/lib.rs:399`).
+  - Low: `github.import` (`crates/polyph-daemon/src/github.rs:145`) reads the
+    project file without trust.
+  - Low: `[github] repo` is applied without trust and is not shown in the
+    `polyph trust` review, though `open_pr` sends pull requests there.
+  - Low: `[merge] into`, `[claims] watch` and `[router] tiers` still apply from
+    an untrusted file; none reaches the sandbox.
+  - Info: the trust record's folder key uses a lossy string conversion for
+    non-UTF-8 paths.
 
 ## SEC-13: Agents can write git configuration that the daemon executes unsandboxed
 

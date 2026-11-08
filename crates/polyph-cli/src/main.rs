@@ -12,6 +12,9 @@ mod setup;
 mod update;
 mod work;
 
+#[cfg(test)]
+mod arg_tests;
+
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -84,9 +87,9 @@ enum Cmd {
     },
     Join {
         code: String,
-        /// Your display name.
-        #[arg(long)]
-        name: Option<String>,
+        /// Your name as teammates see it (saved if you have none yet).
+        #[arg(long = "me", alias = "name")]
+        me: Option<String>,
         /// Relay URL to use (for example a LAN address from `polyph discover`).
         #[arg(long)]
         relay: Option<String>,
@@ -212,13 +215,18 @@ enum Cmd {
     Disconnect {
         /// Clients to disconnect (default: all).
         clients: Vec<String>,
+        /// Remove Polyph without asking.
         #[arg(long, short = 'y')]
         yes: bool,
     },
     Start {
         /// Name for a new room (default: the folder's name).
+        #[arg(long = "room", alias = "name")]
+        room: Option<String>,
+        /// Your name as teammates see it. Saved, and used as your name in the room.
         #[arg(long)]
-        name: Option<String>,
+        me: Option<String>,
+        /// Never ask: take your name from --me or git, and connect agents without confirming.
         #[arg(long, short = 'y')]
         yes: bool,
         /// Do not connect agents.
@@ -226,6 +234,14 @@ enum Cmd {
         no_connect: bool,
     },
     Doctor,
+    Trust {
+        /// Stop trusting this repository's polyph.toml.
+        #[arg(long)]
+        revoke: bool,
+        /// Trust without asking, after reviewing the file (for scripts).
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
     Hook {
         #[command(subcommand)]
         cmd: HookCmd,
@@ -606,6 +622,70 @@ fn localize(mut cmd: clap::Command, l: &Localizer, path: &str) -> clap::Command 
     cmd
 }
 
+/// `polyph trust`: records (or with `--revoke` removes) this person's trust in
+/// the current content of the repository's polyph.toml, kept in Polyph's
+/// data directory. Uses the main checkout, as the daemon does. Shows the
+/// settings it is about to trust and asks first, unless `yes`.
+fn trust(ctx: &Ctx, revoke: bool, yes: bool) -> anyhow::Result<()> {
+    use polyph_agents::project::{ProjectFile, TrustStore};
+    let l = &ctx.l;
+    let cwd = std::env::current_dir()?;
+    let root = polyph_git::Repo::open(&cwd).ok().and_then(|r| r.main_root().ok()).unwrap_or(cwd);
+    let store = TrustStore::at(ctx.paths.trusted_projects());
+    let file = ProjectFile::find(&root)?;
+    let shown = |p: &std::path::Path| p.display().to_string();
+    if revoke {
+        let dir = match &file {
+            Some(f) => f.dir.clone(),
+            None => polyph_git::canonical(&root)?,
+        };
+        let had = store.revoke(&dir)?;
+        if ctx.json {
+            ctx.print_json(&json!({ "dir": dir, "revoked": had }));
+        } else {
+            ctx.out(tr!(l, if had { "trust-revoked" } else { "trust-revoke-none" }, dir = shown(&dir)));
+        }
+        return Ok(());
+    }
+    let Some(f) = file else {
+        anyhow::bail!(tr!(l, "trust-no-file", dir = shown(&root)));
+    };
+    let already = store.is_trusted(&f.dir, &f.sha256);
+    if !already {
+        let sections = f.parse()?.security_toml();
+        if !ctx.json {
+            if sections.is_empty() {
+                ctx.out(tr!(l, "trust-review-none", file = shown(&f.path)));
+            } else {
+                ctx.out(tr!(l, "trust-review", file = shown(&f.path)));
+                ctx.out("");
+                for s in sections.lines() {
+                    ctx.out(format!("    {s}"));
+                }
+                ctx.out("");
+            }
+        }
+        if !yes {
+            use std::io::IsTerminal;
+            if ctx.json || !std::io::stdin().is_terminal() {
+                anyhow::bail!(l.t("trust-needs-yes"));
+            }
+            if !setup::confirm(&l.t("trust-confirm"))? {
+                ctx.out(l.t("trust-cancelled"));
+                return Ok(());
+            }
+        }
+        store.trust(&f)?;
+    }
+    if ctx.json {
+        ctx.print_json(&json!({ "file": f.path, "sha256": f.sha256, "trusted": true, "already": already, "settings": f.parse()?.security_toml() }));
+    } else {
+        ctx.out(tr!(l, if already { "trust-already" } else { "trust-saved" }, file = shown(&f.path)));
+        ctx.out(tr!(l, "trust-hash", hash = f.sha256.as_str()));
+    }
+    Ok(())
+}
+
 struct Ctx {
     l: Localizer,
     json: bool,
@@ -674,12 +754,38 @@ async fn call(api: &mut Api, method: &str, params: Value) -> anyhow::Result<Valu
 }
 
 fn main() {
+    // Read before any other thread starts: on Unix `time` refuses to read the
+    // local offset once the process has more than one thread.
     let _ = UTC_OFFSET.set(time::UtcOffset::current_local_offset().map(|o| i64::from(o.whole_seconds())).unwrap_or(0));
-    // The sandbox helper re-enters this binary before anything else runs.
+    // The sandbox helper re-enters this binary before anything else runs. It
+    // stays on the main thread: it confines the process it is running in.
     let raw: Vec<String> = std::env::args().collect();
     if raw.get(1).map(String::as_str) == Some("__sandbox") {
         std::process::exit(polyph_sandbox::helper::main_with_args(raw[2..].to_vec()));
     }
+    // Everything else runs on a thread with a 16 MiB stack. In a debug build
+    // the frame of clap's derived `Cmd::augment_subcommands` alone is about
+    // 800 KiB on Linux and larger on Windows, whose main thread has 1 MiB, so
+    // building the parser overflowed there before any subcommand ran. The
+    // poll frame of `run` (one state machine for every subcommand) is large
+    // too.
+    let code = std::thread::Builder::new()
+        .name("polyph".into())
+        .stack_size(MAIN_STACK)
+        .spawn(cli_main)
+        .map_err(|e| e.to_string())
+        .and_then(|h| h.join().map_err(|_| "the command panicked".to_string()))
+        .unwrap_or_else(|e| {
+            eprintln!("{e}");
+            1
+        });
+    std::process::exit(code);
+}
+
+/// Stack size of the thread that parses arguments and runs the command.
+const MAIN_STACK: usize = 16 << 20;
+
+fn cli_main() -> i32 {
     let l0 = Localizer::new(&polyph_i18n::detect(None));
     let matches = localize(Cli::command(), &l0, "").get_matches();
     let cli = match Cli::from_arg_matches(&matches) {
@@ -693,7 +799,7 @@ fn main() {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("{e}");
-                std::process::exit(1);
+                return 1;
             }
         },
     };
@@ -704,10 +810,10 @@ fn main() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{e}");
-            std::process::exit(1);
+            return 1;
         }
     };
-    let code = rt.block_on(async {
+    rt.block_on(async {
         match run(&ctx, cli.cmd).await {
             Ok(()) => 0,
             Err(e) => {
@@ -715,8 +821,7 @@ fn main() {
                 1
             }
         }
-    });
-    std::process::exit(code);
+    })
 }
 
 /// Opens a URL in the person's browser.
@@ -787,8 +892,9 @@ async fn run(ctx: &Ctx, cmd: Option<Cmd>) -> anyhow::Result<()> {
         Cmd::Mcp { client, room } => setup::mcp(ctx, client, room).await,
         Cmd::Connect { clients, http, yes } => setup::connect(ctx, &clients, http, yes).await.map(|_| ()),
         Cmd::Disconnect { clients, yes } => setup::disconnect(ctx, &clients, yes).await,
-        Cmd::Start { name, yes, no_connect } => setup::start(ctx, name, yes, no_connect).await,
+        Cmd::Start { room, me, yes, no_connect } => setup::start(ctx, room, me, yes, no_connect).await,
         Cmd::Doctor => setup::doctor(ctx).await,
+        Cmd::Trust { revoke, yes } => trust(ctx, revoke, yes),
         Cmd::Hook { cmd: HookCmd::PreEdit { client } } => {
             let code = hook::pre_edit(ctx, &client).await;
             if code != 0 {
@@ -882,7 +988,7 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                 print_invite(ctx, &inv);
             }
         }
-        Cmd::Join { code, name, relay, lan, clone, no_clone } => {
+        Cmd::Join { code, me: name, relay, lan, clone, no_clone } => {
             if !ctx.json {
                 ctx.out(l.t("join-connecting"));
             }
@@ -1069,6 +1175,16 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                             .unwrap_or_else(|| l.t("quick-session-name"))
                     ));
                     ctx.out(if s["connected"] == true { l.t("status-connected") } else { l.t("status-disconnected") });
+                    if s["connected"] != true
+                        && let Ok(info) = call(&mut api, "room.get", json!({ "room": s["room"] })).await
+                        && let Some(m) = info["relay_error"]["message"].as_str()
+                    {
+                        ctx.out(format!("  {}", tr!(l, "relay-error-last", message = m)));
+                        ctx.out(format!(
+                            "  {}",
+                            setup::relay_fix(l, info["relay_error"]["kind"].as_str().unwrap_or_default())
+                        ));
+                    }
                     ctx.out(tr!(l, "status-members", count = s["members_online"].as_u64().unwrap_or(0)));
                     ctx.out(tr!(
                         l,
@@ -1427,6 +1543,7 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
         | Cmd::Disconnect { .. }
         | Cmd::Start { .. }
         | Cmd::Doctor
+        | Cmd::Trust { .. }
         | Cmd::Feedback { .. }
         | Cmd::Hook { .. }
         | Cmd::Brief { .. }
@@ -1554,6 +1671,20 @@ async fn agent_cmd(ctx: &Ctx, api: &mut Api, cmd: AgentCmd) -> anyhow::Result<()
                 ));
                 for key in v["warnings"].as_array().into_iter().flatten().filter_map(|k| k.as_str()) {
                     eprintln!("{}", tr!(l, key, sandbox = v["sandbox"].as_str().unwrap_or_default()));
+                }
+                if let Some(u) = v["untrusted"].as_object() {
+                    let ignored: Vec<&str> =
+                        u["ignored"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                    eprintln!(
+                        "{}",
+                        tr!(
+                            l,
+                            "agent-untrusted-project",
+                            ignored = ignored.join(", "),
+                            file = u["file"].as_str().unwrap_or_default(),
+                            dir = u["dir"].as_str().unwrap_or_default()
+                        )
+                    );
                 }
             }
         }
@@ -1769,12 +1900,9 @@ async fn room_cmd(ctx: &Ctx, api: &mut Api, cmd: RoomCmd) -> anyhow::Result<()> 
             } else {
                 for k in v.as_array().into_iter().flatten() {
                     let id: String = k["id"].as_str().unwrap_or_default().chars().take(6).collect();
-                    ctx.out(tr!(
-                        l,
-                        "knock-line",
-                        id = id.clone(),
-                        name = k["display_name"].as_str().unwrap_or_default()
-                    ));
+                    // Another device joining as this person says so plainly.
+                    let line = if k["own_device"] == true { "knock-line-own-device" } else { "knock-line" };
+                    ctx.out(tr!(l, line, id = id.clone(), name = k["display_name"].as_str().unwrap_or_default()));
                     ctx.out(tr!(l, "knock-hint", id = id));
                 }
             }
