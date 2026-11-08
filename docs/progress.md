@@ -259,13 +259,27 @@ Session 2026-11-08 (after two container restarts, 02:47 and ~03:10 UTC):
   low items in KAO-102. #14 and #16 Windows CI still red; triage reading
   both logs. KAO-104 filed for the m4_merge Windows flake.
 
+- 04:21-05:56 UTC: #14 Windows fixed (test built its expected key with
+  std canonicalize), Main merged in (4b6bb9f, lead checked no line dropped
+  from CHANGELOG/STUBS), all CI green, merged as 64d83d4. KAO-73 Done.
+  #16 Windows test fixed (79e4eea); it now has code conflicts with Main in
+  project.rs, agents.rs, main.rs (both PRs touch agent start and
+  polyph.toml reads). Opus worker merging Main in, keeping both sides'
+  security behaviour.
+
+Merged so far: #15 (SEC-1..4), #17 (relay TLS), #18 (`polyph start`), #14
+(SEC-12). Open: #16 (SEC-13/16; both sign-offs, needs merge with Main and
+green CI). After #16, M-B1's three critical findings SEC-12, SEC-13 and
+SEC-14 still need SEC-14 (KAO-75, host IPC reachable from the sandbox) and
+SEC-15/17 (KAO-76, KAO-81).
+
 ### Next after the pause
 
 1. Usage: get_session first; pause on any `five_hour` status other than
    `allowed` or a Kao figure at or over 75%.
 2. Verify each of the three running reworks (#14, #16, #17) with their
    Done-when commands; watch CI on each PR.
-3. Merge #14 and #17 when CI is green (both have their sign-offs).
+3. (done) #14 and #17 merged.
 4. #16: after CI is green, the security auditor confirms the macOS
    hard-link result from CI, then merge. Rebase or merge Main first if
    needed (merge-tree showed no conflicts with #15).

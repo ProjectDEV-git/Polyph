@@ -1,9 +1,10 @@
 # Handoff
 
-> **Resumed 2026-11-07 14:44 UTC after a 5-hour pause** (Kao reported 96%
-> at 13:45 UTC; the window reset at 14:40 UTC). The weekly limit is at
-> warning level (resets 2026-11-13 05:00 UTC). Current state and next steps
-> are in `docs/progress.md`.
+> **Status 2026-11-08 06:00 UTC.** Merged into Main: #15 (SEC-1..4), #17
+> (relay TLS), #18 (`polyph start`), #14 (SEC-12). Open: #16 (SEC-13/16),
+> being merged with Main. The weekly limit is at warning level (resets
+> 2026-11-13 05:00 UTC). Current state and next steps are in
+> `docs/progress.md`.
 
 Read this first when continuing the build. Then `PLAN.md` (checklist),
 `STUBS.md` (what is not done), `DECISIONS.md` (why things are the way they
