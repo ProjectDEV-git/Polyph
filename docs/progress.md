@@ -289,6 +289,13 @@ SEC-15/17 (KAO-76, KAO-81).
   reviewing the merge resolution; merge after that. KAO-75 waits for #16
   (both change polyph-sandbox).
 
+- 07:58 UTC: #16 merged as 195ce98 (security SIGN-OFF on the merge
+  resolution; all CI green). KAO-74 and KAO-77 Done; merge-review lows
+  added to KAO-102. All five original beta PRs are in (#14, #15, #16, #17,
+  #18). Dispatched: KAO-75 SEC-14 (Opus, `beta/kao-75-sandbox-ipc`),
+  KAO-103 connect writes the real ~/.claude.json (Sonnet), KAO-104
+  m4_merge flake (Sonnet, qa-engineer).
+
 ### Next after the pause
 
 1. Usage: get_session, and Kao's figure if given. Continue only under 75%.
