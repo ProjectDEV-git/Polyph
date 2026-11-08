@@ -252,6 +252,13 @@ Session 2026-11-08 (after two container restarts, 02:47 and ~03:10 UTC):
   `~/.claude.json` from a temp POLYPH_HOME (DF-6); this container's entry
   still points at a scratch home.
 
+- 04:00-04:21 UTC: merged #17 (671eee0, relay TLS; KAO-91/92 Done) and
+  #18 (049b9b7, `polyph start` name and flags; KAO-93/94 Done). #16 at
+  c2a8b71: security SIGN-OFF (SEC-13 medium, SEC-16), architect's blockers
+  were Windows CI and a docs claim about room warnings (fixed in c2a8b71);
+  low items in KAO-102. #14 and #16 Windows CI still red; triage reading
+  both logs. KAO-104 filed for the m4_merge Windows flake.
+
 ### Next after the pause
 
 1. Usage: get_session first; pause on any `five_hour` status other than
