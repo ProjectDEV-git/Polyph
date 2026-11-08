@@ -92,7 +92,13 @@ fn print_change(ctx: &Ctx, env: &Env, c: &Change) {
 }
 
 /// Shows the changes, asks once, writes them. Returns how many were written.
-fn confirm_and_apply(ctx: &Ctx, env: &Env, changes: &[Change], yes: bool, question: &str) -> anyhow::Result<usize> {
+fn confirm_and_apply(
+    ctx: &Ctx,
+    env: &Env,
+    changes: &[Change],
+    yes: bool,
+    question: &str,
+) -> anyhow::Result<Vec<usize>> {
     let l = &ctx.l;
     if !ctx.json {
         for c in changes {
@@ -105,14 +111,14 @@ fn confirm_and_apply(ctx: &Ctx, env: &Env, changes: &[Change], yes: bool, questi
         }
         if !confirm(question)? {
             ctx.out(l.t("connect-cancelled"));
-            return Ok(0);
+            return Ok(vec![]);
         }
     }
-    let mut done = 0;
-    for c in changes {
+    let mut done = vec![];
+    for (i, c) in changes.iter().enumerate() {
         match clients::apply(c) {
             Ok(backup) => {
-                done += 1;
+                done.push(i);
                 if !ctx.json {
                     let key = if c.after.is_some() { "connect-done" } else { "disconnect-done" };
                     ctx.out(tr!(l, key, client = c.client.name));
@@ -129,15 +135,29 @@ fn confirm_and_apply(ctx: &Ctx, env: &Env, changes: &[Change], yes: bool, questi
     Ok(done)
 }
 
-/// `polyph connect [clients] [--http] [--yes]`.
-pub async fn connect(ctx: &Ctx, names: &[String], http: bool, yes: bool) -> anyhow::Result<usize> {
+/// True when writing `name` would replace an entry that starts Polyph with a
+/// different data directory. Only the default name can collide: any other
+/// name is made from this home's path.
+fn replaces_other_home(name: &str, existing: Option<&Value>, home: Option<&Path>) -> bool {
+    if name != clients::ENTRY {
+        return false;
+    }
+    match existing.and_then(clients::entry_home) {
+        Some(h) => home.is_none_or(|mine| Path::new(&h) != mine),
+        None => false,
+    }
+}
+
+/// `polyph connect [clients] [--http] [--yes]`. Returns what it wrote, as
+/// `Client (entry)` for each agent.
+pub async fn connect(ctx: &Ctx, names: &[String], http: bool, yes: bool) -> anyhow::Result<Vec<String>> {
     let l = &ctx.l;
     let env = env(ctx)?;
     let targets = pick(ctx, &env, names)?;
     if targets.is_empty() {
         let known: Vec<&str> = CLIENTS.iter().map(|c| c.id).collect();
         ctx.out(tr!(l, "connect-none-found", known = known.join(", ")));
-        return Ok(0);
+        return Ok(vec![]);
     }
     // Unless named, skip VS Code when the Polyph extension registers itself.
     let (targets, by_extension): (Vec<&'static Client>, Vec<&'static Client>) =
@@ -150,9 +170,28 @@ pub async fn connect(ctx: &Ctx, names: &[String], http: bool, yes: bool) -> anyh
     let cwd = std::env::current_dir()?;
     let mut api = if http { Some(ctx.api().await?) } else { None };
     let exe = std::env::current_exe().and_then(|e| polyph_git::canonical(&e))?;
+    let home = home_override(ctx);
+    let entry = clients::entry_name(home.as_deref());
+    let interactive = std::io::stdin().is_terminal() && !ctx.json && !yes;
     let mut changes = vec![];
     let mut already = vec![];
+    let mut kept = vec![];
     for c in targets {
+        if replaces_other_home(&entry, clients::current(c, &env, &entry).as_ref(), home.as_deref()) {
+            let other = clients::current(c, &env, &entry).as_ref().and_then(clients::entry_home).unwrap_or_default();
+            let replace = interactive
+                && confirm(&tr!(
+                    l,
+                    "connect-replace-ask",
+                    client = c.name,
+                    entry = entry.as_str(),
+                    home = other.as_str()
+                ))?;
+            if !replace {
+                kept.push(tr!(l, "connect-kept", client = c.name, entry = entry.as_str(), home = other.as_str()));
+                continue;
+            }
+        }
         let t = match api.as_mut() {
             Some(api) => {
                 let k = call(api, "connect.key", json!({ "client": c.id, "dir": cwd })).await?;
@@ -162,9 +201,9 @@ pub async fn connect(ctx: &Ctx, names: &[String], http: bool, yes: bool) -> anyh
                     key: k["key"].as_str().unwrap_or_default().to_string(),
                 }
             }
-            None => Transport::stdio(&exe, home_override(ctx).as_deref()),
+            None => Transport::stdio(&exe, home.as_deref()),
         };
-        let change = clients::plan_add(c, &env, &t)?;
+        let change = clients::plan_add(c, &env, &entry, &t)?;
         if change.is_noop() {
             already.push(c.name);
         } else {
@@ -174,9 +213,13 @@ pub async fn connect(ctx: &Ctx, names: &[String], http: bool, yes: bool) -> anyh
     if ctx.json {
         let plan: Vec<Value> = changes
             .iter()
-            .map(|c| json!({ "client": c.client.id, "file": c.file, "before": c.before, "after": c.after }))
+            .map(|c| json!({ "client": c.client.id, "file": c.file, "entry": entry, "before": c.before, "after": c.after }))
             .collect();
-        ctx.print_json(&json!({ "changes": plan, "already": already }));
+        ctx.print_json(&json!({ "changes": plan, "already": already, "kept": kept }));
+    } else {
+        for line in &kept {
+            ctx.out(line.clone());
+        }
     }
     for name in &already {
         if !ctx.json {
@@ -184,13 +227,15 @@ pub async fn connect(ctx: &Ctx, names: &[String], http: bool, yes: bool) -> anyh
         }
     }
     if changes.is_empty() {
-        return Ok(0);
+        return Ok(vec![]);
     }
-    let n = confirm_and_apply(ctx, &env, &changes, yes, &l.t("connect-confirm"))?;
-    if n > 0 && !ctx.json {
+    let done = confirm_and_apply(ctx, &env, &changes, yes, &l.t("connect-confirm"))?;
+    let wrote: Vec<String> = done.iter().map(|&i| format!("{} ({entry})", changes[i].client.name)).collect();
+    if !wrote.is_empty() && !ctx.json {
+        ctx.out(tr!(l, "connect-wrote", entries = wrote.join(", ")));
         ctx.out(l.t("connect-restart"));
     }
-    Ok(n)
+    Ok(wrote)
 }
 
 /// `polyph disconnect [clients] [--yes]`.
@@ -199,9 +244,10 @@ pub async fn disconnect(ctx: &Ctx, names: &[String], yes: bool) -> anyhow::Resul
     let env = env(ctx)?;
     let targets: Vec<&'static Client> =
         if names.is_empty() { CLIENTS.iter().collect() } else { pick(ctx, &env, names)? };
+    let entry = clients::entry_name(home_override(ctx).as_deref());
     let mut changes = vec![];
     for c in &targets {
-        if let Some(ch) = clients::plan_remove(c, &env)? {
+        if let Some(ch) = clients::plan_remove(c, &env, &entry)? {
             changes.push(ch);
         }
     }
@@ -210,7 +256,7 @@ pub async fn disconnect(ctx: &Ctx, names: &[String], yes: bool) -> anyhow::Resul
         return Ok(());
     }
     let n = confirm_and_apply(ctx, &env, &changes, yes, &l.t("disconnect-confirm"))?;
-    if n > 0 {
+    if !n.is_empty() {
         // Keys for the web address stop working too (the daemon may be stopped).
         if let Ok(mut api) = Api::connect(&ctx.paths, false).await {
             for c in &changes {
@@ -338,8 +384,11 @@ pub async fn start(
         }
     };
     let rid = room["id"].as_str().unwrap_or_default().to_string();
-    if !no_connect {
-        connect(ctx, &[], false, yes).await?;
+    let wrote = if no_connect { vec![] } else { connect(ctx, &[], false, yes).await? };
+    if wrote.is_empty() {
+        ctx.out(l.t("start-agents-none"));
+    } else {
+        ctx.out(tr!(l, "start-agents-changed", entries = wrote.join(", ")));
     }
     let inv = call(&mut api, "room.invite", json!({ "room": rid, "reusable": true })).await?;
     ctx.out(String::new());
@@ -462,10 +511,11 @@ pub async fn doctor(ctx: &Ctx) -> anyhow::Result<()> {
             }
         }
     }
+    let entry_name = clients::entry_name(home_override(ctx).as_deref());
     if let Some(env) = Env::current() {
         for c in CLIENTS {
             let installed = c.installed(&env);
-            match clients::current(c, &env) {
+            match clients::current(c, &env, &entry_name) {
                 None if c.registered_by_extension(&env) => {
                     checks.push(pass(tr!(l, "doctor-client-extension", client = c.name)))
                 }

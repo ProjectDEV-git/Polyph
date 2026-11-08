@@ -13,8 +13,27 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 
-/// Name of Polyph's entry in every client's config.
+/// Name of Polyph's entry in every client's config for the default data directory.
 pub const ENTRY: &str = "polyph";
+
+/// The entry name for a data directory: `polyph` for the default one
+/// (`None`), `polyph-<8 hex of a hash of the path>` for any other, so two
+/// homes never overwrite each other's entry.
+pub fn entry_name(home_override: Option<&Path>) -> String {
+    match home_override {
+        None => ENTRY.to_string(),
+        Some(h) => {
+            use sha2::{Digest, Sha256};
+            let d = Sha256::digest(h.to_string_lossy().as_bytes());
+            format!("{ENTRY}-{}", hex::encode(&d[..4]))
+        }
+    }
+}
+
+/// The data directory a current entry starts Polyph with, if it sets one.
+pub fn entry_home(v: &Value) -> Option<String> {
+    ["env", "environment"].iter().find_map(|k| v.get(k)?.get("POLYPH_HOME")?.as_str().map(str::to_string))
+}
 
 /// The places a client's files can be, for this person on this system.
 #[derive(Debug, Clone)]
@@ -389,7 +408,7 @@ fn toml_show(t: &toml_edit::Table) -> String {
 }
 
 /// Plans adding (or updating) Polyph in `client`'s file; `t: None` plans removing it.
-fn plan(client: &'static Client, env: &Env, t: Option<&Transport>) -> anyhow::Result<Change> {
+fn plan(client: &'static Client, env: &Env, name: &str, t: Option<&Transport>) -> anyhow::Result<Change> {
     let file = client.file(env);
     let old = read(&file)?;
     let existed = old.is_some();
@@ -399,7 +418,7 @@ fn plan(client: &'static Client, env: &Env, t: Option<&Transport>) -> anyhow::Re
             anyhow::anyhow!("{} is not valid TOML ({e}); fix or move it, then try again", file.display())
         })?;
         let sec = section(Format::Codex);
-        let before = doc.get(sec).and_then(|s| s.get(ENTRY)).and_then(|e| e.as_table()).map(toml_show);
+        let before = doc.get(sec).and_then(|s| s.get(name)).and_then(|e| e.as_table()).map(toml_show);
         match t {
             Some(t) => {
                 if doc.get(sec).and_then(|s| s.as_table()).is_none() {
@@ -410,13 +429,13 @@ fn plan(client: &'static Client, env: &Env, t: Option<&Transport>) -> anyhow::Re
                 let entry = toml_entry(t, client);
                 let after = Some(toml_show(&entry));
                 if let Some(outer) = doc.get_mut(sec).and_then(|s| s.as_table_mut()) {
-                    outer.insert(ENTRY, toml_edit::Item::Table(entry));
+                    outer.insert(name, toml_edit::Item::Table(entry));
                 }
                 Ok(Change { client, file, before, after, text: doc.to_string(), existed, drops_comments: false })
             }
             None => {
                 if let Some(outer) = doc.get_mut(sec).and_then(|s| s.as_table_mut()) {
-                    outer.remove(ENTRY);
+                    outer.remove(name);
                 }
                 Ok(Change { client, file, before, after: None, text: doc.to_string(), existed, drops_comments: false })
             }
@@ -424,7 +443,7 @@ fn plan(client: &'static Client, env: &Env, t: Option<&Transport>) -> anyhow::Re
     } else {
         let (mut root, comments) = parse_json(&file, &old)?;
         let sec = section(client.format);
-        let before = root.get(sec).and_then(|s| s.get(ENTRY)).map(pretty);
+        let before = root.get(sec).and_then(|s| s.get(name)).map(pretty);
         let after = t.map(|t| entry(client, t));
         match &after {
             Some(e) => {
@@ -432,11 +451,11 @@ fn plan(client: &'static Client, env: &Env, t: Option<&Transport>) -> anyhow::Re
                 if !s.is_object() {
                     anyhow::bail!("{}: \"{sec}\" is not an object; fix it, then try again", file.display());
                 }
-                s[ENTRY] = e.clone();
+                s[name] = e.clone();
             }
             None => {
                 if let Some(s) = root.get_mut(sec).and_then(|s| s.as_object_mut()) {
-                    s.remove(ENTRY);
+                    s.remove(name);
                 }
             }
         }
@@ -447,27 +466,27 @@ fn plan(client: &'static Client, env: &Env, t: Option<&Transport>) -> anyhow::Re
     }
 }
 
-pub fn plan_add(client: &'static Client, env: &Env, t: &Transport) -> anyhow::Result<Change> {
-    plan(client, env, Some(t))
+pub fn plan_add(client: &'static Client, env: &Env, name: &str, t: &Transport) -> anyhow::Result<Change> {
+    plan(client, env, name, Some(t))
 }
 
 /// Plans removing Polyph; `None` when the client has no Polyph entry.
-pub fn plan_remove(client: &'static Client, env: &Env) -> anyhow::Result<Option<Change>> {
-    let c = plan(client, env, None)?;
+pub fn plan_remove(client: &'static Client, env: &Env, name: &str) -> anyhow::Result<Option<Change>> {
+    let c = plan(client, env, name, None)?;
     Ok(c.before.is_some().then_some(c))
 }
 
 /// Polyph's current entry for `client`, if any, as JSON (TOML read into JSON).
-pub fn current(client: &'static Client, env: &Env) -> Option<Value> {
+pub fn current(client: &'static Client, env: &Env, name: &str) -> Option<Value> {
     let file = client.file(env);
     let text = read(&file).ok()??;
     if client.format == Format::Codex {
         let v: toml::Table = toml::from_str(&text).ok()?;
-        let e = v.get(section(Format::Codex))?.get(ENTRY)?;
+        let e = v.get(section(Format::Codex))?.get(name)?;
         serde_json::to_value(e).ok()
     } else {
         let (root, _) = parse_json(&file, &text).ok()?;
-        root.get(section(client.format))?.get(ENTRY).cloned()
+        root.get(section(client.format))?.get(name).cloned()
     }
 }
 
@@ -545,7 +564,7 @@ mod tests {
             };
             std::fs::write(&file, &other).unwrap();
             assert!(client.installed(&env));
-            let c = plan_add(client, &env, &stdio()).unwrap();
+            let c = plan_add(client, &env, ENTRY, &stdio()).unwrap();
             assert!(
                 c.before.is_none() && c.after.as_deref().unwrap().contains("/opt/polyph/bin/polyph"),
                 "{}",
@@ -554,24 +573,24 @@ mod tests {
             assert!(c.diff().iter().all(|l| l.starts_with("+ ")));
             let backup = apply(&c).unwrap().unwrap();
             assert_eq!(std::fs::read_to_string(backup).unwrap(), other);
-            let cur = current(client, &env).unwrap();
+            let cur = current(client, &env, ENTRY).unwrap();
             assert_eq!(target(&cur).unwrap(), "/opt/polyph/bin/polyph", "{}", client.id);
             let text = std::fs::read_to_string(&file).unwrap();
             assert!(text.contains("other") && (text.contains("dark") || text.contains("o3")), "{}: {text}", client.id);
             // Connecting again changes nothing.
-            assert!(plan_add(client, &env, &stdio()).unwrap().is_noop());
+            assert!(plan_add(client, &env, ENTRY, &stdio()).unwrap().is_noop());
             // Over the web address instead.
             let http = Transport::Http { url: "http://127.0.0.1:7171/mcp".into(), key: "pk_1".into() };
-            let c = plan_add(client, &env, &http).unwrap();
+            let c = plan_add(client, &env, ENTRY, &http).unwrap();
             assert!(c.before.is_some() && c.after.as_deref().unwrap().contains("Bearer pk_1"), "{}", client.id);
             apply(&c).unwrap();
-            assert_eq!(target(&current(client, &env).unwrap()).unwrap(), "http://127.0.0.1:7171/mcp");
-            let c = plan_remove(client, &env).unwrap().unwrap();
+            assert_eq!(target(&current(client, &env, ENTRY).unwrap()).unwrap(), "http://127.0.0.1:7171/mcp");
+            let c = plan_remove(client, &env, ENTRY).unwrap().unwrap();
             assert!(c.after.is_none());
             apply(&c).unwrap();
-            assert!(current(client, &env).is_none(), "{}", client.id);
+            assert!(current(client, &env, ENTRY).is_none(), "{}", client.id);
             assert!(std::fs::read_to_string(&file).unwrap().contains("other"));
-            assert!(plan_remove(client, &env).unwrap().is_none());
+            assert!(plan_remove(client, &env, ENTRY).unwrap().is_none());
         }
     }
 
@@ -581,20 +600,20 @@ mod tests {
         let env = Env::at(root.path());
         let cursor = find("cursor").unwrap();
         assert!(!cursor.installed(&env));
-        let c = plan_add(cursor, &env, &stdio()).unwrap();
+        let c = plan_add(cursor, &env, ENTRY, &stdio()).unwrap();
         assert!(!c.existed);
         assert_eq!(apply(&c).unwrap(), None, "no backup of a file that did not exist");
         let zed = find("zed").unwrap();
         let f = zed.file(&env);
         std::fs::create_dir_all(f.parent().unwrap()).unwrap();
         std::fs::write(&f, "// Zed settings\n{\n  \"vim_mode\": true,\n}\n").unwrap();
-        let c = plan_add(zed, &env, &stdio()).unwrap();
+        let c = plan_add(zed, &env, ENTRY, &stdio()).unwrap();
         assert!(c.drops_comments);
         let gemini = find("gemini-cli").unwrap();
         let f = gemini.file(&env);
         std::fs::create_dir_all(f.parent().unwrap()).unwrap();
         std::fs::write(&f, "{ not json").unwrap();
-        assert!(plan_add(gemini, &env, &stdio()).unwrap_err().to_string().contains("not valid JSON"));
+        assert!(plan_add(gemini, &env, ENTRY, &stdio()).unwrap_err().to_string().contains("not valid JSON"));
         assert_eq!(find("Claude").unwrap().id, "claude-code");
         assert!(find("emacs").is_none());
     }
@@ -630,5 +649,39 @@ mod tests {
         assert_eq!(entry(find("gemini").unwrap(), &h)["httpUrl"], "u");
         assert_eq!(entry(find("windsurf").unwrap(), &h)["serverUrl"], "u");
         assert_eq!(entry(find("claude-code").unwrap(), &h)["type"], "http");
+    }
+}
+
+#[cfg(test)]
+mod entry_name_tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    #[test]
+    fn named_after_the_home_unless_default() {
+        assert_eq!(entry_name(None), "polyph");
+        let a = entry_name(Some(Path::new("/tmp/a")));
+        let b = entry_name(Some(Path::new("/tmp/b")));
+        assert!(a.starts_with("polyph-") && a.len() == "polyph-".len() + 8, "{a}");
+        assert_ne!(a, b);
+        assert_eq!(a, entry_name(Some(Path::new("/tmp/a"))));
+    }
+
+    #[test]
+    fn two_homes_keep_separate_entries() {
+        let root = tempfile::tempdir().unwrap();
+        let env = Env::at(root.path());
+        let client = find("claude-code").unwrap();
+        let t = Transport::stdio(Path::new("/bin/polyph"), None);
+        apply(&plan_add(client, &env, ENTRY, &t).unwrap()).unwrap();
+        let home = Path::new("/tmp/h");
+        let t2 = Transport::stdio(Path::new("/dev/polyph"), Some(home));
+        let name = entry_name(Some(home));
+        apply(&plan_add(client, &env, &name, &t2).unwrap()).unwrap();
+        assert_eq!(target(&current(client, &env, ENTRY).unwrap()).unwrap(), "/bin/polyph");
+        let own = current(client, &env, &name).unwrap();
+        assert_eq!(target(&own).unwrap(), "/dev/polyph");
+        assert_eq!(entry_home(&own).unwrap(), "/tmp/h");
+        assert_eq!(entry_home(&current(client, &env, ENTRY).unwrap()), None);
     }
 }
