@@ -17,19 +17,34 @@ Shared setup steps live in `.github/actions/` (`setup-rust`, `setup-node`,
 
 ## Cutting a release
 
-1. Write the version's section in `CHANGELOG.md` (for example `## 0.2.0`).
-   The release page uses it, and the release workflow refuses to publish
-   without it.
-2. Actions, **Prepare release**, Run workflow, version `0.2.0`. Review and
-   merge the pull request it opens. (By hand instead:
-   `node scripts/release/version.mjs 0.2.0`, then `cargo update -w` in the
-   root, `cloud/` and `apps/desktop/src-tauri/`.)
-3. Actions, **Release**, Run workflow on `Main`, version `0.2.0`. Or push a
+1. Actions, **Release**, Run workflow on `Main`, with any version: `0.2.0`,
+   `v1.0` (read as 1.0.0) or a pre-release such as `0.3.0-beta.1`. Or push a
    tag: `git tag -a v0.2.0 -m "Polyph 0.2.0" && git push origin v0.2.0`.
-4. The workflow checks every manifest says 0.2.0, runs the full **Test**
-   workflow, builds everything, and opens a **draft** release. Nothing is
-   published unless the tests pass. Read the draft, try a download, publish
-   it; publishing creates the tag when the run was started by hand.
+2. The workflow sets that version in every manifest and `Cargo.lock` it
+   builds from (the commit does not have to say it already), runs the full
+   **Test** workflow, builds everything, and opens a **draft** release.
+   Nothing is published unless the tests pass. Read the draft, try a
+   download, publish it; publishing creates the tag when the run was started
+   by hand. The run that tag starts builds and checks again and publishes
+   nothing.
+3. Optionally, Actions, **Prepare release** with the same version opens a
+   pull request that sets it in the repository too, so builds from source
+   report it. (By hand: `node scripts/release/version.mjs 0.2.0`.)
+
+Release notes are the version's `CHANGELOG.md` section, headed exactly
+`## 0.2.0` (or `## v0.2.0`, `## [0.2.0]`, with or without a date after it).
+Without one they are the `## Unreleased` section; rename that heading to
+the version before releasing to keep the changelog in order.
+
+A pre-release (any version with `-`) is marked as one on the Releases page
+and does not move the relay image's `latest` tag. Windows Installer takes
+numbers only, so the `.msi` of `0.3.0-beta.1` installs as 0.3.0. Major and
+minor numbers go up to 255 and patch up to 65535 for the same reason; the
+**Version** job says so before anything is built.
+
+The workflow refuses a version that already has a release (a draft
+included): delete that draft on the Releases page first, or pick another
+version.
 
 Run **Release** with no version to build and smoke-test every file without
 publishing anything.

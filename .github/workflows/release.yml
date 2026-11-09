@@ -9,7 +9,11 @@ name: Release
 # - Run it from the Actions tab with no version: build and check every file,
 #   publish nothing (a dry run).
 #
-# Nothing is published unless the full test workflow passes.
+# Any version works (0.2.0, v1.0, 0.3.0-beta.1): every job sets it in the
+# manifests it builds from, so the commit does not have to say it already.
+# The release notes are the version's CHANGELOG.md section, or else its
+# Unreleased section. Nothing is published unless the full test workflow
+# passes.
 
 on:
   push:
@@ -39,30 +43,49 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       tag: ${{ steps.v.outputs.tag }}
       publish: ${{ steps.v.outputs.publish }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+      msi: ${{ steps.v.outputs.msi }}
     steps:
       - uses: actions/checkout@v4
       - id: v
         shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          publish=true
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             tag="$GITHUB_REF_NAME"
+            version=$(node scripts/release/version.mjs --normalize "$tag")
+            # Publishing a draft started from the Actions tab makes this tag,
+            # which starts this workflow again: build and check, publish nothing.
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+              publish=false
+              echo "::notice::Release $tag already exists: everything is built and checked, nothing is published again."
+            fi
           elif [[ -n "$INPUT_VERSION" ]]; then
-            tag="v${INPUT_VERSION#v}"
+            version=$(node scripts/release/version.mjs --normalize "$INPUT_VERSION")
+            tag="v$version"
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+              echo "::error::A release $tag already exists (perhaps a draft). Delete it on the Releases page, or choose another version."
+              exit 1
+            fi
           else
+            version=$(node scripts/release/version.mjs --normalize "$(node -p "require('./apps/web/package.json').version")")
             tag=""
-          fi
-          if [[ -n "$tag" ]]; then
-            node scripts/release/version.mjs --check "$tag"
-            node scripts/release/notes.mjs "$tag" > /dev/null
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=false" >> "$GITHUB_OUTPUT"
+            publish=false
             echo "::notice::Dry run: everything is built and checked, nothing is published."
           fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=$(node -p "require('./apps/web/package.json').version")" >> "$GITHUB_OUTPUT"
+          msi=$(node scripts/release/version.mjs --msi "$version")
+          node scripts/release/notes.mjs "$version" > /dev/null
+          echo "Version $version, tag ${tag:-none}, Windows installer version $msi"
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "publish=$publish"
+            echo "prerelease=$([[ "$version" == *-* ]] && echo true || echo false)"
+            echo "msi=$msi"
+          } >> "$GITHUB_OUTPUT"
 
   test:
     name: Test
@@ -79,6 +102,8 @@ jobs:
           targets: wasm32-unknown-unknown
           cache-key: web
       - uses: ./.github/actions/wasm-bindgen
+      - name: Set the version
+        run: node scripts/release/version.mjs "${{ needs.version.outputs.version }}"
       - uses: ./.github/actions/setup-node
       - run: pnpm --filter @polyph/web build
       - uses: actions/upload-artifact@v4
@@ -119,6 +144,10 @@ jobs:
           workspaces: |
             . -> target
             apps/desktop/src-tauri -> target
+      # After the cache is restored: the cache key follows Cargo.lock.
+      - name: Set the version
+        shell: bash
+        run: node scripts/release/version.mjs "${{ needs.version.outputs.version }}"
       - uses: actions/download-artifact@v4
         with:
           name: web
@@ -145,7 +174,9 @@ jobs:
           fi
           node scripts/release/desktop-prep.mjs --profile dist
           cd apps/desktop
-          pnpm tauri build --config src-tauri/tauri.release.conf.json --bundles ${{ matrix.bundles }}
+          # Windows Installer takes numbers only (0.2.0-beta.1 installs as 0.2.0).
+          msi='{"bundle":{"windows":{"wix":{"version":"${{ needs.version.outputs.msi }}"}}}}'
+          pnpm tauri build --config src-tauri/tauri.release.conf.json --config "$msi" --bundles ${{ matrix.bundles }}
       - name: Collect the desktop packages
         shell: bash
         run: |
@@ -182,6 +213,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Set the version
+        run: node scripts/release/version.mjs "${{ needs.version.outputs.version }}"
       - uses: ./.github/actions/setup-node
       - run: pnpm --filter polyph-vscode package
       - uses: actions/upload-artifact@v4
@@ -241,9 +274,10 @@ jobs:
           file: deploy/relay/Dockerfile.release
           platforms: linux/amd64,linux/arm64
           push: true
+          # A pre-release does not move `latest`.
           tags: |
             ${{ steps.image.outputs.name }}:${{ needs.version.outputs.version }}
-            ${{ steps.image.outputs.name }}:latest
+            ${{ needs.version.outputs.prerelease != 'true' && format('{0}:latest', steps.image.outputs.name) || '' }}
       - uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ steps.image.outputs.name }}
@@ -253,12 +287,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          node scripts/release/notes.mjs "$TAG" > notes.md
+          node scripts/release/notes.mjs "$VERSION" > notes.md
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
             where=(--verify-tag)
           else
             # Started from the Actions tab: the tag is made when the draft is published.
             where=(--target "$GITHUB_SHA")
           fi
-          gh release create "$TAG" dist/* --draft "${where[@]}" \
+          pre=()
+          if [[ "${{ needs.version.outputs.prerelease }}" == true ]]; then pre=(--prerelease); fi
+          gh release create "$TAG" dist/* --draft "${where[@]}" "${pre[@]}" \
             --title "Polyph $VERSION" --notes-file notes.md
