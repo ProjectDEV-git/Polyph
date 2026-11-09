@@ -75,7 +75,13 @@ fn restrict_dir(_p: &Path) {}
 /// Windows the file inherits the per-user profile directory's ACL, which
 /// grants access to the user, SYSTEM and Administrators only).
 pub fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    let tmp = path.with_extension("tmp");
+    // `<name>.tmp` next to it: files that differ only in extension
+    // (`<room>.room`, `<room>.codes`) never share a temporary file.
+    let tmp = {
+        let mut t = path.as_os_str().to_owned();
+        t.push(".tmp");
+        std::path::PathBuf::from(t)
+    };
     #[cfg(unix)]
     {
         use std::io::Write;

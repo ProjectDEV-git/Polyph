@@ -28,22 +28,21 @@ jobs:
       - uses: ./.github/actions/setup-rust
       - name: Set the version everywhere
         run: |
-          v="${VERSION#v}"
+          v=$(node scripts/release/version.mjs --normalize "$VERSION")
           node scripts/release/version.mjs "$v"
-          cargo update -w
-          (cd cloud && cargo update -w)
-          (cd apps/desktop/src-tauri && cargo update -w)
-          node scripts/release/version.mjs --check "v$v"
+          node scripts/release/version.mjs --check "$v"
+          cargo metadata --locked --format-version 1 > /dev/null
+          (cd apps/desktop/src-tauri && cargo metadata --locked --format-version 1 > /dev/null)
       - name: Open the pull request
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          v="${VERSION#v}"
+          v=$(node scripts/release/version.mjs --normalize "$VERSION")
           branch="release/v$v"
-          if node scripts/release/notes.mjs "v$v" > /dev/null 2>&1; then
-            note="CHANGELOG.md already has a section for $v."
+          if node scripts/release/notes.mjs "$v" 2>&1 >/dev/null | grep -q "no section"; then
+            note="CHANGELOG.md has no section for $v yet, so the release notes will be its Unreleased section. To give the release its own notes, rename that heading to \`## $v\` in this pull request."
           else
-            note="**CHANGELOG.md has no section for $v yet.** Add one to this pull request before merging; the release workflow refuses to publish without it."
+            note="CHANGELOG.md already has a section for $v."
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
