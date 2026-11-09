@@ -64,13 +64,16 @@ const json = (file) => ({
 
 // The workspace's own crates in a lock file: `polyph-*` packages with no
 // `source` (path dependencies), which all carry the workspace version.
-const lock = (file) => {
+// Works on either line ending (a Windows checkout has CRLF) and keeps it.
+export const lockFile = (file) => {
   const own = (block) => /^name = "polyph-[^"]+"$/m.test(block) && !/^source = /m.test(block);
   const blocks = (s) => s.split(/\n(?=\[\[package\]\]\n)/);
+  const eol = (s) => (s.includes("\r\n") ? "\r\n" : "\n");
+  const lf = (s) => s.replace(/\r\n/g, "\n");
   return {
     file,
     get: (s) => {
-      const vs = blocks(s)
+      const vs = blocks(lf(s))
         .filter(own)
         .map((b) => /^version = "([^"]+)"$/m.exec(b)?.[1]);
       return vs.length && vs.every((v) => v === vs[0])
@@ -78,9 +81,10 @@ const lock = (file) => {
         : `mixed (${[...new Set(vs)].join(", ")})`;
     },
     set: (s, v) =>
-      blocks(s)
+      blocks(lf(s))
         .map((b) => (own(b) ? b.replace(/^version = "[^"]+"$/m, `version = "${v}"`) : b))
-        .join("\n"),
+        .join("\n")
+        .replace(/\n/g, eol(s)),
     label: `${file} (polyph crates)`,
   };
 };
@@ -94,9 +98,9 @@ const FILES = [
   json("apps/web/package.json"),
   json("apps/vscode/package.json"),
   json("packages/ui/package.json"),
-  lock("Cargo.lock"),
-  lock("cloud/Cargo.lock"),
-  lock("apps/desktop/src-tauri/Cargo.lock"),
+  lockFile("Cargo.lock"),
+  lockFile("cloud/Cargo.lock"),
+  lockFile("apps/desktop/src-tauri/Cargo.lock"),
 ];
 
 // The workspace pins its own crates too (`polyph-x = { path = ..., version = "..." }`
