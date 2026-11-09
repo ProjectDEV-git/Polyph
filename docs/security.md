@@ -193,6 +193,21 @@ network goes through the daemon's allowlisting proxy; anything else becomes an
 approval request. `polyph sandbox test` reports which protections work on a
 given machine. See `docs/sandbox.md` (M3).
 
+Agents are kept away from the person's IPC endpoints (SEC-14): the session
+bus, `systemd --user`, keyring, gpg and ssh agents, display servers and
+container engines. Under bubblewrap `/run` and `/var/run` are empty and
+known container sockets elsewhere are hidden; in Landlock mode a seccomp
+filter refuses every Unix socket except connected stream pairs; Seatbelt
+starts from `(deny default)`, allows Unix sockets only in the agent's own
+temp folder, limits Mach lookups to a short list without LaunchServices or
+Apple Events, and does not run `open`, `osascript` or `osacompile`. The
+variables that name these endpoints (`DBUS_SESSION_BUS_ADDRESS`,
+`SSH_AUTH_SOCK`, `DISPLAY` and others) are removed. What stays open: under
+bubblewrap, a Unix socket elsewhere in the readable filesystem; under
+Seatbelt, the Mach services on the list (the security server among them);
+on Windows, named pipes and COM. The Seatbelt profile is tested only on the
+macOS CI runner.
+
 A repository's `polyph.toml` cannot weaken this on its own. Its `[sandbox]`
 (mode, image, allow_hosts), `[agents.*]`, `checks`, `[policy] preset`,
 `[merge] approval`, `run_checks`, `via`, `remote` and `[prices]` sections only

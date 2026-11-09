@@ -119,6 +119,139 @@ impl Policy {
     }
 }
 
+/// Variables that point at the person's IPC endpoints: session and system
+/// bus, ssh-agent, gpg-agent, the keyring, Kerberos tickets, display and
+/// sound servers, window managers, terminals and editors that take commands
+/// (kitty, WezTerm, Neovim, VS Code), container engines, systemd
+/// notification and WSL interop. Sandboxed agents start
+/// without them (SEC-14); the sockets themselves are out of reach as
+/// `docs/sandbox.md` describes per mechanism.
+pub const IPC_ENV: &[&str] = &[
+    "DBUS_SESSION_BUS_ADDRESS",
+    "DBUS_SYSTEM_BUS_ADDRESS",
+    "XDG_RUNTIME_DIR",
+    "SSH_AUTH_SOCK",
+    "GPG_AGENT_INFO",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "SWAYSOCK",
+    "I3SOCK",
+    "TMUX",
+    "DOCKER_HOST",
+    "CONTAINER_HOST",
+    "NOTIFY_SOCKET",
+    "WSL_INTEROP",
+    "DBUS_STARTER_ADDRESS",
+    "XAUTHORITY",
+    "PULSE_SERVER",
+    "PIPEWIRE_REMOTE",
+    "KRB5CCNAME",
+    "GNOME_KEYRING_CONTROL",
+    "VSCODE_IPC_HOOK_CLI",
+    "KITTY_LISTEN_ON",
+    "WEZTERM_UNIX_SOCKET",
+    "NVIM",
+];
+
+/// Container engine sockets and other host IPC outside `/run`, `/var/run`
+/// and `/tmp` (which bubblewrap replaces whole): the usual Docker, Podman,
+/// Colima, Rancher Desktop, Lima and OrbStack locations, WSLg's runtime
+/// folder, and the Unix sockets `$DOCKER_HOST` and `$CONTAINER_HOST` name.
+pub fn host_ipc_paths() -> Vec<PathBuf> {
+    host_ipc_paths_in(home_dir().as_deref(), &|k| std::env::var(k).ok())
+}
+
+fn host_ipc_paths_in(home: Option<&Path>, env: &dyn Fn(&str) -> Option<String>) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = [
+        "/var/run/docker.sock",
+        "/run/docker.sock",
+        "/run/podman/podman.sock",
+        "/var/run/podman/podman.sock",
+        "/run/containerd/containerd.sock",
+        "/mnt/wslg",
+    ]
+    .iter()
+    .map(PathBuf::from)
+    .collect();
+    if let Some(h) = home {
+        for d in [".colima", ".rd", ".lima", ".orbstack", ".local/share/containers/podman/machine"] {
+            v.push(h.join(d));
+        }
+    }
+    for k in ["DOCKER_HOST", "CONTAINER_HOST"] {
+        if let Some(p) = env(k).as_deref().and_then(|u| u.strip_prefix("unix://")).filter(|p| p.starts_with('/')) {
+            v.push(PathBuf::from(p));
+        }
+    }
+    v.dedup();
+    v
+}
+
+/// Folders bubblewrap replaces with an empty tmpfs: everything there is
+/// sockets and state of running services (`/run/user/<uid>` holds the
+/// session bus, `systemd --user`, keyring and gpg agents).
+const RUN_DIRS: [&str; 2] = ["/run", "/var/run"];
+
+/// `p` with links resolved, or `p` itself when it does not exist.
+fn canon(p: &Path) -> PathBuf {
+    p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
+}
+
+/// The real folders behind [`RUN_DIRS`] under `root` (`/` outside tests),
+/// each once, for bubblewrap to replace with an empty tmpfs. Either may be
+/// a link, to the other or anywhere else; the tmpfs goes over where it
+/// points. Never over the root itself or a folder above it, and never over
+/// a folder other than `/run` or `/var/run` themselves that holds a
+/// writable path (`/var/run -> /home`): the sockets in it are then hidden
+/// one by one ([`ipc_to_hide`]).
+fn run_tmpfs_in(root: &Path, writable: &[PathBuf]) -> Vec<PathBuf> {
+    let root = canon(root);
+    let own: Vec<PathBuf> = RUN_DIRS.iter().map(|r| root.join(r.trim_start_matches('/'))).collect();
+    let mut v: Vec<PathBuf> = vec![];
+    for lit in &own {
+        let Ok(real) = lit.canonicalize() else { continue };
+        if !real.is_dir() || root.starts_with(&real) || v.iter().any(|t| real.starts_with(t)) {
+            continue;
+        }
+        if !own.contains(&real) && writable.iter().any(|w| canon(w).starts_with(&real)) {
+            continue;
+        }
+        v.retain(|t| !t.starts_with(&real));
+        v.push(real);
+    }
+    v
+}
+
+/// Links directly in the emptied folders to folders outside them (NixOS
+/// keeps its system profile at `/run/current-system`), recreated inside.
+fn run_links_in(tmpfs: &[PathBuf]) -> Vec<(PathBuf, PathBuf)> {
+    let mut v = vec![];
+    for dir in tmpfs {
+        let Ok(rd) = std::fs::read_dir(dir) else { continue };
+        for e in rd.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_symlink())) {
+            let (Ok(target), Ok(real)) = (std::fs::read_link(e.path()), e.path().canonicalize()) else { continue };
+            if real.is_dir() && !tmpfs.iter().any(|t| real.starts_with(t)) {
+                v.push((target, e.path()));
+            }
+        }
+    }
+    v
+}
+
+/// The host IPC paths bubblewrap must hide itself: those that exist and
+/// are not in a folder it empties (`tmpfs`, and `/tmp` when it is a real
+/// folder), compared and returned with links resolved, so
+/// `/var/run/docker.sock` is hidden wherever `/var/run` points.
+fn ipc_to_hide(ipc: Vec<PathBuf>, tmpfs: &[PathBuf], tmp: Option<&Path>) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = vec![];
+    for p in ipc.iter().filter_map(|p| p.canonicalize().ok()) {
+        if !tmpfs.iter().map(PathBuf::as_path).chain(tmp).any(|t| p.starts_with(t)) && !v.contains(&p) {
+            v.push(p);
+        }
+    }
+    v
+}
+
 pub fn home_dir() -> Option<PathBuf> {
     std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from)
 }
@@ -174,6 +307,8 @@ fn wrap_inner(mech: Mechanism, policy: &Policy, program: &str, args: &[String]) 
                 "--new-session".into(),
                 "--unshare-net".into(),
                 "--unshare-pid".into(),
+                "--unshare-ipc".into(),
+                "--unshare-uts".into(),
                 "--ro-bind".into(),
                 "/".into(),
                 "/".into(),
@@ -184,8 +319,28 @@ fn wrap_inner(mech: Mechanism, policy: &Policy, program: &str, args: &[String]) 
                 "--tmpfs".into(),
                 "/tmp".into(),
             ];
+            // Host IPC (SEC-14): `/run` and `/var/run` empty (a read-only
+            // mount does not stop `connect` on a socket), container sockets
+            // elsewhere hidden. The network namespace already separates
+            // abstract sockets. Writable paths and the proxy socket are
+            // bound back below, wherever they are.
+            // Each real folder behind `/run` and `/var/run`, wherever they
+            // point.
             let writable = policy.writable_all();
-            for h in &policy.hidden {
+            let run = run_tmpfs_in(Path::new("/"), &writable);
+            for r in &run {
+                a.extend(["--tmpfs".into(), r.to_string_lossy().into_owned()]);
+            }
+            for (target, link) in run_links_in(&run) {
+                a.extend([
+                    "--symlink".into(),
+                    target.to_string_lossy().into_owned(),
+                    link.to_string_lossy().into_owned(),
+                ]);
+            }
+            let tmp = std::fs::symlink_metadata("/tmp").is_ok_and(|m| m.is_dir()).then_some(Path::new("/tmp"));
+            let ipc = ipc_to_hide(host_ipc_paths(), &run, tmp).into_iter().filter(|p| !policy.hidden.contains(p));
+            for h in policy.hidden.iter().cloned().chain(ipc).collect::<Vec<_>>().iter() {
                 // Never hide something that contains a writable path.
                 if h.exists() && !writable.iter().any(|w| w.starts_with(h)) {
                     let p = h.to_string_lossy().into_owned();
@@ -269,7 +424,12 @@ fn wrap_inner(mech: Mechanism, policy: &Policy, program: &str, args: &[String]) 
         Mechanism::Seatbelt => {
             let port = policy.proxy_tcp.map(|a| a.port()).unwrap_or(0);
             let profile = seatbelt_profile(policy, port);
-            let mut a = vec!["-p".to_string(), profile, program.to_string()];
+            // Without the variables naming host IPC (SEC-14).
+            let mut a = vec!["-p".to_string(), profile, "/usr/bin/env".into()];
+            for k in IPC_ENV {
+                a.extend(["-u".to_string(), k.to_string()]);
+            }
+            a.push(program.to_string());
             a.extend(args.iter().cloned());
             Ok(Wrapped {
                 program: "/usr/bin/sandbox-exec".into(),
@@ -360,17 +520,87 @@ fn sb_rule(verb: &str, filter: &str, p: &Path) -> String {
     format!("({verb} file-write* ({filter} \"{q}\"))\n({verb} file-link ({filter} \"{q}\"))\n")
 }
 
-/// Seatbelt profile: everything readable except hidden paths; writes only to
-/// the worktree, writable paths and temp; network only to the proxy.
+/// Mach services agents may look up under Seatbelt: user and group lookups,
+/// logging, notifications, preferences (read; writes are denied), TLS trust
+/// evaluation, network settings and file events. Not on it, among others:
+/// LaunchServices (`open`), Apple Events (`osascript`), the pasteboard and
+/// the window server (SEC-14).
+pub const SEATBELT_MACH_SERVICES: &[&str] = &[
+    "com.apple.system.opendirectoryd.libinfo",
+    "com.apple.system.opendirectoryd.membership",
+    "com.apple.system.DirectoryService.libinfo_v1",
+    "com.apple.system.DirectoryService.membership_v1",
+    "com.apple.system.logger",
+    "com.apple.logd",
+    "com.apple.system.notification_center",
+    "com.apple.bsd.dirhelper",
+    "com.apple.cfprefsd.daemon",
+    "com.apple.cfprefsd.agent",
+    "com.apple.SecurityServer",
+    "com.apple.trustd",
+    "com.apple.trustd.agent",
+    "com.apple.ocspd",
+    "com.apple.SystemConfiguration.configd",
+    "com.apple.SystemConfiguration.DNSConfiguration",
+    "com.apple.networkd",
+    "com.apple.FSEvents",
+    "com.apple.PowerManagement.control",
+];
+
+/// Programs that start other programs outside the profile, through
+/// LaunchServices or Apple Events. Copies of them are stopped by the Mach
+/// lookup list instead.
+pub const SEATBELT_DENIED_PROGRAMS: &[&str] = &["/usr/bin/open", "/usr/bin/osascript", "/usr/bin/osacompile"];
+
+/// `p` as a Seatbelt regular expression matching what is below it.
+fn sb_regex_under(p: &Path) -> String {
+    let mut r = String::from("^");
+    for c in p.to_string_lossy().chars() {
+        if "\\.^$|?*+()[]{}\"".contains(c) {
+            r.push('\\');
+        }
+        r.push(c);
+    }
+    r.push('/');
+    r
+}
+
+/// Seatbelt profile: nothing is allowed unless listed (SEC-14). Programs
+/// run and fork, except `open`, `osascript` and `osacompile`; everything is
+/// readable except hidden paths; writes only to the worktree, writable
+/// paths and temp; Mach lookups only to [`SEATBELT_MACH_SERVICES`];
+/// network only to the proxy, Unix sockets only inside the agent's own temp
+/// folder; signals only within the sandbox; no ioctls on terminals.
 ///
-/// Hard links too (`file-link`): `(allow default)` would let the agent link a
-/// file of the person's (`~/.profile`) into a folder it writes, where git
-/// run by the daemon as the person could append to it. A link is allowed
-/// only from a file in a writable folder, and never from a read-only one
-/// inside it. Bubblewrap needs no rule: every writable folder is its own
-/// mount, and Linux refuses links across mounts.
+/// Hard links too (`file-link`): the agent could otherwise link a file of
+/// the person's (`~/.profile`) into a folder it writes, where git run by
+/// the daemon as the person could append to it. A link is allowed only
+/// from a file in a writable folder, and never from a read-only one inside
+/// it. Bubblewrap needs no rule: every writable folder is its own mount,
+/// and Linux refuses links across mounts.
 pub fn seatbelt_profile(policy: &Policy, proxy_port: u16) -> String {
-    let mut s = String::from("(version 1)\n(allow default)\n(deny file-write*)\n(deny file-link)\n");
+    let mut s = String::from("(version 1)\n(deny default)\n(deny file-write*)\n(deny file-link)\n");
+    s.push_str("(allow process-fork)\n(allow process-exec*)\n(allow process-info*)\n");
+    s.push_str("(allow signal (target same-sandbox))\n");
+    s.push_str("(allow file-read*)\n(allow file-map-executable)\n(allow sysctl-read)\n(allow user-preference-read)\n");
+    // ioctls, but none on terminals (TIOCSTI types into the person's shell).
+    // No Seatbelt-wrapped program owns a terminal: shared terminals
+    // (`polyph-term`, opened by `polyph term`) run the person's own shell
+    // unsandboxed, and agents and their ACP terminals get pipes, so no
+    // exception for a sandboxed shell's own tty is needed.
+    s.push_str("(allow file-ioctl)\n");
+    s.push_str("(deny file-ioctl (literal \"/dev/tty\") (literal \"/dev/console\") (regex #\"^/dev/ttys[0-9]+$\"))\n");
+    s.push_str("(allow ipc-posix-sem)\n(allow ipc-posix-shm*)\n(allow system-socket)\n");
+    s.push_str("(allow mach-lookup");
+    // Exact names, as anchored expressions.
+    for m in SEATBELT_MACH_SERVICES {
+        s.push_str(&format!(" (global-name-regex #\"^{}$\")", m.replace('.', "\\.")));
+    }
+    s.push_str(")\n(deny process-exec*");
+    for p in SEATBELT_DENIED_PROGRAMS {
+        s.push_str(&format!(" (literal \"{p}\")"));
+    }
+    s.push_str(")\n");
     // Device files only; shared temp folders (/private/tmp, /private/var/folders)
     // stay read-only: the agent gets its own TMPDIR through the policy.
     s.push_str("(allow file-write* (literal \"/dev/null\") (literal \"/dev/tty\") (regex #\"^/dev/fd/\"))\n");
@@ -428,7 +658,17 @@ pub fn seatbelt_profile(policy: &Policy, proxy_port: u16) -> String {
     for h in &policy.hidden {
         s.push_str(&format!("(deny file-read* (subpath \"{}\"))\n", sb_quote(h)));
     }
-    s.push_str("(deny network-outbound)\n(allow network-outbound (remote unix-socket))\n");
+    // No Unix sockets outside the agent's own temp folder: the session's
+    // services, ssh-agent, docker.sock and the like stay out of reach.
+    s.push_str("(deny network-outbound)\n(deny network-outbound (remote unix-socket))\n");
+    s.push_str("(allow network-bind (local ip \"localhost:*\"))\n(allow network-inbound (local ip \"localhost:*\"))\n");
+    if let Some(t) = &policy.tmp {
+        for p in std::iter::once(t.clone()).chain(t.canonicalize().ok().filter(|r| r != t)) {
+            let r = sb_regex_under(&p);
+            s.push_str(&format!("(allow network-bind (local unix-socket (path-regex #\"{r}\")))\n"));
+            s.push_str(&format!("(allow network-outbound (remote unix-socket (path-regex #\"{r}\")))\n"));
+        }
+    }
     if proxy_port > 0 {
         s.push_str(&format!("(allow network-outbound (remote ip \"localhost:{proxy_port}\"))\n"));
     }
@@ -444,6 +684,27 @@ pub struct Availability {
     pub mechanism: Mechanism,
     pub available: bool,
     pub detail: String,
+    /// Message keys for what this mechanism leaves open here, shown by
+    /// `polyph agents doctor` and `polyph sandbox test`.
+    pub warnings: Vec<String>,
+}
+
+/// Message key: Landlock is enforced but the seccomp filter is missing, so
+/// agents start (with a warning) yet can reach host IPC over Unix sockets
+/// and use io_uring (SEC-14).
+pub const NO_SECCOMP: &str = "sandbox-warning-no-seccomp";
+
+fn landlock_availability(landlock: bool, seccomp: bool) -> Availability {
+    let (detail, warnings) = match (landlock, seccomp) {
+        (true, true) => ("Landlock is enforced by this kernel; seccomp blocks Unix sockets", vec![]),
+        (true, false) => (
+            "Landlock is enforced by this kernel, but there is no seccomp filter: agents can reach host IPC (the \
+             session bus, ssh-agent, docker.sock) over Unix sockets",
+            vec![NO_SECCOMP.to_string()],
+        ),
+        _ => ("Landlock is not available in this kernel", vec![]),
+    };
+    Availability { mechanism: Mechanism::Landlock, available: landlock, detail: detail.into(), warnings }
 }
 
 /// Which mechanisms this machine supports, best first.
@@ -466,23 +727,20 @@ pub fn detect(helper: &[String]) -> Vec<Availability> {
                 (true, false) => "bubblewrap is installed but cannot create namespaces here".into(),
                 _ => "bubblewrap is not installed".into(),
             },
+            warnings: vec![],
         });
-        let ll = helper.first().is_some_and(|h| {
-            std::process::Command::new(h)
-                .args(&helper[1..])
-                .args(["probe", "landlock"])
-                .status()
-                .is_ok_and(|s| s.success())
-        });
-        v.push(Availability {
-            mechanism: Mechanism::Landlock,
-            available: ll,
-            detail: if ll {
-                "Landlock is enforced by this kernel".into()
-            } else {
-                "Landlock is not available in this kernel".into()
-            },
-        });
+        let probe = |what: &str| {
+            helper.first().is_some_and(|h| {
+                std::process::Command::new(h)
+                    .args(&helper[1..])
+                    .args(["probe", what])
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .is_ok_and(|s| s.success())
+            })
+        };
+        let ll = probe("landlock");
+        v.push(landlock_availability(ll, ll && probe("seccomp")));
     }
     if cfg!(target_os = "macos") {
         let ok = Path::new("/usr/bin/sandbox-exec").exists();
@@ -490,6 +748,7 @@ pub fn detect(helper: &[String]) -> Vec<Availability> {
             mechanism: Mechanism::Seatbelt,
             available: ok,
             detail: if ok { "sandbox-exec works".into() } else { "sandbox-exec is missing".into() },
+            warnings: vec![],
         });
     }
     if cfg!(windows) {
@@ -497,6 +756,7 @@ pub fn detect(helper: &[String]) -> Vec<Availability> {
             mechanism: Mechanism::WindowsJob,
             available: true,
             detail: "low integrity level and a job object; network isolation is limited".into(),
+            warnings: vec![],
         });
     }
     let c = container_engine();
@@ -504,6 +764,7 @@ pub fn detect(helper: &[String]) -> Vec<Availability> {
         mechanism: Mechanism::Container,
         available: c.is_some(),
         detail: c.unwrap_or_else(|| "neither podman nor docker is installed".into()),
+        warnings: vec![],
     });
     v
 }
@@ -537,6 +798,188 @@ pub fn contain_child(child: &tokio::process::Child) -> Option<win32job::Job> {
 mod seatbelt_tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+
+    /// SEC-14: Seatbelt starts from nothing; no Unix socket but in the
+    /// agent's own temp folder; no LaunchServices, Apple Events, pasteboard
+    /// or window server; `open` and `osascript` do not run.
+    #[test]
+    fn seatbelt_profile_denies_host_ipc() {
+        let t = tempfile::tempdir().unwrap();
+        let (worktree, tmp) = (t.path().join("w"), t.path().join("t.x"));
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::create_dir_all(&tmp).unwrap();
+        let policy = Policy {
+            worktree,
+            writable: vec![],
+            tmp: Some(tmp.clone()),
+            hidden: vec![],
+            read_only: vec![],
+            git_writable: vec![],
+            proxy_tcp: None,
+            proxy_unix: None,
+            helper: vec![],
+            container_image: None,
+        };
+        let p = seatbelt_profile(&policy, 4000);
+        assert!(p.starts_with("(version 1)\n(deny default)\n"), "{p}");
+        assert!(!p.contains("(allow default)"), "{p}");
+        assert!(!p.contains("(allow network-outbound (remote unix-socket))"), "{p}");
+        assert!(!p.contains("(allow mach-lookup)\n") && !p.contains("(allow network*") && !p.contains("lsopen"), "{p}");
+        for svc in ["launchservicesd", "lsd", "coreservicesd", "appleevents", "pasteboard", "windowserver"] {
+            assert!(!p.to_lowercase().contains(svc), "{svc} in\n{p}");
+        }
+        let deny_unix = p.find("(deny network-outbound (remote unix-socket))").unwrap();
+        let own = sb_regex_under(&tmp);
+        assert!(own.ends_with("t\\.x/"), "{own}");
+        let allow_own =
+            p.find(&format!("(allow network-outbound (remote unix-socket (path-regex #\"{own}\")))")).unwrap();
+        assert!(deny_unix < allow_own, "{p}");
+        assert!(p.contains("(allow network-outbound (remote ip \"localhost:4000\"))"), "{p}");
+        let exec = p.find("(allow process-exec*)").unwrap();
+        for prog in SEATBELT_DENIED_PROGRAMS {
+            assert!(p.find(&format!("(literal \"{prog}\")")).unwrap() > exec, "{p}");
+        }
+        // The command runs without the variables naming host IPC.
+        let w = wrap_inner(Mechanism::Seatbelt, &policy, "sh", &[]).unwrap();
+        let env = w.args.iter().position(|a| a == "/usr/bin/env").unwrap();
+        assert_eq!(w.args.last().map(String::as_str), Some("sh"));
+        for k in IPC_ENV {
+            assert!(w.args[env..].windows(2).any(|x| x[0] == "-u" && x[1] == *k), "{k}: {:?}", w.args);
+        }
+    }
+
+    /// SEC-14: bubblewrap empties `/run` and `/var/run` before binding the
+    /// agent's paths back, and gets its own IPC and UTS namespaces.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bubblewrap_empties_run_before_the_agents_paths() {
+        let t = tempfile::tempdir().unwrap();
+        let (policy, _) = git_policy(t.path());
+        let w = wrap_inner(Mechanism::Bubblewrap, &policy, "true", &[]).unwrap();
+        for flag in ["--unshare-ipc", "--unshare-uts", "--unshare-net"] {
+            assert!(w.args.iter().any(|a| a == flag), "{flag}: {:?}", w.args);
+        }
+        let run = w.args.windows(2).position(|x| x[0] == "--tmpfs" && x[1] == "/run").unwrap();
+        let wt = policy.worktree.to_string_lossy().into_owned();
+        let bind = w.args.windows(2).position(|x| x[0] == "--bind" && x[1] == wt).unwrap();
+        assert!(run < bind, "{:?}", w.args);
+    }
+
+    /// SEC-14: `/run` and `/var/run` are emptied wherever they point, each
+    /// real folder once; never the root or a folder holding the worktree,
+    /// whose sockets are hidden one by one instead.
+    #[cfg(unix)]
+    #[test]
+    fn run_folders_are_emptied_wherever_they_point() {
+        use std::os::unix::fs::symlink;
+        let fake = |run: Option<&str>, var_run: Option<&str>| {
+            let t = tempfile::tempdir().unwrap();
+            let root = t.path().canonicalize().unwrap();
+            for d in ["run", "var", "state/run", "srv/run", "nix/system", "home/ann/wt"] {
+                std::fs::create_dir_all(root.join(d)).unwrap();
+            }
+            for (lit, to) in [("run", run), ("var/run", var_run)] {
+                if let Some(to) = to {
+                    let _ = std::fs::remove_dir(root.join(lit));
+                    symlink(to, root.join(lit)).unwrap();
+                } else {
+                    std::fs::create_dir_all(root.join(lit)).unwrap();
+                }
+            }
+            (t, root)
+        };
+        let sock = |root: &Path| {
+            let p = root.join("var/run/docker.sock");
+            std::fs::write(&p, "").unwrap();
+            vec![p, root.join("run/podman/podman.sock")]
+        };
+
+        // `/var/run -> ../run`: one tmpfs, over the real `/run`.
+        let wt = |root: &Path| vec![root.join("home/ann/wt")];
+        let (_t, root) = fake(None, Some("../run"));
+        let run = run_tmpfs_in(&root, &wt(&root));
+        assert_eq!(run, [root.join("run")]);
+        assert!(ipc_to_hide(sock(&root), &run, None).is_empty());
+
+        // Both links to other folders: each real folder emptied, and its
+        // own links to folders outside recreated.
+        let (_t, root) = fake(Some("state/run"), Some("../srv/run"));
+        symlink("../../nix/system", root.join("state/run/current-system")).unwrap();
+        symlink("../run", root.join("srv/run/inside")).unwrap();
+        let run = run_tmpfs_in(&root, &wt(&root));
+        assert_eq!(run, [root.join("state/run"), root.join("srv/run")]);
+        assert!(ipc_to_hide(sock(&root), &run, None).is_empty());
+        let links = run_links_in(&run);
+        assert_eq!(links, [(PathBuf::from("../../nix/system"), root.join("state/run/current-system"))]);
+
+        // `/var/run -> ..` (the root itself): never emptied; the socket
+        // behind it is hidden at its real path.
+        let (_t, root) = fake(None, Some(".."));
+        let run = run_tmpfs_in(&root, &wt(&root));
+        assert_eq!(run, [root.join("run")]);
+        assert_eq!(ipc_to_hide(sock(&root), &run, None), [root.join("docker.sock")]);
+
+        // `/var/run -> ../home`, which holds the worktree: not emptied, so
+        // the socket in it is hidden on its own.
+        let (_t, root) = fake(None, Some("../home"));
+        let run = run_tmpfs_in(&root, &wt(&root));
+        assert_eq!(run, [root.join("run")]);
+        assert_eq!(ipc_to_hide(sock(&root), &run, None), [root.join("home/docker.sock")]);
+        // Without the worktree there it is emptied.
+        assert_eq!(run_tmpfs_in(&root, &[]), [root.join("run"), root.join("home")]);
+
+        // A writable path in the real `/run` does not keep it from being
+        // emptied (it is bound back afterwards).
+        let (_t, root) = fake(None, None);
+        let run = run_tmpfs_in(&root, &[root.join("run/user/1000/polyph")]);
+        assert_eq!(run, [root.join("run"), root.join("var/run")]);
+    }
+
+    /// Landlock without seccomp still starts agents, but says what is open.
+    #[test]
+    fn landlock_without_seccomp_is_reported() {
+        let a = landlock_availability(true, false);
+        assert!(a.available && a.warnings == [NO_SECCOMP], "{a:?}");
+        let a = landlock_availability(true, true);
+        assert!(a.available && a.warnings.is_empty() && a.detail.contains("seccomp blocks"), "{a:?}");
+        assert!(landlock_availability(false, false).warnings.is_empty());
+    }
+
+    #[test]
+    fn ipc_env_names_the_known_endpoints() {
+        for k in [
+            "DBUS_SESSION_BUS_ADDRESS",
+            "DBUS_SYSTEM_BUS_ADDRESS",
+            "DBUS_STARTER_ADDRESS",
+            "SSH_AUTH_SOCK",
+            "XAUTHORITY",
+            "PULSE_SERVER",
+            "PIPEWIRE_REMOTE",
+            "KRB5CCNAME",
+            "VSCODE_IPC_HOOK_CLI",
+            "KITTY_LISTEN_ON",
+            "WEZTERM_UNIX_SOCKET",
+            "NVIM",
+            "GNOME_KEYRING_CONTROL",
+            "NOTIFY_SOCKET",
+        ] {
+            assert!(IPC_ENV.contains(&k), "{k}");
+        }
+    }
+
+    #[test]
+    fn host_ipc_paths_cover_container_sockets() {
+        let env = |k: &str| match k {
+            "DOCKER_HOST" => Some("unix:///srv/d/docker.sock".to_string()),
+            "CONTAINER_HOST" => Some("ssh://host/run/podman.sock".to_string()),
+            _ => None,
+        };
+        let v = host_ipc_paths_in(Some(Path::new("/home/ann")), &env);
+        for p in ["/var/run/docker.sock", "/home/ann/.colima", "/home/ann/.orbstack", "/srv/d/docker.sock"] {
+            assert!(v.contains(&PathBuf::from(p)), "{p}: {v:?}");
+        }
+        assert!(!v.iter().any(|p| p.to_string_lossy().contains("podman.sock") && p.starts_with("/host")), "{v:?}");
+    }
 
     #[test]
     fn seatbelt_profile_allows_only_the_policys_folders() {
