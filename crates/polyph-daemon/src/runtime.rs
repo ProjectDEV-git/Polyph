@@ -739,6 +739,31 @@ async fn host_join_step(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, se
                     && p.kx.as_slice() == req.device.kx.as_slice()
                     && p.name_salt == req.name_salt
             });
+            // Back before the relay noticed the old connection die: the old
+            // session still holds the knock. Move the knock to this one
+            // rather than knocking twice.
+            let live = ctx
+                .joins
+                .iter()
+                .find(|(_, o)| {
+                    o.rendezvous == j.rendezvous
+                        && matches!(&o.stage, Some(HostStage::Knocked { knock, .. })
+                        if ctx.core.knocks.get(knock).is_some_and(|k| {
+                            k.device == dev
+                                && k.member == req.member
+                                && k.kx.as_slice() == req.device.kx.as_slice()
+                                && k.name_salt == req.name_salt
+                        }))
+                })
+                .map(|(s, _)| *s);
+            if let Some(old) = live
+                && let Some(HostJoin { stage: Some(HostStage::Knocked { knock, .. }), .. }) = ctx.joins.remove(&old)
+            {
+                send_reply(&mut ch, &sender, session, &JoinReply::Pending).await;
+                j.stage = Some(HostStage::Knocked { channel: ch, knock });
+                ctx.joins.insert(session, j);
+                return;
+            }
             if exact && let Some(p) = ctx.parked.remove(&dev) {
                 if let Some(reply) = &p.reply {
                     send_reply(&mut ch, &sender, session, reply).await;
@@ -864,6 +889,10 @@ async fn end_join(ctx: &mut RoomCtx, j: HostJoin, now: i64, counted: bool) {
 /// for a joiner whose knock no longer waits stays retired.
 async fn restore_code(ctx: &mut RoomCtx, r: RendezvousId, c: HostedCode) {
     if c.reserved_for.is_some_and(|d| !ctx.parked.contains_key(&d)) {
+        return;
+    }
+    // The relay refuses an expired code.
+    if c.expires_at <= ctx.core.last_now {
         return;
     }
     let (kind, expires_at) = (c.kind.clone(), c.expires_at);

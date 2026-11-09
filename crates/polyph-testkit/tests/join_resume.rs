@@ -241,3 +241,36 @@ async fn a_held_one_time_code_lets_only_its_exact_joiner_back() {
         other => panic!("expected approval, got {other:?}"),
     }
 }
+
+/// Bo reconnects before the relay notices his old connection is gone (a
+/// phone that switched networks): the same request moves his knock to the
+/// new connection instead of knocking twice, and the answer reaches him there.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_joiner_back_before_its_old_connection_closed_keeps_one_knock() {
+    let mut h = Harness::new().await.unwrap();
+    let (a, _b, rid) = hosted_room(&mut h).await;
+    let relay = h.relay.url();
+    let inv = h.nodes[a].call("room.invite", json!({ "room": rid, "reusable": true })).await.unwrap();
+    let code = inv["code"].as_str().unwrap().to_string();
+    let bo = DeviceIdentity::generate().unwrap();
+    let member = MemberId::random().unwrap();
+    let salt = [3u8; 16];
+
+    let mut old = RawJoin::start(&relay, &bo, &code, bo.public(), member, &salt).await;
+    assert_eq!(old.reply().await, Some(JoinReply::Pending));
+    let knock = h.nodes[a].wait_event("knock", |e| e.kind() == "knock").await.unwrap();
+    let kid = knock.event["knock"]["id"].as_str().unwrap().to_string();
+
+    let mut new = RawJoin::start(&relay, &bo, &code, bo.public(), member, &salt).await;
+    assert_eq!(new.reply().await, Some(JoinReply::Pending));
+    let listed = h.nodes[a].call("knock.list", json!({ "room": rid })).await.unwrap();
+    let ids: Vec<&str> = listed.as_array().unwrap().iter().filter_map(|k| k["id"].as_str()).collect();
+    assert_eq!(ids, vec![kid.as_str()], "one knock");
+
+    h.nodes[a].call("knock.decide", json!({ "room": rid, "knock": kid, "approve": true })).await.unwrap();
+    match new.reply().await {
+        Some(JoinReply::Approved(ap)) => assert_eq!(ap.room.to_hex(), rid),
+        other => panic!("expected approval on the new connection, got {other:?}"),
+    }
+    drop(old);
+}

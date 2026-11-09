@@ -349,6 +349,10 @@ A join waiting for approval outlives a dropped connection on either side:
   sealed to the knock's `kx`, so it is only of use to that device. The joiner
   keeps the same name salt across its attempts; a fresh `polyph join` makes a
   new salt and so a new request (refused through a held one-time code).
+- The same exact request arriving while the old session still holds the
+  knock (the relay has not yet noticed the old connection close) moves the
+  knock to the new session instead of knocking twice.
+- A held code is not hosted again once expired.
 - A knock nobody comes back for within 5 minutes is dropped, with any code
   held for it (`RevokeCode`).
 
