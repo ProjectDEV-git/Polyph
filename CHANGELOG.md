@@ -5,6 +5,16 @@ GitHub release page.
 
 ## Unreleased
 
+- **Join codes survive a restart.** The code `polyph start` and `polyph
+  room invite` print keeps working after the host's Polyph restarts (it
+  said "no room is waiting for this code" before). Pairing codes for your
+  own phone or agent host still end with a restart.
+- **A dropped connection no longer ends a join that is waiting for
+  approval.** The person joining reconnects on their own for up to three
+  minutes and picks up the same request, and an approval given while they
+  were disconnected still reaches them. Before, the join failed with "the
+  join was not approved in time" (or "the code did not match" on a phone),
+  and the request stayed on the host with nobody waiting.
 - **Task branches are `polyph/<task id>/<name>`** (they were
   `polyph/<name>-<task id>`), one folder per task, and a task agent can
   write only its own task's folder. Polyph gives an agent an existing

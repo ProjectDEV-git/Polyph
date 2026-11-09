@@ -167,3 +167,47 @@ async fn paired_phone_answers_its_owners_approval() {
     let t = p.call("agent.transcript", json!({ "room": rid, "agent": agent })).await.unwrap();
     assert!(!t["events"].as_array().unwrap().is_empty());
 }
+
+async fn connected(h: &Harness, rid: &str, want: bool) {
+    h.until("connection state", || async {
+        h.nodes[0].call("room.get", json!({ "room": rid })).await.unwrap()["connected"] == want
+    })
+    .await
+    .unwrap();
+}
+
+/// The host's connection drops while a phone waits for approval: the phone
+/// goes back for its knock and gets the answer Ann gave meanwhile.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_waiting_phone_gets_an_answer_given_while_the_host_was_away() {
+    let mut h = Harness::new().await.unwrap();
+    let a = h.add("Ann").await.unwrap();
+    let room = h.nodes[a].call("room.create", json!({ "name": "payments" })).await.unwrap();
+    let rid = room["id"].as_str().unwrap().to_string();
+    connected(&h, &rid, true).await;
+    let identity = Arc::new(DeviceIdentity::generate().unwrap());
+    let phone = Phone::new(identity, None, "Pim's phone", &h.relay.url()).unwrap();
+    let mut p = PhoneDriver::connect(phone, &h.relay.url(), h.clock.clone()).await.unwrap();
+    let inv = h.nodes[a].call("room.invite", json!({ "room": rid })).await.unwrap();
+    p.start_join(inv["code"].as_str().unwrap(), "Pim").await.unwrap();
+    let knock = h.nodes[a].wait_event("knock", |e| e.kind() == "knock").await.unwrap();
+    p.wait_event("join_pending", |_| true).await.unwrap();
+    let kid = knock.event["knock"]["id"].as_str().unwrap().to_string();
+
+    h.nodes[a].call("room.offline", json!({ "room": rid, "offline": true })).await.unwrap();
+    connected(&h, &rid, false).await;
+    h.nodes[a].call("knock.decide", json!({ "room": rid, "knock": kid, "approve": true })).await.unwrap();
+    h.nodes[a].call("room.offline", json!({ "room": rid, "offline": false })).await.unwrap();
+
+    // The phone waits between attempts on its own clock.
+    let clock = h.clock.clone();
+    let ticking = tokio::spawn(async move {
+        loop {
+            clock.advance(1);
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    });
+    let joined = p.wait_event("joined", |_| true).await.unwrap();
+    ticking.abort();
+    assert_eq!(joined["event"]["room"], rid.as_str());
+}

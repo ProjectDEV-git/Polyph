@@ -175,6 +175,12 @@ without TLS, content stays end-to-end encrypted; TLS protects metadata.
 - Device secret keys are stored in the OS keychain, or in a file encrypted
   with a key held in the keychain or, where none exists, derived from a local
   secret with owner-only permissions.
+- Live join codes a host made with `room.invite` (and `polyph start`) are
+  kept in `rooms/<room>.codes`, sealed with the same storage key as the room
+  file, so they keep working after a restart; expired codes are dropped from
+  it. Codes for another device of the host's own member (`phone.pair`,
+  `host.invite`) and one-time codes held for a reconnecting joiner (§7.5 of
+  `docs/protocol.md`) stay in memory only.
 - Logs never contain message content, code, keys or tokens.
 
 ### Agents
