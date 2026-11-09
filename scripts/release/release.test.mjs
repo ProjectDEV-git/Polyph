@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { notesFor } from "./notes.mjs";
-import { msiVersion, normalize } from "./version.mjs";
+import { lockFile, msiVersion, normalize } from "./version.mjs";
 
 test("any common way of writing a version becomes major.minor.patch", () => {
   const cases = {
@@ -66,4 +66,36 @@ test("without a section the notes are the Unreleased ones, then a plain line", (
     text: "Polyph 0.2.0.",
     from: null,
   });
+});
+
+const LOCK = `version = 4
+
+[[package]]
+name = "anyhow"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "polyph-cli"
+version = "0.1.2"
+dependencies = [
+ "anyhow",
+]
+
+[[package]]
+name = "polyph-core"
+version = "0.1.2"
+`;
+
+test("the workspace's own crates in a lock file get the version, on either line ending", () => {
+  for (const eol of ["\n", "\r\n"]) {
+    const text = LOCK.replace(/\n/g, eol);
+    const l = lockFile("Cargo.lock");
+    assert.equal(l.get(text), "0.1.2");
+    const out = l.set(text, "0.1.3");
+    assert.equal(l.get(out), "0.1.3");
+    assert.match(out, /name = "anyhow"\r?\nversion = "1.0.0"/, "registry crates stay");
+    assert.equal(out.split("\r\n").length > 1, eol === "\r\n", "line endings kept");
+    assert.equal(out.replace(/0\.1\.3/g, "0.1.2"), text, "nothing else changes");
+  }
 });
