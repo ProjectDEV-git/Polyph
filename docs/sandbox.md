@@ -46,6 +46,17 @@ agents doctor` shows the mechanism in use.
   Polyph's own data directory (it holds the device keys), `~/.ssh`, `~/.aws`,
   `~/.gnupg`, `~/.config/gcloud`, `~/.azure`, `~/.kube`, `~/.docker`,
   `~/.netrc`, `~/.git-credentials`.
+- **No host IPC.** Agents do not reach your session bus, `systemd --user`,
+  keyring, gpg or ssh agents, display servers (X11, Wayland), window
+  managers or container engines (`docker.sock`, Podman). The variables
+  naming them (`DBUS_SESSION_BUS_ADDRESS`, `DBUS_SYSTEM_BUS_ADDRESS`,
+  `XDG_RUNTIME_DIR`, `SSH_AUTH_SOCK`, `GPG_AGENT_INFO`, `DISPLAY`,
+  `WAYLAND_DISPLAY`, `SWAYSOCK`, `I3SOCK`, `TMUX`, `DOCKER_HOST`,
+  `CONTAINER_HOST`, `NOTIFY_SOCKET`, `WSL_INTEROP`) are removed under
+  bubblewrap, Landlock and Seatbelt. How each mechanism does it, and what
+  it still allows, is under "Host IPC" below. So an agent cannot push
+  with your ssh-agent, sign with gpg, run `docker`, or open apps; Polyph
+  pushes and merges for it.
 - **Network only through Polyph's proxy.** `HTTP(S)_PROXY` and `ALL_PROXY`
   point at it and `NO_PROXY` is empty, so even local services go through it.
   Allowlisted hosts (the agent's model API, package registries, GitHub, plus
@@ -56,8 +67,8 @@ agents doctor` shows the mechanism in use.
 
 | Platform | Mechanism | Files | Network |
 |---|---|---|---|
-| Linux (preferred) | bubblewrap: read-only root bind, writable binds for the paths above, tmpfs over hidden paths and `/tmp`, new PID, session and network namespaces | enforced | the agent's network namespace has only loopback; a helper inside it listens on `127.0.0.1:3128` and forwards to the proxy's Unix socket |
-| Linux (no bubblewrap) | Landlock, applied by a helper that then runs the agent | writes limited to the paths above; hidden paths are **not** hidden (Landlock can only allow) | TCP connects allowed only to the proxy's port (kernel 6.7+, Landlock ABI 4) |
+| Linux (preferred) | bubblewrap: read-only root bind, writable binds for the paths above, tmpfs over hidden paths, `/tmp`, `/run` and `/var/run`, new PID, IPC, UTS, session and network namespaces | enforced | the agent's network namespace has only loopback; a helper inside it listens on `127.0.0.1:3128` and forwards to the proxy's Unix socket |
+| Linux (no bubblewrap) | Landlock and a seccomp filter against Unix sockets, applied by a helper that then runs the agent | writes limited to the paths above; hidden paths are **not** hidden (Landlock can only allow) | TCP connects allowed only to the proxy's port (kernel 6.7+, Landlock ABI 4) |
 | macOS | Seatbelt profile run with `sandbox-exec` | writes only to the worktree, writable paths and the agent's own TMPDIR (not the shared `/private/tmp` or `/private/var/folders`); hidden paths denied for reading | outbound only to the proxy's port on localhost |
 | Windows | low integrity level, applied by a helper that then runs the agent, inside a job object (the agent and its children die with the helper) | writes only to the worktree, writable paths and the agent's own TMPDIR (labelled low integrity); hidden paths are **not** hidden | proxy variables only; a program that ignores them is not stopped |
 | Any (opt-in) | rootless Podman or Docker, `[sandbox] mode = "container"` with an image | only the worktree is mounted | `--network none` plus the proxy helper |
@@ -73,6 +84,70 @@ the user profile need those folders in their `writable` list. Claims,
 approvals, the filesystem watcher and review apply as everywhere. Container
 mode is the strong option on Windows; AppContainer support is listed in
 `STUBS.md`.
+
+### Host IPC
+
+A read-only mount does not stop a program connecting to a Unix socket, so
+each mechanism handles IPC separately (SEC-14):
+
+- **bubblewrap**: `/run` and `/var/run` are empty, at the real folder
+  each one points to when it is a link (that is where
+  `/run/user/<uid>` with the session bus, `systemd --user`, keyring and
+  gpg sockets lives, and the system `docker.sock`); links in `/run` to
+  folders outside it, such as NixOS's `/run/current-system`, are kept.
+  If `/var/run` points at `/` or at a folder holding a writable path, that
+  folder is not emptied and the container sockets in it are hidden one by
+  one instead. The helper marks every inherited file descriptor above 2
+  close-on-exec before it starts the agent.
+  `/tmp` was already empty (X11 and ssh-agent sockets). Container sockets
+  elsewhere are hidden: `~/.docker`, `~/.colima`, `~/.rd`, `~/.lima`,
+  `~/.orbstack`, Podman machine sockets, `/mnt/wslg`, and whatever
+  `DOCKER_HOST` or `CONTAINER_HOST` names. The agent has its own IPC, UTS
+  and network namespaces; the last one also separates abstract sockets.
+  Still allowed: a Unix socket in any other readable place (for example
+  the Nix daemon's socket under `/nix/var`).
+- **Landlock**: a seccomp filter refuses creating Unix sockets
+  (`socket(AF_UNIX)`), socket pairs of any type but stream and seqpacket
+  (a datagram pair, or a raw one, which Linux turns into a datagram pair,
+  can `sendto` any datagram socket by path, such as journald's) and
+  `io_uring`. Inherited file descriptors above 2 are closed before the
+  agent starts. Seccomp
+  cannot see where a socket connects, so this refuses all Unix sockets,
+  the agent's own included. Connected stream pairs (`socketpair`, which
+  Node, Python and shells use for pipes) and seqpacket pairs still work. On Linux 6.12 and
+  later (Landlock ABI 6) Landlock also refuses abstract sockets and
+  signals outside the sandbox. What breaks there: tools that open a Unix
+  socket of their own (Python `multiprocessing` managers, test servers on
+  a socket path, `git credential-cache`, the fsmonitor daemon), user
+  lookups through `sssd` or `nscd`, and 32-bit programs, which are ended.
+  Install bubblewrap to avoid all of this. Without seccomp (an
+  architecture other than x86_64, aarch64 or riscv64) agents still start,
+  the helper says so on stderr, `polyph agents doctor` and `polyph
+  sandbox test` say what is left open, and Unix sockets stay reachable. Still allowed everywhere in this mode: UDP and
+  other non-TCP traffic (see `STUBS.md`), and reading hidden paths.
+- **Seatbelt**: the profile starts from `(deny default)`. Allowed: running
+  programs (not `/usr/bin/open`, `osascript` or `osacompile`), reading
+  everything but hidden paths, the write and hard-link rules above,
+  `sysctl` reads, reading preferences, POSIX semaphores and shared memory,
+  signals to its own processes, ioctls except on terminals, TCP to the
+  proxy, listening on localhost, Unix sockets only in its own temp folder,
+  and Mach lookups only to directory services, logging, notifications,
+  `cfprefsd`, TLS trust (`SecurityServer`, `trustd`, `ocspd`), network
+  settings (`configd`), `networkd`, FSEvents and power management. Not on
+  the list: LaunchServices (so a copy of `open` fails too), Apple Events,
+  the pasteboard and the window server. DNS lookups do not work inside;
+  names resolve through the proxy. The keychain is not closed off:
+  `com.apple.SecurityServer` is on the list (for TLS), and tools Apple
+  trusts for a keychain item, such as `security`, `git
+  credential-osxkeychain` and `docker-credential-osxkeychain`, return
+  stored GitHub, git and Docker tokens to the agent without a prompt.
+  This stays open until a follow-up change (see `STUBS.md`). The profile is tested
+  only on the macOS CI runner; if a tool you rely on fails under it, the
+  denial is in Console (`sandboxd`), and the Mach service list is
+  `SEATBELT_MACH_SERVICES` in `crates/polyph-sandbox/src/lib.rs`.
+- **Windows** (low integrity) and **container mode** are unchanged:
+  named pipes and COM servers are not covered on Windows; a container
+  mounts only the worktree and the proxy socket.
 
 If no mechanism works, agents do not start. To run agents without a sandbox
 anyway (for example inside a disposable VM), set `[sandbox] mode = "off"` in

@@ -1395,6 +1395,9 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                         mechanism = s["mechanism"].as_str().unwrap_or_default(),
                         detail = s["detail"].as_str().unwrap_or_default()
                     ));
+                    for w in s["warnings"].as_array().into_iter().flatten().filter_map(|w| w.as_str()) {
+                        ctx.out(format!("  {}", l.t(w)));
+                    }
                 }
             }
         }
@@ -1411,6 +1414,9 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                         mechanism = m["mechanism"].as_str().unwrap_or_default(),
                         detail = m["detail"].as_str().unwrap_or_default()
                     ));
+                    for w in m["warnings"].as_array().into_iter().flatten().filter_map(|w| w.as_str()) {
+                        ctx.out(format!("  {}", l.t(w)));
+                    }
                     for c in m["checks"].as_array().into_iter().flatten() {
                         any = true;
                         let mark = if c["passed"] == true { l.t("sandbox-pass") } else { l.t("sandbox-fail") };

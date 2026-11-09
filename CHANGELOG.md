@@ -5,6 +5,35 @@ GitHub release page.
 
 ## Unreleased
 
+- **Agents no longer reach your session's IPC** (SEC-14): the D-Bus
+  session bus, `systemd --user`, keyring, gpg and ssh agents, X11 and
+  Wayland, and `docker.sock` or Podman sockets. Under bubblewrap `/run`
+  and `/var/run` are empty inside the sandbox, wherever they point; in
+  Landlock mode a seccomp filter refuses Unix sockets; on macOS the
+  Seatbelt profile now starts from `(deny default)`, runs no `open`,
+  `osascript` or `osacompile`, and allows only a short list of system
+  services. Agents start without `DBUS_SESSION_BUS_ADDRESS`,
+  `XDG_RUNTIME_DIR`, `SSH_AUTH_SOCK`, `GPG_AGENT_INFO`, `DISPLAY`,
+  `WAYLAND_DISPLAY`, `XAUTHORITY`, `PULSE_SERVER`, `PIPEWIRE_REMOTE`,
+  `KRB5CCNAME`, `DOCKER_HOST`, `VSCODE_IPC_HOOK_CLI`, `KITTY_LISTEN_ON`,
+  `WEZTERM_UNIX_SOCKET`, `NVIM` and similar variables, and under
+  bubblewrap and Landlock without file descriptors inherited from the
+  daemon. What this breaks: an agent that pushed over ssh with your
+  ssh-agent, signed commits with gpg, or ran `docker` must leave that to
+  Polyph or to you (Polyph pushes and merges for it). In Landlock mode
+  (Linux without bubblewrap) more breaks, because seccomp cannot tell one
+  Unix socket from another: anything that opens a Unix socket of its own
+  (Python `multiprocessing` managers, test servers on a socket path,
+  `git credential-cache`, the git fsmonitor daemon), user and group
+  lookups through `sssd` or `nscd`, datagram and raw socket pairs, and
+  32-bit programs, which are ended. The fix for all of these is to
+  install bubblewrap, which Polyph then uses instead. Where Landlock runs
+  without the seccomp filter, agents still start, and `polyph agents
+  doctor` and `polyph sandbox test` say what that leaves open. On macOS,
+  DNS works only through the proxy, and a tool that needs a system
+  service not on the list fails; `polyph sandbox test` has a new check
+  for host IPC. See "Host IPC" in `docs/sandbox.md`.
+
 - **Task branches are `polyph/<task id>/<name>`** (they were
   `polyph/<name>-<task id>`), one folder per task, and a task agent can
   write only its own task's folder. Polyph gives an agent an existing
