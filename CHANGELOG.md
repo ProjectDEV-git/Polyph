@@ -5,6 +5,8 @@ GitHub release page.
 
 ## Unreleased
 
+## 0.1.3
+
 - **Join codes survive a restart.** The code `polyph start` and `polyph
   room invite` print keeps working after the host's Polyph restarts (it
   said "no room is waiting for this code" before). Pairing codes for your
