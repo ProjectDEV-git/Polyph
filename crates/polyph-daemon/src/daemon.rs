@@ -16,14 +16,14 @@ use polyph_proto::ids::{MemberId, ObjectId, RoomId};
 use polyph_proto::join::{JoinReply, JoinRequest};
 use polyph_proto::joincode::JoinCode;
 use polyph_proto::messages::{ApprovalScope, Decision, DocName, Surface};
-use polyph_proto::pake::{PakeRole, PakeStart};
+use polyph_proto::pake::{PakeRole, PakeStart, SecureChannel};
 use polyph_proto::relay_wire::{ClientFrame, CodeKind, ErrorCode, RelayFrame, end_room_message};
 use polyph_proto::status::{StatusApproval, StatusSnapshot};
 use polyph_relay::client::{RelayClient, TlsMode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, broadcast};
-use tracing::info;
+use tracing::{debug, info};
 use zeroize::Zeroizing;
 
 use crate::clock::Clock;
@@ -405,6 +405,7 @@ impl Daemon {
                             let relay = RelayAddr::parse(core.relay.as_deref().unwrap_or(&shared.config.lock().relay));
                             let id = core.id;
                             let rt = RoomRuntime::new(shared.with_clock(core), relay);
+                            crate::runtime::load_codes(&mut *rt.ctx.lock().await, &shared, shared.clock.now());
                             d.rooms.lock().await.insert(id, rt.clone());
                             if open_list.contains(&id.to_hex()) {
                                 rt.start(shared.clone());
@@ -719,6 +720,7 @@ impl Daemon {
                 self.close_room(&rt).await;
                 self.rooms.lock().await.remove(&rt.id);
                 let _ = std::fs::remove_file(self.shared.paths.room_file(&rt.id.to_hex()));
+                let _ = std::fs::remove_file(self.shared.paths.room_codes_file(&rt.id.to_hex()));
                 ok(json!({}))
             }
             "room.end" => {
@@ -750,6 +752,7 @@ impl Daemon {
                 self.close_room(&rt).await;
                 self.rooms.lock().await.remove(&rt.id);
                 let _ = std::fs::remove_file(self.shared.paths.room_file(&rt.id.to_hex()));
+                let _ = std::fs::remove_file(self.shared.paths.room_codes_file(&rt.id.to_hex()));
                 ok(json!({ "exported": exported }))
             }
             "room.invite" => {
@@ -2227,95 +2230,151 @@ impl Daemon {
         timeout_secs: u64,
         caps: &[String],
     ) -> ApiResult {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
+        // The same salt on every attempt: a reconnect takes back the knock
+        // the first attempt made, and the name commitment in it.
+        let salt = ObjectId::random().map_err(|e| ApiError::Failed(e.to_string()))?.0;
+        // Set once a request reached the room; until the reconnect window
+        // closes, a lost connection is retried, not reported.
+        let mut dropped_at: Option<tokio::time::Instant> = None;
+        let mut backoff = JOIN_RETRY_FIRST;
+        loop {
+            match self.join_attempt(code, name, addr, lan, caps, &salt).await {
+                Ok(mut a) => {
+                    backoff = JOIN_RETRY_FIRST;
+                    loop {
+                        let left = deadline.saturating_duration_since(tokio::time::Instant::now()).as_secs();
+                        let Some(data) = recv_pake(&mut a.client, a.session, left).await else { break };
+                        let reply: JoinReply =
+                            from_cbor(&a.channel.open(&data).map_err(|e| ApiError::Failed(e.to_string()))?)
+                                .map_err(|e| ApiError::Failed(e.to_string()))?;
+                        match reply {
+                            JoinReply::Pending => {
+                                self.shared.emit(ApiEvent::global("join_pending", json!({ "code": code.first_half() })))
+                            }
+                            JoinReply::Denied { reason } => {
+                                return Err(ApiError::Forbidden(format!("the room declined the request: {reason}")));
+                            }
+                            JoinReply::Approved(ap) => {
+                                let now = self.shared.clock.now();
+                                let mut core = RoomCore::from_join(self.shared.identity.clone(), &ap, name, salt, now)?;
+                                core.surface = self.shared.opts.surface;
+                                let relay = match ap.relay.as_deref() {
+                                    Some(r) => RelayAddr::parse(r),
+                                    None => RelayAddr {
+                                        url: addr.url.clone(),
+                                        pin: if lan { a.recorded } else { addr.pin },
+                                    },
+                                };
+                                core.relay = Some(relay.to_string_with_pin());
+                                drop(a);
+                                let rt = self.add_and_open(core, relay).await;
+                                info!(room = %rt.id.short(), "joined room");
+                                return ok(self.info(&rt).await);
+                            }
+                        }
+                    }
+                    // Waits are counted in whole seconds.
+                    if tokio::time::Instant::now() + Duration::from_secs(1) >= deadline {
+                        return Err(ApiError::Failed("the join was not approved in time".into()));
+                    }
+                    // The relay ended the session: this side's connection or
+                    // the host's dropped. The host keeps the knock for a while.
+                    info!("join connection lost while waiting for approval; reconnecting");
+                    dropped_at = Some(tokio::time::Instant::now());
+                }
+                Err(Attempt::Retry(e)) if dropped_at.is_some() => {
+                    debug!(error = ?e, "join reconnect failed; trying again");
+                }
+                Err(Attempt::Retry(e) | Attempt::Fail(e)) => return Err(e),
+            }
+            let now = tokio::time::Instant::now();
+            let window = dropped_at.map(|t| t + Duration::from_secs(JOIN_RECONNECT_SECS)).unwrap_or(now);
+            let until = window.min(deadline);
+            if now >= until {
+                return Err(ApiError::Failed(
+                    "lost the connection to the room while waiting for approval; run the same join again".into(),
+                ));
+            }
+            tokio::time::sleep(backoff.min(until - now)).await;
+            backoff = (backoff * 2).min(JOIN_RETRY_MAX);
+        }
+    }
+
+    /// One pass through the join handshake: proves the code and sends the
+    /// join request. Errors a reconnect may get past are `Attempt::Retry`.
+    async fn join_attempt(
+        &self,
+        code: &JoinCode,
+        name: &str,
+        addr: &RelayAddr,
+        lan: bool,
+        caps: &[String],
+        salt: &[u8; 16],
+    ) -> Result<JoinSession, Attempt> {
+        let retry = |e: String| Attempt::Retry(ApiError::Failed(e));
         let seen = Arc::new(std::sync::Mutex::new(None));
         let mode = if lan && addr.pin.is_none() { TlsMode::Record(seen.clone()) } else { addr.tls() };
         let mut client = RelayClient::connect_with(&addr.url, &self.shared.identity, mode)
             .await
-            .map_err(|e| ApiError::Failed(e.to_string()))?;
+            .map_err(|e| retry(e.to_string()))?;
         let recorded = seen.lock().ok().and_then(|g| *g).or(addr.pin);
         let binding = if lan { recorded.map(|f| f.to_vec()).unwrap_or_default() } else { vec![] };
-        client
-            .send(ClientFrame::JoinCode { rendezvous: code.rendezvous() })
-            .await
-            .map_err(|e| ApiError::Failed(e.to_string()))?;
+        client.send(ClientFrame::JoinCode { rendezvous: code.rendezvous() }).await.map_err(|e| retry(e.to_string()))?;
         let session = loop {
             match client.recv_timeout(Duration::from_secs(15)).await {
                 Some(RelayFrame::JoinStarted { session }) => break session,
                 Some(RelayFrame::Error { code: c, detail }) => {
                     return Err(match c {
-                        ErrorCode::CodeUnknown => ApiError::NotFound(
+                        // The host may be reconnecting and hosting it again.
+                        ErrorCode::CodeUnknown => Attempt::Retry(ApiError::NotFound(
                             "no room is waiting for this code; it may have expired or been used".into(),
-                        ),
-                        ErrorCode::CodeLocked => {
-                            ApiError::Forbidden("this code is locked for 10 minutes after failed attempts".into())
-                        }
-                        ErrorCode::RateLimited => {
-                            ApiError::Failed("too many join attempts from this network; wait a few minutes".into())
-                        }
-                        _ => ApiError::Failed(detail),
+                        )),
+                        ErrorCode::CodeLocked => Attempt::Fail(ApiError::Forbidden(
+                            "this code is locked for 10 minutes after failed attempts".into(),
+                        )),
+                        ErrorCode::RateLimited => Attempt::Fail(ApiError::Failed(
+                            "too many join attempts from this network; wait a few minutes".into(),
+                        )),
+                        _ => Attempt::Fail(ApiError::Failed(detail)),
                     });
                 }
                 Some(_) => continue,
-                None => return Err(ApiError::Failed("the relay did not answer".into())),
+                None => return Err(retry("the relay did not answer".into())),
             }
         };
         let pake = PakeStart::new(code, PakeRole::Joiner, &binding);
         client
             .send(ClientFrame::Pake { session, data: pake.message().to_vec() })
             .await
-            .map_err(|e| ApiError::Failed(e.to_string()))?;
+            .map_err(|e| retry(e.to_string()))?;
         let wrong = || ApiError::Forbidden("the code did not match; check it and try again".into());
-        let host_msg = recv_pake(&mut client, session, 30).await.ok_or_else(wrong)?;
-        let fin = pake.finish(&host_msg).map_err(|_| wrong())?;
+        // A session that ends here is a wrong code on a first attempt, or a
+        // host that dropped again during a reconnect: `join_via` tells them apart.
+        let ended = || Attempt::Retry(wrong());
+        let host_msg = recv_pake(&mut client, session, 30).await.ok_or_else(ended)?;
+        let fin = pake.finish(&host_msg).map_err(|_| Attempt::Fail(wrong()))?;
         client
             .send(ClientFrame::Pake { session, data: fin.confirmation().to_vec() })
             .await
-            .map_err(|e| ApiError::Failed(e.to_string()))?;
-        let host_tag = recv_pake(&mut client, session, 30).await.ok_or_else(wrong)?;
-        let mut channel = fin.verify_peer(&host_tag).map_err(|_| wrong())?;
-        let salt = ObjectId::random().map_err(|e| ApiError::Failed(e.to_string()))?.0;
+            .map_err(|e| retry(e.to_string()))?;
+        let host_tag = recv_pake(&mut client, session, 30).await.ok_or_else(ended)?;
+        let mut channel = fin.verify_peer(&host_tag).map_err(|_| Attempt::Fail(wrong()))?;
         let req = JoinRequest {
             device: self.shared.identity.public(),
-            member: self.shared.member_id()?,
+            member: self.shared.member_id().map_err(|e| Attempt::Fail(ApiError::Failed(e.to_string())))?,
             display_name: name.to_string(),
             name_salt: salt.to_vec(),
             surface: format!("{:?}", self.shared.opts.surface).to_lowercase(),
             link_device: false,
             capabilities: caps.to_vec(),
         };
-        let body = channel
-            .seal(&to_cbor(&req).map_err(|e| ApiError::Failed(e.to_string()))?)
-            .map_err(|e| ApiError::Failed(e.to_string()))?;
-        client.send(ClientFrame::Pake { session, data: body }).await.map_err(|e| ApiError::Failed(e.to_string()))?;
-        loop {
-            let data = recv_pake(&mut client, session, timeout_secs)
-                .await
-                .ok_or_else(|| ApiError::Failed("the join was not approved in time".into()))?;
-            let reply: JoinReply = from_cbor(&channel.open(&data).map_err(|e| ApiError::Failed(e.to_string()))?)
-                .map_err(|e| ApiError::Failed(e.to_string()))?;
-            match reply {
-                JoinReply::Pending => {
-                    self.shared.emit(ApiEvent::global("join_pending", json!({ "code": code.first_half() })))
-                }
-                JoinReply::Denied { reason } => {
-                    return Err(ApiError::Forbidden(format!("the room declined the request: {reason}")));
-                }
-                JoinReply::Approved(a) => {
-                    let now = self.shared.clock.now();
-                    let mut core = RoomCore::from_join(self.shared.identity.clone(), &a, name, salt, now)?;
-                    core.surface = self.shared.opts.surface;
-                    let relay = match a.relay.as_deref() {
-                        Some(r) => RelayAddr::parse(r),
-                        None => RelayAddr { url: addr.url.clone(), pin: if lan { recorded } else { addr.pin } },
-                    };
-                    core.relay = Some(relay.to_string_with_pin());
-                    drop(client);
-                    let rt = self.add_and_open(core, relay).await;
-                    info!(room = %rt.id.short(), "joined room");
-                    return ok(self.info(&rt).await);
-                }
-            }
-        }
+        let body = to_cbor(&req)
+            .map_err(|e| e.to_string())
+            .and_then(|b| channel.seal(&b).map_err(|e| e.to_string()))
+            .map_err(|e| Attempt::Fail(ApiError::Failed(e)))?;
+        client.send(ClientFrame::Pake { session, data: body }).await.map_err(|e| retry(e.to_string()))?;
+        Ok(JoinSession { client, channel, session, recorded })
     }
 
     /// Stops all rooms, saving state and uploading snapshots.
@@ -2336,6 +2395,7 @@ impl Daemon {
                 apply(&rt, &mut c, &self.shared, fx).await;
             }
             let _ = self.shared.save_room(&mut c.core);
+            crate::runtime::save_codes(&mut c, &self.shared, now);
             drop(c);
             rt.stop();
         }
@@ -2353,6 +2413,31 @@ struct JoinParams {
     /// Device capabilities to ask for (`agent-host` for an agent server).
     #[serde(default)]
     capabilities: Vec<String>,
+}
+
+/// How long a joiner keeps reconnecting after its connection dropped while
+/// waiting for approval. Shorter than the host keeps the knock
+/// (`runtime::PARK_SECS`).
+pub const JOIN_RECONNECT_SECS: u64 = 180;
+/// Waits between reconnect attempts, doubling. Every attempt counts against
+/// the relay's per-address join limit (20 per 10 minutes), so a window spends
+/// about 9 of them.
+const JOIN_RETRY_FIRST: Duration = Duration::from_secs(2);
+const JOIN_RETRY_MAX: Duration = Duration::from_secs(30);
+
+/// A join request that reached the room, waiting for the answer.
+struct JoinSession {
+    client: RelayClient,
+    channel: SecureChannel,
+    session: u64,
+    recorded: Option<[u8; 32]>,
+}
+
+/// Why a join attempt stopped: worth reconnecting for, or final.
+#[derive(Debug)]
+enum Attempt {
+    Retry(ApiError),
+    Fail(ApiError),
 }
 
 async fn recv_pake(client: &mut RelayClient, session: u64, secs: u64) -> Option<Vec<u8>> {

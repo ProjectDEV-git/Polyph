@@ -127,13 +127,43 @@ enum JoinStage {
     Host(PakeStart),
     Tag(PakeFinished),
     Reply(SecureChannel),
+    /// The connection or the join session dropped after the request reached
+    /// the room: start over with the same code when the relay is open.
+    Retry,
 }
+
+/// How long a phone keeps reconnecting after its join dropped while waiting
+/// for approval (as the daemon does; the host keeps the knock longer).
+const JOIN_RECONNECT_SECS: i64 = 180;
+/// Waits between reconnect attempts, doubling to 30 seconds: each attempt
+/// counts against the relay's per-address join limit (20 per 10 minutes).
+const JOIN_RETRY_FIRST: i64 = 2;
+const JOIN_RETRY_MAX: i64 = 30;
+const LOST_WHILE_WAITING: &str = "lost the connection to the room while waiting for approval; join again";
 
 struct Join {
     code: JoinCode,
+    /// The same on every attempt, so a reconnect takes back the first knock.
     salt: [u8; 16],
     session: u64,
     stage: Option<JoinStage>,
+    /// The join request reached the room at least once.
+    sent: bool,
+    /// When the join first dropped since the last answer from the room.
+    dropped_at: Option<i64>,
+    /// Not before this time, for the next attempt.
+    retry_at: i64,
+    /// The wait before the attempt after next.
+    backoff: i64,
+}
+
+impl Join {
+    /// Waits, then tries again once the relay is open (see [`JoinStage::Retry`]).
+    fn retry_later(&mut self, now: i64) {
+        self.stage = Some(JoinStage::Retry);
+        self.retry_at = now + self.backoff;
+        self.backoff = (self.backoff * 2).min(JOIN_RETRY_MAX);
+    }
 }
 
 /// The joined room and what the phone keeps beside the engine.
@@ -266,14 +296,23 @@ impl Phone {
         out
     }
 
-    /// The WebSocket closed. A join in progress fails; the room keeps
+    /// The WebSocket closed. A join waiting for approval reconnects (see
+    /// [`Phone::tick`]); one that had not got that far fails. The room keeps
     /// queueing messages until the next connection.
     pub fn disconnected(&mut self) -> Output {
         let mut out = Output::default();
         let was_open = self.conn == Conn::Open;
         self.conn = Conn::Closed;
-        if self.join.take().is_some() {
-            out.global("join_failed", json!({ "message": "the connection to the relay closed during the join" }));
+        match self.join.take() {
+            Some(mut j) if j.sent => {
+                // The relay is closed: the attempt waits for it to reopen.
+                j.stage = Some(JoinStage::Retry);
+                self.join = Some(j);
+            }
+            Some(_) => {
+                out.global("join_failed", json!({ "message": "the connection to the relay closed during the join" }));
+            }
+            None => {}
         }
         if let Some(r) = &mut self.room {
             r.subscribed = false;
@@ -301,7 +340,16 @@ impl Phone {
         let salt = ObjectId::random()?.0;
         let mut out = Output::default();
         out.frame(&ClientFrame::JoinCode { rendezvous: code.rendezvous() });
-        self.join = Some(Join { code, salt, session: 0, stage: Some(JoinStage::Started) });
+        self.join = Some(Join {
+            code,
+            salt,
+            session: 0,
+            stage: Some(JoinStage::Started),
+            sent: false,
+            dropped_at: None,
+            retry_at: 0,
+            backoff: JOIN_RETRY_FIRST,
+        });
         Ok(out)
     }
 
@@ -428,6 +476,11 @@ impl Phone {
         let fail = |out: &mut Output, msg: &str| out.global("join_failed", json!({ "message": msg }));
         let wrong = "the code did not match; check it and try again";
         match (j.stage.take(), f) {
+            // Waiting for its host to come back, which hosts the code again.
+            (Some(JoinStage::Started), RelayFrame::Error { code: ErrorCode::CodeUnknown, .. }) if j.sent => {
+                j.retry_later(now);
+                self.join = Some(j);
+            }
             (_, RelayFrame::Error { code, detail }) => {
                 let msg = match code {
                     ErrorCode::CodeUnknown => {
@@ -440,6 +493,12 @@ impl Phone {
                     _ => detail,
                 };
                 fail(out, &msg);
+            }
+            // The host's connection dropped (or this one's session ended):
+            // the host keeps the knock, so go back for it.
+            (_, RelayFrame::PakeEnded { session, .. }) if session == j.session && j.sent => {
+                j.retry_later(now);
+                self.join = Some(j);
             }
             (_, RelayFrame::PakeEnded { session, .. }) if session == j.session => fail(out, wrong),
             (Some(JoinStage::Started), RelayFrame::JoinStarted { session }) => {
@@ -473,6 +532,7 @@ impl Phone {
                 match to_cbor(&req).map_err(PhoneError::from).and_then(|b| Ok(channel.seal(&b)?)) {
                     Ok(body) => {
                         out.frame(&ClientFrame::Pake { session, data: body });
+                        j.sent = true;
                         j.stage = Some(JoinStage::Reply(channel));
                         self.join = Some(j);
                     }
@@ -484,6 +544,8 @@ impl Phone {
                     channel.open(&data).map_err(PhoneError::from).and_then(|pt| Ok(from_cbor::<JoinReply>(&pt)?));
                 match reply {
                     Ok(JoinReply::Pending) => {
+                        j.dropped_at = None;
+                        j.backoff = JOIN_RETRY_FIRST;
                         out.global("join_pending", json!({ "code": j.code.first_half() }));
                         j.stage = Some(JoinStage::Reply(channel));
                         self.join = Some(j);
@@ -526,10 +588,29 @@ impl Phone {
         }
     }
 
+    /// Starts a dropped join again once the relay is open, or gives up after
+    /// [`JOIN_RECONNECT_SECS`].
+    fn retry_join(&mut self, open: bool, now: i64, out: &mut Output) {
+        let Some(j) = &mut self.join else { return };
+        if !matches!(j.stage, Some(JoinStage::Retry)) {
+            return;
+        }
+        let since = *j.dropped_at.get_or_insert(now);
+        if now - since >= JOIN_RECONNECT_SECS {
+            self.join = None;
+            out.global("join_failed", json!({ "message": LOST_WHILE_WAITING }));
+        } else if open && now >= j.retry_at {
+            out.frame(&ClientFrame::JoinCode { rendezvous: j.code.rendezvous() });
+            j.session = 0;
+            j.stage = Some(JoinStage::Started);
+        }
+    }
+
     /// Heartbeats, election, escalation and the voice hue.
     pub fn tick(&mut self, now: i64) -> Output {
         let mut out = Output::default();
         let open = self.conn == Conn::Open;
+        self.retry_join(open, now, &mut out);
         let Some(r) = &mut self.room else { return out };
         let hue_pending = r.core.my_profile.hue == polyph_core::room::NO_HUE;
         if now - r.last_tick >= TICK_SECS || now < r.last_tick || hue_pending {

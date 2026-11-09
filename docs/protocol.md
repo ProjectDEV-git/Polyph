@@ -324,6 +324,34 @@ Enforced by the relay, and independently by the host daemon:
 - A second device cannot host a rendezvous id already in use (`CodeInUse`);
   the daemon generates a new code.
 
+### 7.5 Lost connections while waiting, and restarts
+
+A join waiting for approval outlives a dropped connection on either side:
+
+- When the session ends after the joiner sent its `JoinRequest` (the relay
+  sends `PakeEnded`, or the host's own connection drops), the host keeps the
+  knock for 5 minutes, keyed by the joiner's device. A one-time code that join
+  used up is hosted again, held for that device: anyone else who proves it
+  gets `JoinReply::Denied` ("this code was already used") and the code stays
+  held. The relay's `CodeClosed::Used` for a held code is ignored; the host
+  retires it.
+- The joiner reconnects with the same code (daemon and phone alike), waiting
+  2, 4, 8, 16, then 30 seconds between attempts, for up to 3 minutes. While
+  the host is away the relay answers `CodeUnknown`, which counts as a retry
+  only once a request has reached the room. Each attempt is a join attempt
+  for the per-IP limit above.
+- A new request whose code, member id and device keys (`sign` and `kx`) match
+  the waiting knock takes it back: the host answers `Pending`, or the answer
+  given meanwhile. `Approved` carries the epoch key sealed to the knock's
+  `kx`, so it is only of use to that device. The joiner keeps the same name
+  salt across attempts, matching the knock.
+- A knock nobody comes back for within 5 minutes is dropped, with any code
+  held for it (`RevokeCode`).
+
+The host daemon also keeps its live `room.invite` codes on disk (sealed, see
+`docs/security.md`) and hosts them again when it starts, so a reusable code
+from `polyph start` survives a restart. Own-device codes do not.
+
 ## 8. Relay protocol
 
 WebSocket at `/ws`, binary frames, CBOR `ClientFrame` / `RelayFrame`

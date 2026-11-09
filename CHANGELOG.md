@@ -5,6 +5,16 @@ GitHub release page.
 
 ## Unreleased
 
+- **Join codes survive a restart.** The code `polyph start` and `polyph
+  room invite` print keeps working after the host's Polyph restarts (it
+  said "no room is waiting for this code" before). Pairing codes for your
+  own phone or agent host still end with a restart.
+- **A dropped connection no longer ends a join that is waiting for
+  approval.** The person joining reconnects on their own for up to three
+  minutes and picks up the same request, and an approval given while they
+  were disconnected still reaches them. Before, the join failed with "the
+  join was not approved in time" (or "the code did not match" on a phone),
+  and the request stayed on the host with nobody waiting.
 - **Agents no longer reach your session's IPC** (SEC-14): the D-Bus
   session bus, `systemd --user`, keyring, gpg and ssh agents, X11 and
   Wayland, and `docker.sock` or Podman sockets. Under bubblewrap `/run`

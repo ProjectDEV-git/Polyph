@@ -8,7 +8,7 @@ use std::time::Duration;
 use polyph_core::{Effect, RoomCore, RoomEvent};
 use polyph_proto::cert::Role;
 use polyph_proto::codec::{from_cbor, to_cbor};
-use polyph_proto::ids::{MemberId, ObjectId, RendezvousId, RoomId};
+use polyph_proto::ids::{DeviceId, MemberId, ObjectId, RendezvousId, RoomId};
 use polyph_proto::join::{JoinReply, JoinRequest};
 use polyph_proto::joincode::JoinCode;
 use polyph_proto::messages::{Claim, Knock, RoomMessage};
@@ -28,6 +28,10 @@ const OUTBOX_MAX: usize = 2000;
 /// mirroring the relay's own limit.
 const HOST_MAX_FAILURES: u32 = 5;
 const SNAPSHOT_EVERY: i64 = 300;
+/// How long a knock waits for its joiner to come back after the connection
+/// dropped mid-wait. The joiner retries for less than this (see
+/// `daemon::JOIN_RECONNECT_SECS`).
+pub const PARK_SECS: i64 = 300;
 /// Transcript events kept in memory per agent.
 pub const TRANSCRIPT_KEEP: usize = 5000;
 
@@ -76,6 +80,9 @@ pub struct HostedCode {
     /// Made by `phone.pair` or `host.invite` for another device of this member:
     /// a knock through it may claim this member id. Kept in memory only.
     pub own_device: Option<MemberId>,
+    /// A used one-time code hosted again for the one device whose join lost
+    /// its connection while waiting. Nobody else may knock through it.
+    pub reserved_for: Option<DeviceId>,
 }
 
 enum HostStage {
@@ -90,6 +97,23 @@ struct HostJoin {
     stage: Option<HostStage>,
     /// The code's own-device member when the joiner arrived.
     own_device: Option<MemberId>,
+    /// The device the code was held for when the joiner arrived.
+    reserved_for: Option<DeviceId>,
+    /// The code this join used up, kept so it can be hosted again for this
+    /// joiner if the connection drops before the knock is answered.
+    retired: Option<HostedCode>,
+}
+
+/// A knock whose joiner lost the connection while waiting for an answer. The
+/// joiner reconnects, proves the code again and, with the same member id and
+/// device keys, takes the knock back. An answer given meanwhile waits here.
+struct Parked {
+    knock: ObjectId,
+    member: MemberId,
+    kx: Vec<u8>,
+    rendezvous: RendezvousId,
+    since: i64,
+    reply: Option<JoinReply>,
 }
 
 /// Resolves with (granted, denied) when the acting host answers a claim request.
@@ -108,6 +132,10 @@ pub struct RoomCtx {
     pub binding: Vec<u8>,
     pub codes: HashMap<RendezvousId, HostedCode>,
     joins: HashMap<u64, HostJoin>,
+    /// Knocks waiting for their joiner to reconnect, by joiner device.
+    parked: HashMap<DeviceId, Parked>,
+    /// The codes as last written to disk, to write again only on change.
+    saved_codes: Option<Vec<SavedCode>>,
     outbox: VecDeque<Vec<u8>>,
     /// Claim requests an agent is waiting on, by request id: the agent and
     /// where to send the answer.
@@ -174,6 +202,8 @@ impl RoomRuntime {
                 binding: vec![],
                 codes: HashMap::new(),
                 joins: HashMap::new(),
+                parked: HashMap::new(),
+                saved_codes: None,
                 outbox: VecDeque::new(),
                 claim_waiters: HashMap::new(),
                 coord: Default::default(),
@@ -340,7 +370,13 @@ async fn finish_knocked_join(ctx: &mut RoomCtx, knock: ObjectId, reply: &JoinRep
         .iter()
         .find(|(_, j)| matches!(&j.stage, Some(HostStage::Knocked { knock: k, .. }) if *k == knock))
         .map(|(s, _)| *s);
-    let Some(session) = session else { return };
+    let Some(session) = session else {
+        // The joiner is reconnecting: the answer waits for it.
+        if let Some(p) = ctx.parked.values_mut().find(|p| p.knock == knock) {
+            p.reply = Some(reply.clone());
+        }
+        return;
+    };
     let Some(mut j) = ctx.joins.remove(&session) else { return };
     if let Some(HostStage::Knocked { mut channel, .. }) = j.stage.take() {
         let Ok(body) = to_cbor(reply) else { return };
@@ -409,6 +445,13 @@ async fn connection_loop(rt: Arc<RoomRuntime>, shared: Arc<Shared>) {
             let mut c = rt.ctx.lock().await;
             c.sender = None;
             c.connected = false;
+            // The relay ended every join on this connection. Knocks keep
+            // waiting for their joiners, who reconnect.
+            let now = shared.clock.now();
+            let joins: Vec<HostJoin> = c.joins.drain().map(|(_, j)| j).collect();
+            for j in joins {
+                end_join(&mut c, j, now, false).await;
+            }
         }
         shared.emit(ApiEvent::room_kind(&rt.id, "connection", serde_json::json!({ "connected": false })));
     }
@@ -462,6 +505,8 @@ async fn tick_loop(rt: Arc<RoomRuntime>, shared: Arc<Shared>) {
                 apply(&rt, &mut ctx, &shared, fx).await;
             }
         }
+        expire_parked(&rt, &mut ctx, &shared, now).await;
+        save_codes(&mut ctx, &shared, now);
         if ctx.connected && (ctx.dirty && now - ctx.last_snapshot >= SNAPSHOT_EVERY) {
             upload_snapshot(&mut ctx, now).await;
         }
@@ -564,6 +609,14 @@ async fn handle_frame(rt: &RoomRuntime, shared: &Shared, f: RelayFrame) {
             if matches!(reason, CodeClosed::HostLeft) {
                 return;
             }
+            // A code held for a reconnecting joiner was put back after the
+            // relay counted the use that retired it; this host decides when
+            // it goes (it retires used codes itself, see `code_verified`).
+            if matches!(reason, CodeClosed::Used)
+                && ctx.codes.get(&rendezvous).is_some_and(|c| c.reserved_for.is_some())
+            {
+                return;
+            }
             if let Some(c) = ctx.codes.remove(&rendezvous) {
                 shared.emit(ApiEvent::room_kind(
                     &rt.id,
@@ -584,20 +637,8 @@ async fn handle_frame(rt: &RoomRuntime, shared: &Shared, f: RelayFrame) {
         RelayFrame::JoinerArrived { rendezvous, session } => host_join_start(&mut ctx, rendezvous, session).await,
         RelayFrame::Pake { session, data } => host_join_step(rt, &mut ctx, shared, session, data, now).await,
         RelayFrame::PakeEnded { session, .. } => {
-            // A join that ends before the joiner proved the code is a failed
-            // attempt here too, whatever the relay counts.
             let Some(j) = ctx.joins.remove(&session) else { return };
-            match j.stage {
-                Some(HostStage::AwaitPake(_) | HostStage::AwaitConfirm(_)) => {
-                    if let Some(c) = ctx.codes.get_mut(&j.rendezvous) {
-                        c.failures += 1;
-                    }
-                }
-                // The joiner left while waiting: its knock can no longer
-                // complete, so it goes with any own-device mark.
-                Some(HostStage::Knocked { knock, .. }) => ctx.core.drop_knock(&knock),
-                _ => {}
-            }
+            end_join(&mut ctx, j, now, true).await;
         }
         RelayFrame::Error { code, detail } => {
             debug!(?code, "relay error");
@@ -622,7 +663,11 @@ async fn host_join_start(ctx: &mut RoomCtx, rendezvous: RendezvousId, session: u
     let own_device = code.own_device;
     let p = PakeStart::new(&code.code, PakeRole::Host, &ctx.binding);
     let msg = p.message().to_vec();
-    ctx.joins.insert(session, HostJoin { rendezvous, stage: Some(HostStage::AwaitPake(p)), own_device });
+    let reserved_for = code.reserved_for;
+    ctx.joins.insert(
+        session,
+        HostJoin { rendezvous, stage: Some(HostStage::AwaitPake(p)), own_device, reserved_for, retired: None },
+    );
     if let Some(s) = &ctx.sender {
         let _ = s.send(ClientFrame::Pake { session, data: msg }).await;
     }
@@ -657,11 +702,14 @@ async fn host_join_step(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, se
                 let _ = sender.send(ClientFrame::Pake { session, data: tag.to_vec() }).await;
                 let _ = sender.send(ClientFrame::PakeResult { session, ok: true }).await;
                 if let Some(c) = code_verified(ctx, j.rendezvous) {
-                    shared.emit(ApiEvent::room_kind(
-                        &rt.id,
-                        "code_closed",
-                        serde_json::json!({ "code": c.code.to_string(), "reason": "used" }),
-                    ));
+                    if c.reserved_for.is_none() {
+                        shared.emit(ApiEvent::room_kind(
+                            &rt.id,
+                            "code_closed",
+                            serde_json::json!({ "code": c.code.to_string(), "reason": "used" }),
+                        ));
+                    }
+                    j.retired = Some(c);
                 }
                 j.stage = Some(HostStage::AwaitRequest(ch));
                 ctx.joins.insert(session, j);
@@ -674,6 +722,38 @@ async fn host_join_step(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, se
         Some(HostStage::AwaitRequest(mut ch)) => {
             let Ok(pt) = ch.open(&data) else { return };
             let Ok(req) = from_cbor::<JoinRequest>(&pt) else { return };
+            let dev = req.device.sign;
+            // The same joiner back after its connection dropped: the same
+            // code, member id and device keys take the waiting knock back.
+            if let Some(p) = ctx.parked.remove(&dev) {
+                let same = p.rendezvous == j.rendezvous
+                    && p.member == req.member
+                    && p.kx.as_slice() == req.device.kx.as_slice();
+                if same && let Some(reply) = &p.reply {
+                    send_reply(&mut ch, &sender, session, reply).await;
+                    return;
+                }
+                if same && ctx.core.knocks.contains_key(&p.knock) {
+                    send_reply(&mut ch, &sender, session, &JoinReply::Pending).await;
+                    j.stage = Some(HostStage::Knocked { channel: ch, knock: p.knock });
+                    ctx.joins.insert(session, j);
+                    return;
+                }
+                // Another code or other keys: this is a new request, and the
+                // old knock will never be taken back.
+                if p.reply.is_none() {
+                    ctx.core.drop_knock(&p.knock);
+                }
+            }
+            // A used one-time code hosted again for one reconnecting joiner.
+            if j.reserved_for.is_some_and(|r| r != dev) {
+                let denied = JoinReply::Denied { reason: "this code was already used".into() };
+                send_reply(&mut ch, &sender, session, &denied).await;
+                if let Some(c) = j.retired.take() {
+                    restore_code(ctx, j.rendezvous, c).await;
+                }
+                return;
+            }
             let knock = Knock {
                 id: ObjectId::random().unwrap_or(ObjectId([0; 16])),
                 display_name: req.display_name.chars().take(64).collect(),
@@ -710,10 +790,8 @@ async fn host_join_step(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, se
                 }
             } else if let Some(HostJoin { stage: Some(HostStage::Knocked { channel, .. }), .. }) =
                 ctx.joins.get_mut(&session)
-                && let (Ok(body), Some(s)) = (to_cbor(&JoinReply::Pending), &ctx.sender)
-                && let Ok(ct) = channel.seal(&body)
             {
-                let _ = s.send(ClientFrame::Pake { session, data: ct }).await;
+                send_reply(channel, &sender, session, &JoinReply::Pending).await;
             }
         }
         Some(HostStage::Knocked { channel, knock }) => {
@@ -723,6 +801,170 @@ async fn host_join_step(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, se
         }
         None => {}
     }
+}
+
+/// Seals a join reply to the joiner on this session.
+async fn send_reply(channel: &mut SecureChannel, sender: &RelaySender, session: u64, reply: &JoinReply) {
+    if let Ok(body) = to_cbor(reply)
+        && let Ok(ct) = channel.seal(&body)
+    {
+        let _ = sender.send(ClientFrame::Pake { session, data: ct }).await;
+    }
+}
+
+/// Ends a join whose relay session is gone (`PakeEnded`, or this host's
+/// connection dropped). Before the joiner proved the code it is a failed
+/// attempt when `counted`. After, a code it used up goes back up, and a knock
+/// waits for the joiner to reconnect (see [`Parked`]).
+async fn end_join(ctx: &mut RoomCtx, j: HostJoin, now: i64, counted: bool) {
+    match j.stage {
+        Some(HostStage::AwaitPake(_) | HostStage::AwaitConfirm(_)) => {
+            if counted && let Some(c) = ctx.codes.get_mut(&j.rendezvous) {
+                c.failures += 1;
+            }
+        }
+        // The joiner proved the code but never asked to join: still unused.
+        Some(HostStage::AwaitRequest(_)) => {
+            if let Some(c) = j.retired {
+                restore_code(ctx, j.rendezvous, c).await;
+            }
+        }
+        Some(HostStage::Knocked { knock, .. }) => {
+            // Already answered (and removed) means there is nothing to wait for.
+            let Some(k) = ctx.core.knocks.get(&knock).cloned() else { return };
+            if let Some(mut c) = j.retired {
+                c.reserved_for = Some(k.device);
+                restore_code(ctx, j.rendezvous, c).await;
+            }
+            ctx.parked.insert(
+                k.device,
+                Parked { knock, member: k.member, kx: k.kx, rendezvous: j.rendezvous, since: now, reply: None },
+            );
+        }
+        None => {}
+    }
+}
+
+/// Holds a code again and hosts it now, or on the next connect.
+async fn restore_code(ctx: &mut RoomCtx, r: RendezvousId, c: HostedCode) {
+    let (kind, expires_at) = (c.kind.clone(), c.expires_at);
+    ctx.codes.insert(r, c);
+    if let (Some(s), true) = (&ctx.sender, ctx.connected) {
+        let _ = s.send(ClientFrame::HostCode { rendezvous: r, kind, expires_at }).await;
+    }
+}
+
+/// Forgets knocks whose joiner did not come back within [`PARK_SECS`], with
+/// any code held for that joiner.
+async fn expire_parked(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, now: i64) {
+    let gone: Vec<DeviceId> = ctx.parked.iter().filter(|(_, p)| now - p.since >= PARK_SECS).map(|(d, _)| *d).collect();
+    for d in gone {
+        let Some(p) = ctx.parked.remove(&d) else { continue };
+        if p.reply.is_none() && ctx.core.knocks.contains_key(&p.knock) {
+            ctx.core.drop_knock(&p.knock);
+            // Local only: tells this device's apps the knock is gone.
+            shared.emit(ApiEvent::room(&rt.id, &RoomEvent::KnockDecided { id: p.knock, approved: false }));
+        }
+        let held: Vec<RendezvousId> =
+            ctx.codes.iter().filter(|(_, c)| c.reserved_for == Some(d)).map(|(r, _)| *r).collect();
+        for r in held {
+            ctx.codes.remove(&r);
+            if let (Some(s), true) = (&ctx.sender, ctx.connected) {
+                let _ = s.send(ClientFrame::RevokeCode { rendezvous: r }).await;
+            }
+        }
+    }
+}
+
+/// A join code as saved on disk, sealed with the storage key, so codes such
+/// as the one `polyph start` prints keep working after a restart. Codes for
+/// another device of this member (SEC-3) and codes held for one reconnecting
+/// joiner stay in memory only.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct SavedCode {
+    code: String,
+    kind: CodeKind,
+    expires_at: i64,
+    failures: u32,
+    uses: u32,
+}
+
+fn codes_to_save(ctx: &RoomCtx, now: i64) -> Vec<SavedCode> {
+    let mut v: Vec<SavedCode> = ctx
+        .codes
+        .values()
+        .filter(|c| c.own_device.is_none() && c.reserved_for.is_none() && c.expires_at > now)
+        .map(|c| SavedCode {
+            code: c.code.to_string(),
+            kind: c.kind.clone(),
+            expires_at: c.expires_at,
+            failures: c.failures,
+            uses: c.uses,
+        })
+        .collect();
+    v.sort_by(|a, b| a.code.cmp(&b.code));
+    v
+}
+
+fn codes_aad(hex: &str) -> Vec<u8> {
+    format!("{hex}.codes").into_bytes()
+}
+
+/// Writes the room's join codes when they changed since the last write
+/// (removing the file once none is left).
+pub fn save_codes(ctx: &mut RoomCtx, shared: &Shared, now: i64) {
+    let list = codes_to_save(ctx, now);
+    if ctx.saved_codes.as_ref() == Some(&list) {
+        return;
+    }
+    let hex = ctx.core.id.to_hex();
+    let path = shared.paths.room_codes_file(&hex);
+    let written = if list.is_empty() {
+        match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+            _ => Ok(()),
+        }
+    } else {
+        to_cbor(&list)
+            .map(zeroize::Zeroizing::new)
+            .map_err(anyhow::Error::from)
+            .and_then(|b| shared.key.seal(&codes_aad(&hex), &b))
+            .and_then(|sealed| Ok(crate::paths::write_private(&path, &sealed)?))
+    };
+    match written {
+        Ok(()) => ctx.saved_codes = Some(list),
+        Err(e) => warn!(error = %e, "saving join codes failed"),
+    }
+}
+
+/// Loads the room's saved join codes that have not expired; the connection
+/// hosts them on the relay as it does every live code.
+pub fn load_codes(ctx: &mut RoomCtx, shared: &Shared, now: i64) {
+    let hex = ctx.core.id.to_hex();
+    let Ok(data) = std::fs::read(shared.paths.room_codes_file(&hex)) else { return };
+    let list: Vec<SavedCode> = match shared.key.open(&codes_aad(&hex), &data).and_then(|pt| Ok(from_cbor(&pt)?)) {
+        Ok(l) => l,
+        Err(e) => {
+            warn!(room = %ctx.core.id.short(), error = %e, "could not read saved join codes");
+            return;
+        }
+    };
+    for s in list.iter().filter(|s| s.expires_at > now) {
+        let Ok(code) = JoinCode::parse(&s.code) else { continue };
+        ctx.codes.insert(
+            code.rendezvous(),
+            HostedCode {
+                code,
+                kind: s.kind.clone(),
+                expires_at: s.expires_at,
+                failures: s.failures,
+                uses: s.uses,
+                own_device: None,
+                reserved_for: None,
+            },
+        );
+    }
+    ctx.saved_codes = Some(list);
 }
 
 /// Codes to host again after (re)connecting: the live ones this host still holds.
@@ -759,8 +1001,18 @@ pub async fn host_code(
     let code = JoinCode::generate()?;
     let r = code.rendezvous();
     let own_device = own_device.then_some(ctx.core.my_member);
-    ctx.codes
-        .insert(r, HostedCode { code: code.clone(), kind: kind.clone(), expires_at, failures: 0, uses: 0, own_device });
+    ctx.codes.insert(
+        r,
+        HostedCode {
+            code: code.clone(),
+            kind: kind.clone(),
+            expires_at,
+            failures: 0,
+            uses: 0,
+            own_device,
+            reserved_for: None,
+        },
+    );
     let mut waiter = None;
     if let (Some(s), true) = (&ctx.sender, ctx.connected) {
         let (tx, rx) = oneshot::channel();

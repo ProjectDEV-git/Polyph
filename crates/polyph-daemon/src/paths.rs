@@ -34,6 +34,10 @@ impl Paths {
     pub fn room_file(&self, room_hex: &str) -> PathBuf {
         self.rooms().join(format!("{room_hex}.room"))
     }
+    /// The room's live join codes, sealed with the storage key.
+    pub fn room_codes_file(&self, room_hex: &str) -> PathBuf {
+        self.rooms().join(format!("{room_hex}.codes"))
+    }
     pub fn config(&self) -> PathBuf {
         self.home.join("config.toml")
     }
