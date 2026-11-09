@@ -105,12 +105,14 @@ struct HostJoin {
 }
 
 /// A knock whose joiner lost the connection while waiting for an answer. The
-/// joiner reconnects, proves the code again and, with the same member id and
-/// device keys, takes the knock back. An answer given meanwhile waits here.
+/// joiner reconnects, proves the code again and, with exactly the same
+/// request (member id, device keys and name salt), takes the knock back. An
+/// answer given meanwhile waits here.
 struct Parked {
     knock: ObjectId,
     member: MemberId,
     kx: Vec<u8>,
+    name_salt: Vec<u8>,
     rendezvous: RendezvousId,
     since: i64,
     reply: Option<JoinReply>,
@@ -710,6 +712,9 @@ async fn host_join_step(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, se
                         ));
                     }
                     j.retired = Some(c);
+                    // Off the disk now, not at the next tick: a used code
+                    // must not come back after a crash.
+                    save_codes(ctx, shared, now);
                 }
                 j.stage = Some(HostStage::AwaitRequest(ch));
                 ctx.joins.insert(session, j);
@@ -723,30 +728,32 @@ async fn host_join_step(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, se
             let Ok(pt) = ch.open(&data) else { return };
             let Ok(req) = from_cbor::<JoinRequest>(&pt) else { return };
             let dev = req.device.sign;
-            // The same joiner back after its connection dropped: the same
-            // code, member id and device keys take the waiting knock back.
-            if let Some(p) = ctx.parked.remove(&dev) {
-                let same = p.rendezvous == j.rendezvous
+            // The same joiner back after its connection dropped takes the
+            // waiting knock back. Device ids are public, so only exactly the
+            // same request does (code, member id, both device keys, name
+            // salt); anything else leaves the waiting knock alone. The answer
+            // is sealed to the knock's `kx`, of use only to its device.
+            let exact = ctx.parked.get(&dev).is_some_and(|p| {
+                p.rendezvous == j.rendezvous
                     && p.member == req.member
-                    && p.kx.as_slice() == req.device.kx.as_slice();
-                if same && let Some(reply) = &p.reply {
+                    && p.kx.as_slice() == req.device.kx.as_slice()
+                    && p.name_salt == req.name_salt
+            });
+            if exact && let Some(p) = ctx.parked.remove(&dev) {
+                if let Some(reply) = &p.reply {
                     send_reply(&mut ch, &sender, session, reply).await;
                     return;
                 }
-                if same && ctx.core.knocks.contains_key(&p.knock) {
+                if ctx.core.knocks.contains_key(&p.knock) {
                     send_reply(&mut ch, &sender, session, &JoinReply::Pending).await;
                     j.stage = Some(HostStage::Knocked { channel: ch, knock: p.knock });
                     ctx.joins.insert(session, j);
                     return;
                 }
-                // Another code or other keys: this is a new request, and the
-                // old knock will never be taken back.
-                if p.reply.is_none() {
-                    ctx.core.drop_knock(&p.knock);
-                }
             }
-            // A used one-time code hosted again for one reconnecting joiner.
-            if j.reserved_for.is_some_and(|r| r != dev) {
+            // A used code hosted again for one reconnecting joiner never
+            // starts a new knock: only that exact re-attach above uses it.
+            if j.reserved_for.is_some() {
                 let denied = JoinReply::Denied { reason: "this code was already used".into() };
                 send_reply(&mut ch, &sender, session, &denied).await;
                 if let Some(c) = j.retired.take() {
@@ -832,21 +839,33 @@ async fn end_join(ctx: &mut RoomCtx, j: HostJoin, now: i64, counted: bool) {
         Some(HostStage::Knocked { knock, .. }) => {
             // Already answered (and removed) means there is nothing to wait for.
             let Some(k) = ctx.core.knocks.get(&knock).cloned() else { return };
+            ctx.parked.insert(
+                k.device,
+                Parked {
+                    knock,
+                    member: k.member,
+                    kx: k.kx,
+                    name_salt: k.name_salt,
+                    rendezvous: j.rendezvous,
+                    since: now,
+                    reply: None,
+                },
+            );
             if let Some(mut c) = j.retired {
                 c.reserved_for = Some(k.device);
                 restore_code(ctx, j.rendezvous, c).await;
             }
-            ctx.parked.insert(
-                k.device,
-                Parked { knock, member: k.member, kx: k.kx, rendezvous: j.rendezvous, since: now, reply: None },
-            );
         }
         None => {}
     }
 }
 
-/// Holds a code again and hosts it now, or on the next connect.
+/// Holds a code again and hosts it now, or on the next connect. A code held
+/// for a joiner whose knock no longer waits stays retired.
 async fn restore_code(ctx: &mut RoomCtx, r: RendezvousId, c: HostedCode) {
+    if c.reserved_for.is_some_and(|d| !ctx.parked.contains_key(&d)) {
+        return;
+    }
     let (kind, expires_at) = (c.kind.clone(), c.expires_at);
     ctx.codes.insert(r, c);
     if let (Some(s), true) = (&ctx.sender, ctx.connected) {

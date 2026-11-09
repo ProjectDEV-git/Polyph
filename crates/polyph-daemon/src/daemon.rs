@@ -811,6 +811,9 @@ impl Daemon {
                 let code = JoinCode::parse(&p.code).map_err(|e| ApiError::BadRequest(e.to_string()))?;
                 let mut c = rt.ctx.lock().await;
                 c.codes.remove(&code.rendezvous());
+                // At once: a closed room has no tick to save it, and a
+                // revoked code must not come back after a crash.
+                crate::runtime::save_codes(&mut c, &self.shared, now);
                 if let Some(s) = &c.sender {
                     let _ = s.send(ClientFrame::RevokeCode { rendezvous: code.rendezvous() }).await;
                 }
@@ -2193,6 +2196,7 @@ impl Daemon {
                     return Err(ApiError::Forbidden("viewers cannot invite people".into()));
                 }
                 let (code, waiter) = host_code(&mut c, kind.clone(), now + ttl, own_device).await?;
+                crate::runtime::save_codes(&mut c, &self.shared, now);
                 // Browsers reach internet relays only, not a LAN relay with its own certificate.
                 let relay = c.relay.pin.is_none().then(|| c.relay.url.clone());
                 (code, waiter, c.lan.as_ref().map(|l| l.addr.to_string_with_pin()), relay)
@@ -2293,7 +2297,7 @@ impl Daemon {
             let until = window.min(deadline);
             if now >= until {
                 return Err(ApiError::Failed(
-                    "lost the connection to the room while waiting for approval; run the same join again".into(),
+                    "lost the connection to the room while waiting for approval; join again, or ask for a new code if this one was for one use".into(),
                 ));
             }
             tokio::time::sleep(backoff.min(until - now)).await;

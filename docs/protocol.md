@@ -331,20 +331,24 @@ A join waiting for approval outlives a dropped connection on either side:
 - When the session ends after the joiner sent its `JoinRequest` (the relay
   sends `PakeEnded`, or the host's own connection drops), the host keeps the
   knock for 5 minutes, keyed by the joiner's device. A one-time code that join
-  used up is hosted again, held for that device: anyone else who proves it
-  gets `JoinReply::Denied` ("this code was already used") and the code stays
-  held. The relay's `CodeClosed::Used` for a held code is ignored; the host
-  retires it.
+  used up is hosted again, held for that request: any request through it that
+  does not take the knock back (below) gets `JoinReply::Denied` ("this code
+  was already used"), starts no knock, and the code stays held. The relay's
+  `CodeClosed::Used` for a held code is ignored; the host retires it. A held
+  code whose knock no longer waits is not hosted again.
 - The joiner reconnects with the same code (daemon and phone alike), waiting
   2, 4, 8, 16, then 30 seconds between attempts, for up to 3 minutes. While
   the host is away the relay answers `CodeUnknown`, which counts as a retry
   only once a request has reached the room. Each attempt is a join attempt
   for the per-IP limit above.
-- A new request whose code, member id and device keys (`sign` and `kx`) match
-  the waiting knock takes it back: the host answers `Pending`, or the answer
-  given meanwhile. `Approved` carries the epoch key sealed to the knock's
-  `kx`, so it is only of use to that device. The joiner keeps the same name
-  salt across attempts, matching the knock.
+- Only exactly the same request takes the waiting knock back: the same code,
+  member id, device keys (`sign` and `kx`) and name salt. Device ids are
+  public, so a request that only names the joiner's device id is a different
+  request; it neither takes nor drops the waiting knock. The host answers
+  `Pending`, or the answer given meanwhile; `Approved` carries the epoch key
+  sealed to the knock's `kx`, so it is only of use to that device. The joiner
+  keeps the same name salt across its attempts; a fresh `polyph join` makes a
+  new salt and so a new request (refused through a held one-time code).
 - A knock nobody comes back for within 5 minutes is dropped, with any code
   held for it (`RevokeCode`).
 

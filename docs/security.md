@@ -180,7 +180,11 @@ without TLS, content stays end-to-end encrypted; TLS protects metadata.
   file, so they keep working after a restart; expired codes are dropped from
   it. Codes for another device of the host's own member (`phone.pair`,
   `host.invite`) and one-time codes held for a reconnecting joiner (§7.5 of
-  `docs/protocol.md`) stay in memory only.
+  `docs/protocol.md`) stay in memory only. A held one-time code admits only
+  the original request again, with the same device keys, member id and name
+  salt; naming the joiner's (public) device id is not enough. Codes are
+  written as they are made, used or revoked, so a revoked code does not come
+  back after a crash.
 - Logs never contain message content, code, keys or tokens.
 
 ### Agents
