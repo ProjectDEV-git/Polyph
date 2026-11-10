@@ -192,6 +192,17 @@ impl AgentProcess {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        #[cfg(unix)]
+        {
+            // SAFETY: setsid(2) only changes session/process-group state for the child.
+            #[allow(unsafe_code)]
+            unsafe {
+                cmd.pre_exec(|| {
+                    libc::setsid();
+                    Ok(())
+                });
+            }
+        }
         let mut child =
             cmd.spawn().map_err(|e| StartError::Spawn { program: spawn.program.clone(), reason: e.to_string() })?;
         let (Some(stdin), Some(stdout), Some(mut stderr)) =

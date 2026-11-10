@@ -82,6 +82,19 @@ fn close_inherited_fds() {
 #[cfg(not(unix))]
 fn close_inherited_fds() {}
 
+
+
+/// Detach from the controlling terminal so an agent cannot inject input
+/// (TIOCSTI) into the person's session (SEC-14/KAO-106).
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn detach_session() {
+    // SAFETY: setsid(2) has no preconditions that Rust can violate here.
+    unsafe { libc::setsid() };
+}
+
+#[cfg(not(unix))]
+fn detach_session() {}
 fn run_child(cmd: &[String]) -> i32 {
     let Some(prog) = cmd.first() else {
         eprintln!("no command given");
@@ -163,6 +176,11 @@ fn forward(args: Vec<String>) -> i32 {
             });
         }
     });
+    detach_session();
+    if let Err(e) = apply_seccomp() {
+        eprintln!("sandbox: {e}; refusing to run without the seccomp filter");
+        return BLOCKED;
+    }
     run_child(&cmd)
 }
 
@@ -204,15 +222,16 @@ fn apply_landlock(writable: &[String], proxy_port: Option<u16>) -> Result<bool, 
     Ok(!matches!(status.ruleset, RulesetStatus::NotEnforced))
 }
 
-/// A seccomp filter for Landlock mode (SEC-14), which cannot otherwise
-/// keep an agent from host IPC: `socket(AF_UNIX)` and `socketpair(AF_UNIX)`
-/// of any type but `SOCK_STREAM` and `SOCK_SEQPACKET` fail with `EACCES`, and `io_uring_setup` (which can
-/// create sockets without `socket`) with `ENOSYS`. Seccomp cannot read the
-/// address a socket connects to, so this refuses every Unix socket, not
-/// only those outside: connected stream and seqpacket pairs (`socketpair`,
-/// which pipes between processes use) still work, and nothing an agent needs from
-/// Polyph uses Unix sockets in this mode (the proxy is a TCP port). Other
-/// architectures' system calls (32-bit `int 0x80`) end the process.
+/// A seccomp filter for sandboxed modes (SEC-14/KAO-106). It keeps an agent
+/// from host IPC and terminal injection: `socket(AF_UNIX)` and
+/// `socketpair(AF_UNIX)` of any type but `SOCK_STREAM` and `SOCK_SEQPACKET`
+/// fail with `EACCES`, `io_uring_setup` (which can create sockets without
+/// `socket`) with `ENOSYS`, and `ioctl` requests `TIOCSTI`/`TIOCLINUX` fail
+/// with `EPERM`. Seccomp cannot read the address a socket connects to, so
+/// this refuses every Unix socket, not only those outside: connected stream
+/// and seqpacket pairs (`socketpair`, which pipes between processes use)
+/// still work. Other architectures' system calls (32-bit `int 0x80`) end the
+/// process.
 #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64")))]
 pub fn apply_seccomp() -> Result<(), String> {
     use std::collections::BTreeMap;
@@ -253,7 +272,25 @@ pub fn apply_seccomp() -> Result<(), String> {
         libc::EACCES,
     )?;
     let uring = build(vec![(libc::SYS_io_uring_setup, vec![])], libc::ENOSYS)?;
-    for p in [&sockets, &uring] {
+    // TIOCSTI (0x5412) types into the controlling terminal; TIOCLINUX (0x541C)
+    // can paste/select in the console. Deny only these requests.
+    #[allow(clippy::unnecessary_cast)]
+    let tiocsti_req = libc::TIOCSTI as u64;
+    let tiocsti = SeccompCondition::new(1, SeccompCmpArgLen::Dword, SeccompCmpOp::Eq, tiocsti_req).map_err(e)?;
+    #[allow(clippy::unnecessary_cast)]
+    let tioclinux_req = libc::TIOCLINUX as u64;
+    let tioclinux = SeccompCondition::new(1, SeccompCmpArgLen::Dword, SeccompCmpOp::Eq, tioclinux_req).map_err(e)?;
+    let ioctls = build(
+        vec![(
+            libc::SYS_ioctl,
+            vec![
+                SeccompRule::new(vec![tiocsti]).map_err(e)?,
+                SeccompRule::new(vec![tioclinux]).map_err(e)?,
+            ],
+        )],
+        libc::EPERM,
+    )?;
+    for p in [&sockets, &uring, &ioctls] {
         seccompiler::apply_filter(p).map_err(|x| x.to_string())?;
     }
     Ok(())
@@ -274,6 +311,7 @@ fn landlock(args: Vec<String>) -> i32 {
     let writable: Vec<String> = flags.windows(2).filter(|w| w[0] == "--write").map(|w| w[1].clone()).collect();
     let port = opt(&flags, "--proxy-port").and_then(|p| p.parse().ok());
     close_inherited_fds();
+    detach_session();
     match apply_landlock(&writable, port) {
         Ok(true) => {
             if let Err(e) = apply_seccomp() {

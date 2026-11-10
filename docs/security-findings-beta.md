@@ -624,7 +624,7 @@ Summary:
     item, such as `security`, `git credential-osxkeychain` and
     `docker-credential-osxkeychain`, return GitHub, git and Docker tokens
     without a prompt), `process-info*`.
-  These go to a follow-up PR. Every mechanism that runs the agent through
+  These go to follow-up work (KAO-106). Every mechanism that runs the agent through
   the helper or `sandbox-exec` starts it without the variables in
   `polyph_sandbox::IPC_ENV`: `DBUS_SESSION_BUS_ADDRESS`,
   `DBUS_SYSTEM_BUS_ADDRESS`, `DBUS_STARTER_ADDRESS`, `XDG_RUNTIME_DIR`,
