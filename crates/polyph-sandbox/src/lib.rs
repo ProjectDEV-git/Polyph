@@ -851,6 +851,9 @@ mod seatbelt_tests {
         assert!(!p.contains("(allow default)"), "{p}");
         assert!(!p.contains("(allow network-outbound (remote unix-socket))"), "{p}");
         assert!(!p.contains("(allow mach-lookup)\n") && !p.contains("(allow network*") && !p.contains("lsopen"), "{p}");
+        // KAO-106: SecurityServer remains allowed for TLS trust evaluation (keychain
+        // file paths are hidden separately); this asserts the intentional allowance.
+        assert!(p.contains("SecurityServer"), "{p}");
         for svc in ["launchservicesd", "lsd", "coreservicesd", "appleevents", "pasteboard", "windowserver"] {
             assert!(!p.to_lowercase().contains(svc), "{svc} in\n{p}");
         }
