@@ -82,8 +82,6 @@ fn close_inherited_fds() {
 #[cfg(not(unix))]
 fn close_inherited_fds() {}
 
-
-
 /// Detach from the controlling terminal so an agent cannot inject input
 /// (TIOCSTI) into the person's session (SEC-14/KAO-106).
 #[cfg(unix)]
@@ -283,10 +281,7 @@ pub fn apply_seccomp() -> Result<(), String> {
     let ioctls = build(
         vec![(
             libc::SYS_ioctl,
-            vec![
-                SeccompRule::new(vec![tiocsti]).map_err(e)?,
-                SeccompRule::new(vec![tioclinux]).map_err(e)?,
-            ],
+            vec![SeccompRule::new(vec![tiocsti]).map_err(e)?, SeccompRule::new(vec![tioclinux]).map_err(e)?],
         )],
         libc::EPERM,
     )?;
