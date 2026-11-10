@@ -49,3 +49,20 @@
 5. Remind Kao once per report: 2026-11-08 proposed edits to prior `docs/progress.md` remain unapproved/unseen here.
 
 *Step 1 reconciliation recorded 2026-11-10. No code/product PRs merged by this session.*
+## 2026-11-10 (Step 2 started, KAO-106 partial)
+
+**Branch pushed:** `beta/kao-106-sandbox-ipc-2` @ `8eb7501` (from `e152bee` lineage + session-doc commit), pushed to origin.
+
+**Implemented (local checks: `cargo test -p polyph-sandbox` all passed, `cargo clippy -p polyph-sandbox -p polyph-agents --all-targets -D warnings` clean):**
+- Helper (Linux x86_64/aarch64/riscv64): seccomp filter now also denies `TIOCSTI`/`TIOCLINUX` ioctls; helper detaches from controlling terminal (`setsid`) in `forward` and `landlock` modes; `forward` (bubblewrap) now applies the seccomp filter before running the child (refuses to run without it).
+- Bubblewrap availability now requires the seccomp probe to succeed; agents spawned by the daemon detach into their own session (`setsid` via `pre_exec`) in `polyph-agents` supervisor.
+- `Policy::default_hidden`: added common credential locations (`.config/gh`, `.npmrc`, `.pypirc`, Cargo credentials, `.local/share/keyrings`) and, on macOS, `~/Library/Keychains` and `~/Library/Application Support/com.apple.TCC`.
+- Docs/stubs updated: `docs/sandbox.md`, `docs/security.md`, `STUBS.md`, `docs/security-findings-beta.md` (SEC-14 residuals now reference KAO-106) to reflect seccomp in bwrap helper, setsid, TIOCSTI/TIOCLINUX denial, and macOS keychain-folder hiding (with `com.apple.SecurityServer` still allowed for TLS).
+
+**Still open for KAO-106 (per brief/findings, not fully verified/complete):**
+- Full macOS keychain/Mach-service closure and CI proof as required (e.g. "proof for `com.apple.SecurityServer` in tests/CI", behavior of tools Apple trusts for keychain items, `process-info*` still allowed).
+- "Person-level extra Mach services setting" coverage (not identified/implemented in this pass).
+- Any remaining brief items not yet audited against current `Main` behavior (e.g. exhaustive setsid coverage for every daemon-spawned sandbox path, kernel keyring/LXD/Nix-daemon/ssh-agent-outside-run residuals as applicable).
+- Required sandbox/PR gates not satisfied here: security-auditor + architect sign-off before merge, all CI green on head (including macOS/Windows as applicable), and no merge performed.
+- `docs/progress.md` 2026-11-08 proposed edits remain unapproved/unseen in this workspace.
+

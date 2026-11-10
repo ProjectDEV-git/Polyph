@@ -9,3 +9,6 @@
 ## 2026-11-10 — Step 1 reconciliation (PR #21 / KAO-75)
 - **Did not mark Step 1 complete:** PR #21 is merged with green CI, but written security-auditor/architect sign-offs for `5432c6d` are not present in PR metadata and cannot be produced in this environment; `docs/security-findings-beta.md` SEC-14 status does not explicitly name KAO-106. These gaps are recorded rather than assumed satisfied.
 - **KAO-106 WIP worktree treated as reference only:** `.claude/worktrees/agent-ab992112bd0c6feb7` has uncommitted sandbox changes on an old base; it will not be merged/reused directly. Step 2 work should start from current `Main` and reimplement as needed with proper review/CI.
+
+## 2026-11-10 — Step 2 partial implementation (KAO-106)
+- Implemented and pushed partial SEC-14 follow-up hardening on `beta/kao-106-sandbox-ipc-2` (seccomp+setsid in Linux helper paths, bwrap requires seccomp, expanded hidden paths incl. macOS keychain folders, doc/stub updates). Did not merge: sandbox/proto/relay-auth changes require security-auditor + architect sign-off and green CI on head; macOS-specific closure/proofs and any "person-level extra Mach services setting" remain unverified/incomplete.
