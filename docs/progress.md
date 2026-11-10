@@ -51,7 +51,7 @@
 *Step 1 reconciliation recorded 2026-11-10. No code/product PRs merged by this session.*
 ## 2026-11-10 (Step 2 started, KAO-106 partial)
 
-**Branch pushed:** `beta/kao-106-sandbox-ipc-2` @ `8eb7501` (from `e152bee` lineage + session-doc commit), pushed to origin.
+**Branch pushed:** `beta/kao-106-sandbox-ipc-2` (latest `f8f9763`), **draft PR #26** open: https://github.com/ProjectDEV-git/Polyph/pull/26. Additional hardening/assertion commits pushed (`dfcda17` fmt fix, `e6dcb56` Seatbelt SecurityServer allow-list assertion in profile test). CI: Linux/macOS Rust, TS/translations, hosted, desktop, e2e/packaging, CodeQL passing on recent runs; Windows Rust still pending at last check (re-check PR).
 
 **Implemented (local checks: `cargo test -p polyph-sandbox` all passed, `cargo clippy -p polyph-sandbox -p polyph-agents --all-targets -D warnings` clean):**
 - Helper (Linux x86_64/aarch64/riscv64): seccomp filter now also denies `TIOCSTI`/`TIOCLINUX` ioctls; helper detaches from controlling terminal (`setsid`) in `forward` and `landlock` modes; `forward` (bubblewrap) now applies the seccomp filter before running the child (refuses to run without it).
@@ -66,3 +66,7 @@
 - Required sandbox/PR gates not satisfied here: security-auditor + architect sign-off before merge, all CI green on head (including macOS/Windows as applicable), and no merge performed.
 - `docs/progress.md` 2026-11-08 proposed edits remain unapproved/unseen in this workspace.
 
+## 2026-11-10 (Step 3 prep, KAO-72)
+
+- Brought multinet harness artifacts from `.claude/worktrees/agent-ad790c8b20ea9e9bf` onto `beta/kao-72-multinet` (`06cc11b`, based on `origin/Main`): `crates/polyph-testkit/src/bin/multinet_node.rs`, `crates/polyph-testkit/tests/multinet.rs`, `scripts/multinet.sh`, Cargo.toml bin entry. `cargo check -p polyph-testkit --bins --tests` passes.
+- Opened **draft PR #27**: https://github.com/ProjectDEV-git/Polyph/pull/27 (requires root/netns; CI/review wiring still needed).
