@@ -221,9 +221,11 @@ async fn join(rid: &str, inviter: &Remote, joiner: &Remote) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn three_networks_one_relay_the_whole_success_path() {
-    let (Some(_), Ok(ns), Ok(relay)) =
-        (std::env::var_os("POLYPH_MULTINET"), std::env::var("POLYPH_MULTINET_NS"), std::env::var("POLYPH_MULTINET_RELAY"))
-    else {
+    let (Some(_), Ok(ns), Ok(relay)) = (
+        std::env::var_os("POLYPH_MULTINET"),
+        std::env::var("POLYPH_MULTINET_NS"),
+        std::env::var("POLYPH_MULTINET_RELAY"),
+    ) else {
         eprintln!("skipped: run scripts/multinet.sh (POLYPH_MULTINET=1)");
         return;
     };
@@ -287,7 +289,8 @@ async fn three_networks_one_relay_the_whole_success_path() {
     }
 
     // The planner splits the goal into two cards, both touching src/lib.rs.
-    let p = ann.ok("plan.create", json!({ "room": rid, "goal": "Add billing", "cwd": r, "kind": "fake-planner" })).await;
+    let p =
+        ann.ok("plan.create", json!({ "room": rid, "goal": "Add billing", "cwd": r, "kind": "fake-planner" })).await;
     assert_eq!(p["cards"].as_array().unwrap().len(), 2, "{p}");
     assert_eq!(p["overlaps"].as_array().unwrap().len(), 1, "both tasks touch src/lib.rs: {p}");
     let acc = ann.ok("plan.accept", json!({ "room": rid, "plan": p["plan"] })).await;
