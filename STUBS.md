@@ -47,28 +47,29 @@ lists notes and agents write them.
   are still readable and the network is steered only by proxy variables (no
   AppContainer yet). Tested only on GitHub's Windows runners. Documented in
   `docs/sandbox.md`.
-- **seccomp.** The Landlock fallback has a seccomp filter only against Unix
-  sockets and `io_uring` (SEC-14): it refuses every Unix socket but stream
-  and seqpacket pairs, the agent's own included, since seccomp cannot
-  filter by path. It does nothing about UDP, raw or netlink sockets, and
-  Landlock mode still hides no paths (SEC-15). Without seccomp
-  (architectures other than x86_64, aarch64 and riscv64) Unix sockets
-  stay reachable, with a warning in the
-  helper's output, `polyph agents doctor` and `polyph sandbox test`.
-  Under Landlock the agent shares the person's controlling terminal, so
-  `TIOCSTI` is not refused yet.
-  bubblewrap mode has no seccomp filter: it isolates the network with a
+- **seccomp.** On Linux (x86_64, aarch64, riscv64) the helper applies a
+  seccomp filter in Landlock mode and in bubblewrap's forwarding helper
+  (SEC-14/KAO-106): it refuses every Unix socket but stream and seqpacket
+  pairs (the agent's own included, since seccomp cannot filter by path),
+  `io_uring_setup`, and `TIOCSTI`/`TIOCLINUX` ioctls. It does nothing about
+  UDP, raw or netlink sockets, and Landlock mode still hides no paths
+  (SEC-15). Without seccomp (other architectures) Unix sockets stay
+  reachable, with a warning in the helper's output, `polyph agents doctor`
+  and `polyph sandbox test`. bubblewrap still isolates the network with a
   namespace and empties `/run`, `/var/run` and `/tmp`, but a Unix socket
-  elsewhere in the readable filesystem stays connectable.
-- **Seatbelt `(deny default)` profile (SEC-14)** has run only on the macOS
-  CI runner. Its Mach service allow list is a first guess at what CLIs
-  need; tools that need more (or DNS, which is not allowed) fail inside
-  until the list grows. `com.apple.SecurityServer` is on it for TLS, so
-  the keychain is open: tools Apple trusts for an item, such as
-  `security`, `git credential-osxkeychain` and
-  `docker-credential-osxkeychain`, return GitHub, git and Docker tokens
-  without a prompt. Open until a follow-up PR; `process-info*` is also
-  still allowed.
+  elsewhere in the readable filesystem may stay connectable by path where
+  the mechanism does not block it.
+- **Seatbelt `(deny default)` profile (SEC-14/KAO-106)** has run only on the
+  macOS CI runner. Its Mach service allow list is a first guess at what
+  CLIs need; tools that need more (or DNS, which is not allowed) fail
+  inside until the list grows. The keychain folders are hidden from reads
+  by policy where applied, but `com.apple.SecurityServer` remains on the
+  list for TLS, so tools Apple trusts for an item (such as `security`,
+  `git credential-osxkeychain` and `docker-credential-osxkeychain`) may
+  still return GitHub, git and Docker tokens without a prompt. Remaining
+  KAO-106 work includes fully closing keychain/Mach-service exposure as
+  feasible and covering any person-level extra Mach services setting.
+  `process-info*` is also still allowed.
 - **Host IPC still reachable (SEC-14).** Not closed off yet (follow-up
   PR): LXD sockets; ssh-agent sockets outside `/run` (a custom
   `SSH_AUTH_SOCK` path such as `~/.ssh/agent.sock`: the variable is unset,

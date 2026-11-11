@@ -69,10 +69,28 @@ impl Policy {
     pub fn default_hidden(polyph_home: &Path) -> Vec<PathBuf> {
         let mut v = vec![polyph_home.to_path_buf()];
         if let Some(home) = home_dir() {
-            for d in
-                [".ssh", ".aws", ".gnupg", ".config/gcloud", ".azure", ".kube", ".docker", ".netrc", ".git-credentials"]
-            {
+            for d in [
+                ".ssh",
+                ".aws",
+                ".gnupg",
+                ".config/gcloud",
+                ".azure",
+                ".kube",
+                ".docker",
+                ".netrc",
+                ".git-credentials",
+                ".config/gh",
+                ".npmrc",
+                ".pypirc",
+                ".cargo/credentials.toml",
+                ".cargo/credentials",
+                ".local/share/keyrings",
+            ] {
                 v.push(home.join(d));
+            }
+            if cfg!(target_os = "macos") {
+                v.push(home.join("Library/Keychains"));
+                v.push(home.join("Library/Application Support/com.apple.TCC"));
             }
         }
         v
@@ -719,16 +737,6 @@ pub fn detect(helper: &[String]) -> Vec<Availability> {
                 .stderr(std::process::Stdio::null())
                 .status()
                 .is_ok_and(|s| s.success());
-        v.push(Availability {
-            mechanism: Mechanism::Bubblewrap,
-            available: works,
-            detail: match (bwrap.is_some(), works) {
-                (true, true) => "bubblewrap works".into(),
-                (true, false) => "bubblewrap is installed but cannot create namespaces here".into(),
-                _ => "bubblewrap is not installed".into(),
-            },
-            warnings: vec![],
-        });
         let probe = |what: &str| {
             helper.first().is_some_and(|h| {
                 std::process::Command::new(h)
@@ -739,8 +747,26 @@ pub fn detect(helper: &[String]) -> Vec<Availability> {
                     .is_ok_and(|s| s.success())
             })
         };
+        let seccomp_ok = probe("seccomp");
+        let (bwrap_available, bwrap_detail, bwrap_warnings) = match (bwrap.is_some(), works, seccomp_ok) {
+            (true, true, true) => (true, "bubblewrap works".to_string(), vec![]),
+            (true, true, false) => (
+                false,
+                "bubblewrap works but no seccomp filter is available for this platform; refusing to run without it"
+                    .to_string(),
+                vec![NO_SECCOMP.to_string()],
+            ),
+            (true, false, _) => (false, "bubblewrap is installed but cannot create namespaces here".into(), vec![]),
+            _ => (false, "bubblewrap is not installed".into(), vec![]),
+        };
+        v.push(Availability {
+            mechanism: Mechanism::Bubblewrap,
+            available: bwrap_available,
+            detail: bwrap_detail,
+            warnings: bwrap_warnings,
+        });
         let ll = probe("landlock");
-        v.push(landlock_availability(ll, ll && probe("seccomp")));
+        v.push(landlock_availability(ll, ll && seccomp_ok));
     }
     if cfg!(target_os = "macos") {
         let ok = Path::new("/usr/bin/sandbox-exec").exists();
@@ -825,6 +851,9 @@ mod seatbelt_tests {
         assert!(!p.contains("(allow default)"), "{p}");
         assert!(!p.contains("(allow network-outbound (remote unix-socket))"), "{p}");
         assert!(!p.contains("(allow mach-lookup)\n") && !p.contains("(allow network*") && !p.contains("lsopen"), "{p}");
+        // KAO-106: SecurityServer remains allowed for TLS trust evaluation (keychain
+        // file paths are hidden separately); this asserts the intentional allowance.
+        assert!(p.contains("SecurityServer"), "{p}");
         for svc in ["launchservicesd", "lsd", "coreservicesd", "appleevents", "pasteboard", "windowserver"] {
             assert!(!p.to_lowercase().contains(svc), "{svc} in\n{p}");
         }

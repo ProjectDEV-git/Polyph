@@ -67,8 +67,8 @@ agents doctor` shows the mechanism in use.
 
 | Platform | Mechanism | Files | Network |
 |---|---|---|---|
-| Linux (preferred) | bubblewrap: read-only root bind, writable binds for the paths above, tmpfs over hidden paths, `/tmp`, `/run` and `/var/run`, new PID, IPC, UTS, session and network namespaces | enforced | the agent's network namespace has only loopback; a helper inside it listens on `127.0.0.1:3128` and forwards to the proxy's Unix socket |
-| Linux (no bubblewrap) | Landlock and a seccomp filter against Unix sockets, applied by a helper that then runs the agent | writes limited to the paths above; hidden paths are **not** hidden (Landlock can only allow) | TCP connects allowed only to the proxy's port (kernel 6.7+, Landlock ABI 4) |
+| Linux (preferred) | bubblewrap: read-only root bind, writable binds for the paths above, tmpfs over hidden paths, `/tmp`, `/run` and `/var/run`, new PID, IPC, UTS, session and network namespaces; the forwarding helper applies the seccomp filter and starts in its own session | enforced | the agent's network namespace has only loopback; a helper inside it listens on `127.0.0.1:3128` and forwards to the proxy's Unix socket |
+| Linux (no bubblewrap) | Landlock and a seccomp filter (Unix sockets, `TIOCSTI`/`TIOCLINUX`), applied by a helper that starts in its own session and then runs the agent | writes limited to the paths above; hidden paths are **not** hidden (Landlock can only allow) | TCP connects allowed only to the proxy's port (kernel 6.7+, Landlock ABI 4) |
 | macOS | Seatbelt profile run with `sandbox-exec` | writes only to the worktree, writable paths and the agent's own TMPDIR (not the shared `/private/tmp` or `/private/var/folders`); hidden paths denied for reading | outbound only to the proxy's port on localhost |
 | Windows | low integrity level, applied by a helper that then runs the agent, inside a job object (the agent and its children die with the helper) | writes only to the worktree, writable paths and the agent's own TMPDIR (labelled low integrity); hidden paths are **not** hidden | proxy variables only; a program that ignores them is not stopped |
 | Any (opt-in) | rootless Podman or Docker, `[sandbox] mode = "container"` with an image | only the worktree is mounted | `--network none` plus the proxy helper |
@@ -97,34 +97,40 @@ each mechanism handles IPC separately (SEC-14):
   folders outside it, such as NixOS's `/run/current-system`, are kept.
   If `/var/run` points at `/` or at a folder holding a writable path, that
   folder is not emptied and the container sockets in it are hidden one by
-  one instead. The helper marks every inherited file descriptor above 2
-  close-on-exec before it starts the agent.
+  one instead. The forwarding helper marks inherited file descriptors above
+  2 close-on-exec, detaches from the controlling terminal (`setsid`) and
+  applies the same seccomp filter as Landlock (Unix sockets refused except
+  stream/seqpacket pairs; `io_uring_setup`, `TIOCSTI` and `TIOCLINUX`
+  denied).
   `/tmp` was already empty (X11 and ssh-agent sockets). Container sockets
   elsewhere are hidden: `~/.docker`, `~/.colima`, `~/.rd`, `~/.lima`,
   `~/.orbstack`, Podman machine sockets, `/mnt/wslg`, and whatever
   `DOCKER_HOST` or `CONTAINER_HOST` names. The agent has its own IPC, UTS
   and network namespaces; the last one also separates abstract sockets.
   Still allowed: a Unix socket in any other readable place (for example
-  the Nix daemon's socket under `/nix/var`).
-- **Landlock**: a seccomp filter refuses creating Unix sockets
-  (`socket(AF_UNIX)`), socket pairs of any type but stream and seqpacket
-  (a datagram pair, or a raw one, which Linux turns into a datagram pair,
-  can `sendto` any datagram socket by path, such as journald's) and
-  `io_uring`. Inherited file descriptors above 2 are closed before the
-  agent starts. Seccomp
-  cannot see where a socket connects, so this refuses all Unix sockets,
-  the agent's own included. Connected stream pairs (`socketpair`, which
-  Node, Python and shells use for pipes) and seqpacket pairs still work. On Linux 6.12 and
-  later (Landlock ABI 6) Landlock also refuses abstract sockets and
-  signals outside the sandbox. What breaks there: tools that open a Unix
-  socket of their own (Python `multiprocessing` managers, test servers on
-  a socket path, `git credential-cache`, the fsmonitor daemon), user
-  lookups through `sssd` or `nscd`, and 32-bit programs, which are ended.
-  Install bubblewrap to avoid all of this. Without seccomp (an
+  the Nix daemon's socket under `/nix/var`) may remain connectable by path
+  depending on what the mechanism can block.
+- **Landlock**: the helper detaches from the controlling terminal
+  (`setsid`) and applies a seccomp filter that refuses creating Unix
+  sockets (`socket(AF_UNIX)`), socket pairs of any type but stream and
+  seqpacket (a datagram pair, or a raw one, which Linux turns into a
+  datagram pair, can `sendto` any datagram socket by path, such as
+  journald's), `io_uring`, and `TIOCSTI`/`TIOCLINUX` ioctls. Inherited file
+  descriptors above 2 are closed before the agent starts. Seccomp cannot
+  see where a socket connects, so this refuses all Unix sockets, the
+  agent's own included. Connected stream pairs (`socketpair`, which Node,
+  Python and shells use for pipes) and seqpacket pairs still work. On
+  Linux 6.12 and later (Landlock ABI 6) Landlock also refuses abstract
+  sockets and signals outside the sandbox. What breaks there: tools that
+  open a Unix socket of their own (Python `multiprocessing` managers, test
+  servers on a socket path, `git credential-cache`, the fsmonitor daemon),
+  user lookups through `sssd` or `nscd`, and 32-bit programs, which are
+  ended. Install bubblewrap to avoid all of this. Without seccomp (an
   architecture other than x86_64, aarch64 or riscv64) agents still start,
-  the helper says so on stderr, `polyph agents doctor` and `polyph
-  sandbox test` say what is left open, and Unix sockets stay reachable. Still allowed everywhere in this mode: UDP and
-  other non-TCP traffic (see `STUBS.md`), and reading hidden paths.
+  the helper says so on stderr, `polyph agents doctor` and `polyph sandbox
+  test` say what is left open, and Unix sockets stay reachable. Still
+  allowed everywhere in this mode: UDP and other non-TCP traffic (see
+  `STUBS.md`), and reading hidden paths.
 - **Seatbelt**: the profile starts from `(deny default)`. Allowed: running
   programs (not `/usr/bin/open`, `osascript` or `osacompile`), reading
   everything but hidden paths, the write and hard-link rules above,
