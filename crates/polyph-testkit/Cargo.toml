@@ -20,6 +20,10 @@ name = "polyph-fake-agent"
 path = "src/bin/fake_agent.rs"
 
 [[bin]]
+name = "polyph-multinet-node"
+path = "src/bin/multinet_node.rs"
+
+[[bin]]
 name = "polyph-test-sandbox-exec"
 path = "src/bin/sandbox_exec.rs"
 
