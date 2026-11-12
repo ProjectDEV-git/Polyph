@@ -17,8 +17,8 @@ Do not edit code.
 
 ## Before you start
 
-1. Read `PRODUCT.md` and `DESIGN.md`. They are the product and visual truth.
-2. Read the parts of `STUBS.md` that touch your area. Anything listed there is
+1. Read `PRODUCT.md`. It is the product truth. Skip `DESIGN.md`: you do not do visual work.
+2. Grep `STUBS.md` for your area's heading; do not read the whole file. Anything listed there is
    not done. Never describe it as done in code comments, docs, the website,
    the changelog or launch copy until it is done and removed from `STUBS.md`.
 3. Read `HANDOFF.md` for where the last session stopped and how to build and test.

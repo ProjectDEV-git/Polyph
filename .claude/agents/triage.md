@@ -17,8 +17,8 @@ to the failing test and its first error. Report; do not change code.
 
 ## Before you start
 
-1. Read `PRODUCT.md` and `DESIGN.md`. They are the product and visual truth.
-2. Read the parts of `STUBS.md` that touch your area. Anything listed there is
+1. Do not read `PRODUCT.md` or `DESIGN.md` up front. Open `PRODUCT.md` only for a copy-voice check.
+2. Grep `STUBS.md` for your area's heading; do not read the whole file. Anything listed there is
    not done. Never describe it as done in code comments, docs, the website,
    the changelog or launch copy until it is done and removed from `STUBS.md`.
 3. Read `HANDOFF.md` for where the last session stopped and how to build and test.

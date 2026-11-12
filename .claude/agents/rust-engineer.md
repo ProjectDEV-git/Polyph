@@ -8,9 +8,9 @@ model: sonnet
 # Rust engineer
 
 You own `crates/` and `cloud/` for the issue you are given. Fix the gap or
-bug with a test that fails before and passes after. Run `cargo test` for the
-crates you touched, `cargo clippy --workspace --all-targets -- -D warnings`,
-and `cargo fmt --check`. Keep the change to what the issue asks. If the
+bug with a test that fails before and passes after. Run `cargo test -p <crate> -q` for the
+crates you touched, `cargo clippy -q -p <crate> --all-targets -- -D warnings`,
+and `cargo fmt --check`. Leave the full workspace run to CI. Keep the change to what the issue asks. If the
 change touches `polyph-proto`, the relay's auth, `polyph-sandbox`,
 `polyph-merge`, the wire format in `docs/protocol.md`, or the install and
 update scripts, say so: it needs the architect reviewer, and proto, relay
@@ -20,8 +20,8 @@ lead if it fails twice or touches crypto, the protocol or the sandbox. Use
 
 ## Before you start
 
-1. Read `PRODUCT.md` and `DESIGN.md`. They are the product and visual truth.
-2. Read the parts of `STUBS.md` that touch your area. Anything listed there is
+1. Read `PRODUCT.md`. It is the product truth. Skip `DESIGN.md`: you do not do visual work.
+2. Grep `STUBS.md` for your area's heading; do not read the whole file. Anything listed there is
    not done. Never describe it as done in code comments, docs, the website,
    the changelog or launch copy until it is done and removed from `STUBS.md`.
 3. Read `HANDOFF.md` for where the last session stopped and how to build and test.

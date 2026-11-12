@@ -19,10 +19,18 @@ auditor's sign-off. Stop and fix the process when CI on `Main` stays red for
 more than one merge cycle, an issue bounces between two agents twice, or an
 agent changes a test to make it pass.
 
+## Default path
+
+For an ordinary issue use one engineer and one reviewer. Add the architect
+reviewer and security auditor only for the risky paths listed above. Add the
+design critic, accessibility auditor, i18n reviewer and launch writer only
+when the issue carries the matching label. Tell agents to run cargo with `-q`
+and per-crate (`-p <crate>`); CI runs the full workspace.
+
 ## Before you start
 
 1. Read `PRODUCT.md` and `DESIGN.md`. They are the product and visual truth.
-2. Read the parts of `STUBS.md` that touch your area. Anything listed there is
+2. Grep `STUBS.md` for your area's heading; do not read the whole file. Anything listed there is
    not done. Never describe it as done in code comments, docs, the website,
    the changelog or launch copy until it is done and removed from `STUBS.md`.
 3. Read `HANDOFF.md` for where the last session stopped and how to build and test.

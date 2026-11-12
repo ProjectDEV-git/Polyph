@@ -1,0 +1,8 @@
+# Keep ripgrep/Claude Code searches out of bulk and duplicated files.
+.claude/skills/
+Cargo.lock
+pnpm-lock.yaml
+locales/ja/
+locales/th/
+locales/zh-Hans/
+**/sites.json
