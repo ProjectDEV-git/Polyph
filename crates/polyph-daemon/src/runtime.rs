@@ -28,6 +28,8 @@ const OUTBOX_MAX: usize = 2000;
 /// mirroring the relay's own limit.
 const HOST_MAX_FAILURES: u32 = 5;
 const SNAPSHOT_EVERY: i64 = 300;
+/// Longest note a denied joiner is sent with `polyph deny --note`.
+const MAX_DENY_NOTE_CHARS: usize = 300;
 /// How long a knock waits for its joiner to come back after the connection
 /// dropped mid-wait. The joiner retries for less than this (see
 /// `daemon::JOIN_RECONNECT_SECS`).
@@ -128,6 +130,8 @@ pub struct RoomCtx {
     /// The last failed relay connect, cleared once connected.
     pub relay_error: Option<RelayErrorInfo>,
     pub offline: bool,
+    /// Its owner ended it; see [`Paths::room_ended_file`](crate::paths::Paths::room_ended_file).
+    pub ended: bool,
     pub dirty: bool,
     pub relay: RelayAddr,
     /// Fingerprint bound into join PAKEs on this connection (LAN relays).
@@ -199,6 +203,7 @@ impl RoomRuntime {
                 connected: false,
                 relay_error: None,
                 offline: false,
+                ended: false,
                 dirty: true,
                 relay,
                 binding: vec![],
@@ -266,8 +271,15 @@ pub async fn apply(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, effects
                         let reply = JoinReply::Approved(approved.clone());
                         finish_knocked_join(ctx, *knock, &reply).await;
                     }
-                    RoomEvent::JoinDenied { knock } => {
-                        let reply = JoinReply::Denied { reason: "denied by the room".into() };
+                    RoomEvent::JoinDenied { knock, note } => {
+                        // The joiner shows this after "the room declined the request: ".
+                        let reason = note
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|n| !n.is_empty())
+                            .map(|n| n.chars().take(MAX_DENY_NOTE_CHARS).collect())
+                            .unwrap_or_else(|| "no reason given".to_string());
+                        let reply = JoinReply::Denied { reason };
                         finish_knocked_join(ctx, *knock, &reply).await;
                     }
                     RoomEvent::ClaimDecision { request, granted, denied } => {
@@ -316,9 +328,10 @@ pub async fn apply(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, effects
                             log.pop_front();
                         }
                     }
-                    RoomEvent::YouWereRemoved | RoomEvent::RoomEnded => {
+                    RoomEvent::YouWereRemoved => {
                         ctx.offline = true;
                     }
+                    RoomEvent::RoomEnded => mark_ended(rt, ctx, shared),
                     _ => {}
                 }
                 let mut api = ApiEvent::room(&rt.id, &ev);
@@ -386,6 +399,19 @@ async fn finish_knocked_join(ctx: &mut RoomCtx, knock: ObjectId, reply: &JoinRep
             let _ = s.send(ClientFrame::Pake { session, data: ct }).await;
         }
     }
+}
+
+/// The owner ended the room: drop the connection now and never reconnect,
+/// across restarts too. Otherwise the connection stays up to a room the relay
+/// deleted, and a later reconnect brings it back there as an empty room.
+/// The local copy (board, chat) stays until the person deletes the room.
+pub fn mark_ended(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared) {
+    ctx.offline = true;
+    ctx.ended = true;
+    if let Err(e) = std::fs::write(shared.paths.room_ended_file(&rt.id.to_hex()), b"") {
+        warn!(room = %rt.id.short(), error = %e, "could not record that the room ended");
+    }
+    rt.kick.notify_one();
 }
 
 /// Failed relay connects are logged at most this often.
@@ -590,7 +616,7 @@ async fn handle_frame(rt: &RoomRuntime, shared: &Shared, f: RelayFrame) {
             }
         }
         RelayFrame::RoomEnded { .. } => {
-            ctx.offline = true;
+            mark_ended(rt, &mut ctx, shared);
             shared.emit(ApiEvent::room(&rt.id, &RoomEvent::RoomEnded));
         }
         RelayFrame::CodeHosted { rendezvous } => {

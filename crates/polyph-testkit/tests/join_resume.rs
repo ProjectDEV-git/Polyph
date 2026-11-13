@@ -119,6 +119,151 @@ async fn a_waiting_joiner_keeps_its_knock_across_a_host_reconnect() {
     assert_eq!(joined["id"], rid.as_str());
 }
 
+/// The note Ann writes when she turns Bo away is what Bo reads; without one,
+/// Bo is told no reason was given.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_denied_joiner_reads_the_note_or_hears_no_reason_was_given() {
+    let mut h = Harness::new().await.unwrap();
+    let (a, b, rid) = hosted_room(&mut h).await;
+    let inv = h.nodes[a].call("room.invite", json!({ "room": rid, "reusable": true })).await.unwrap();
+    let code = inv["code"].as_str().unwrap().to_string();
+
+    for (note, expected) in [(Some("  wrong project, ask Kim  "), "wrong project, ask Kim"), (None, "no reason given")]
+    {
+        let bd = h.nodes[b].daemon.clone();
+        let c = code.clone();
+        let joining =
+            tokio::spawn(async move { bd.call("join", json!({ "code": c, "name": "Bo", "timeout_secs": 30 })).await });
+        let knock = h.nodes[a].wait_event("knock", |e| e.kind() == "knock").await.unwrap();
+        let kid = knock.event["knock"]["id"].as_str().unwrap().to_string();
+        h.nodes[a]
+            .call("knock.decide", json!({ "room": rid, "knock": kid, "approve": false, "note": note }))
+            .await
+            .unwrap();
+        let err = joining.await.unwrap().map(|_| ()).map_err(|e| e.to_string()).unwrap_err();
+        assert!(err.ends_with(&format!(": {expected}")), "Bo read {err:?}");
+        // The reusable code stays hosted for the next try.
+        h.until("code hosted again", || async { h.relay.hub.stats().2 == 1 }).await.unwrap();
+    }
+}
+
+/// Bo joins while the relay does not know the code yet (the relay just
+/// restarted and Ann's daemon has not hosted its codes again, or Ann is
+/// reconnecting): Bo is told it is trying again and gets in once Ann is back,
+/// instead of failing at once with "no room is waiting for this code".
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_first_join_waits_a_moment_for_a_host_coming_back() {
+    let mut h = Harness::new().await.unwrap();
+    let (a, b, rid) = hosted_room(&mut h).await;
+    let inv = h.nodes[a].call("room.invite", json!({ "room": rid, "reusable": true })).await.unwrap();
+    let code = inv["code"].as_str().unwrap().to_string();
+    h.nodes[a].call("room.offline", json!({ "room": rid, "offline": true })).await.unwrap();
+    connected(&h, a, &rid, false).await;
+    h.until("code gone from the relay", || async { h.relay.hub.stats().2 == 0 }).await.unwrap();
+
+    let bd = h.nodes[b].daemon.clone();
+    let joining =
+        tokio::spawn(async move { bd.call("join", json!({ "code": code, "name": "Bo", "timeout_secs": 30 })).await });
+    h.nodes[b].wait_event("retrying", |e| e.kind() == "join_retrying").await.unwrap();
+    h.nodes[a].call("room.offline", json!({ "room": rid, "offline": false })).await.unwrap();
+    let knock = h.nodes[a].wait_event("knock", |e| e.kind() == "knock").await.unwrap();
+    let kid = knock.event["knock"]["id"].as_str().unwrap().to_string();
+    h.nodes[a].call("knock.decide", json!({ "room": rid, "knock": kid, "approve": true })).await.unwrap();
+    let joined = joining.await.unwrap().map_err(|e| e.to_string()).unwrap();
+    assert_eq!(joined["id"], rid.as_str());
+}
+
+/// A code no room is hosting still fails, after the short wait: two more
+/// attempts, not a minute of them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_code_nobody_hosts_fails_after_a_short_wait() {
+    let mut h = Harness::new().await.unwrap();
+    let b = h.add("Bo").await.unwrap();
+    let started = std::time::Instant::now();
+    let err = h.nodes[b]
+        .call("join", json!({ "code": "ZZZZ-ZZZZ", "name": "Bo", "timeout_secs": 30 }))
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+        .unwrap_err();
+    let took = started.elapsed();
+    assert!(err.contains("no room is waiting for this code"), "{err}");
+    assert!(took >= std::time::Duration::from_secs(7) && took < std::time::Duration::from_secs(15), "took {took:?}");
+}
+
+/// Once in, Bo does not see his own knock among the people waiting to join.
+/// The room's history replays the knock to him, and his own certificate
+/// must clear it as anyone else's does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_joiner_does_not_see_its_own_knock_once_in() {
+    let mut h = Harness::new().await.unwrap();
+    let (a, b, rid) = hosted_room(&mut h).await;
+    let inv = h.nodes[a].call("room.invite", json!({ "room": rid })).await.unwrap();
+    let code = inv["code"].as_str().unwrap().to_string();
+    let bd = h.nodes[b].daemon.clone();
+    let joining =
+        tokio::spawn(async move { bd.call("join", json!({ "code": code, "name": "Bo", "timeout_secs": 30 })).await });
+    let knock = h.nodes[a].wait_event("knock", |e| e.kind() == "knock").await.unwrap();
+    let kid = knock.event["knock"]["id"].as_str().unwrap().to_string();
+    h.nodes[a].call("knock.decide", json!({ "room": rid, "knock": kid, "approve": true })).await.unwrap();
+    joining.await.unwrap().map_err(|e| e.to_string()).unwrap();
+    // Wait until Bo has caught up on the room (Ann's chat reaches him).
+    h.nodes[a].call("chat.send", json!({ "room": rid, "text": "welcome" })).await.unwrap();
+    h.until("Bo has the room's history", || async {
+        let c = h.nodes[b].call("chat.list", json!({ "room": rid })).await.unwrap_or_default();
+        c.as_array().is_some_and(|m| m.iter().any(|m| m["text"] == "welcome"))
+    })
+    .await
+    .unwrap();
+    for i in [a, b] {
+        let listed = h.nodes[i].call("knock.list", json!({ "room": rid })).await.unwrap();
+        assert_eq!(listed, json!([]), "node {i} still lists a knock");
+    }
+}
+
+/// Ann ends the room. Bo's device drops its connection at once, says the room
+/// ended, refuses to bring it back online, and still does after a restart:
+/// a reconnect would make the relay keep an empty room under that id.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_ended_room_stays_ended_for_its_members() {
+    let mut h = Harness::new().await.unwrap();
+    let (a, b, rid) = hosted_room(&mut h).await;
+    let inv = h.nodes[a].call("room.invite", json!({ "room": rid })).await.unwrap();
+    let code = inv["code"].as_str().unwrap().to_string();
+    let bd = h.nodes[b].daemon.clone();
+    let joining =
+        tokio::spawn(async move { bd.call("join", json!({ "code": code, "name": "Bo", "timeout_secs": 30 })).await });
+    let knock = h.nodes[a].wait_event("knock", |e| e.kind() == "knock").await.unwrap();
+    let kid = knock.event["knock"]["id"].as_str().unwrap().to_string();
+    h.nodes[a].call("knock.decide", json!({ "room": rid, "knock": kid, "approve": true })).await.unwrap();
+    joining.await.unwrap().map_err(|e| e.to_string()).unwrap();
+    // "connected" is set when the subscribe is sent; the relay tells only
+    // subscribers that a room ended. Ann's message reaching Bo proves he is one.
+    h.nodes[a].call("chat.send", json!({ "room": rid, "text": "last call" })).await.unwrap();
+    h.until("Bo is subscribed", || async {
+        let c = h.nodes[b].call("chat.list", json!({ "room": rid })).await.unwrap_or_default();
+        c.as_array().is_some_and(|m| m.iter().any(|m| m["text"] == "last call"))
+    })
+    .await
+    .unwrap();
+
+    h.nodes[a].call("room.end", json!({ "room": rid })).await.unwrap();
+    h.until("Bo sees the room ended", || async {
+        let i = h.nodes[b].call("room.get", json!({ "room": rid })).await.unwrap();
+        i["ended"] == true && i["connected"] == false
+    })
+    .await
+    .unwrap();
+    let err = h.nodes[b].call("room.offline", json!({ "room": rid, "offline": false })).await.unwrap_err();
+    assert!(err.to_string().contains("ended this room"), "{err}");
+
+    h.restart(b).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    let i = h.nodes[b].call("room.get", json!({ "room": rid })).await.unwrap();
+    assert_eq!((i["ended"].clone(), i["connected"].clone()), (json!(true), json!(false)), "{i}");
+    assert_eq!(h.relay.hub.stats().0, 0, "the relay holds the ended room again");
+}
+
 /// A join made by hand, so a test chooses every field of the request.
 struct RawJoin {
     client: RelayClient,

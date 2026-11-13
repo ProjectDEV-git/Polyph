@@ -61,12 +61,16 @@ room-opened = เปิด { $name } แล้ว
 room-closed = ปิด { $name } บนอุปกรณ์นี้แล้ว
 room-deleted = ลบ { $name } ออกจากอุปกรณ์นี้แล้ว
 room-ended = ปิด { $name } แล้ว ห้องนี้ถูกลบสำหรับทุกคน
+end-confirm = ปิด { $name } และลบสำหรับทุกคน พร้อมบอร์ด แชท และเธรดหรือไม่ ย้อนกลับไม่ได้ [y/N]
+end-needs-yes = การปิด { $name } จะลบห้องสำหรับทุกคน ให้รันในเทอร์มินัลเพื่อยืนยัน หรือใส่ --yes
+end-cancelled = ยังเก็บห้องไว้
 room-exported = บันทึกบอร์ดและแชตไว้ที่ { $path }
 rooms-empty = ยังไม่มีห้อง สร้างด้วย `polyph room create <ชื่อ>` หรือเข้าร่วมด้วย `polyph join <รหัส>`
 room-line = { $name }  { $role }  { $state }  ออนไลน์ { $online } คน
 room-state-connected = เชื่อมต่อแล้ว
 room-state-connecting = กำลังเชื่อมต่อ
 room-state-closed = ปิดอยู่
+room-state-ended = เจ้าของปิดห้องแล้ว
 quick-session-name = เซสชันด่วน
 no-current-room = ยังไม่มีห้องที่เปิดอยู่ เปิดด้วย `polyph room open <ชื่อ>`
 invite-code = รหัสเข้าร่วม: { $code }
@@ -87,11 +91,12 @@ knock-line-own-device = { $id }  อุปกรณ์ใหม่ขอเข�
 knock-hint = อนุมัติด้วย `polyph approve { $id }` หรือปฏิเสธด้วย `polyph deny { $id }`
 settings-approval-on = การเข้าห้องต้องได้รับอนุมัติ
 settings-approval-off = ใครมีรหัสก็เข้าห้องได้โดยไม่ต้องอนุมัติ
-role-changed = เปลี่ยนบทบาทแล้ว
+role-changed = { $name } เป็น{ $role }แล้ว
 member-removed = นำสมาชิกออกและเปลี่ยนกุญแจของห้องแล้ว
 
 join-connecting = กำลังเชื่อมต่อ…
 join-waiting = กำลังรอให้คนในห้องอนุมัติ…
+join-retrying = ยังไม่มีห้องตอบรับโค้ดนี้ กำลังลองใหม่อีกสักครู่…
 joined = เข้าร่วม { $name } ในฐานะ{ $role }แล้ว
 discover-searching = กำลังค้นหาห้องในเครือข่ายนี้…
 discover-empty = ไม่พบห้องในเครือข่ายนี้
@@ -101,8 +106,8 @@ discover-hint = เข้าร่วมด้วย `polyph join <รหัส>
 chat-sent = ส่งแล้ว
 approved = อนุมัติแล้ว
 denied = ปฏิเสธแล้ว
-admitted = ให้เข้าห้องแล้ว
-not-admitted = ไม่ให้เข้าห้อง
+admitted = ให้ { $name } เข้าห้องในฐานะ{ $role }แล้ว
+not-admitted = ไม่ให้ { $name } เข้าห้อง
 nothing-matches = ไม่มีรายการที่รออยู่ตรงกับ { $id }
 claims-empty = ยังไม่มีไฟล์ที่ถูกจอง
 claim-line = { $target }  { $agent }  { $reason }
@@ -111,11 +116,13 @@ board-empty-column = (ว่าง)
 status-room = ห้อง: { $name }
 status-connected = เชื่อมต่อรีเลย์แล้ว
 status-disconnected = ยังไม่ได้เชื่อมต่อรีเลย์
+status-ended = เจ้าของปิดห้องนี้แล้ว ข้อมูลยังอยู่ในอุปกรณ์นี้จนกว่าคุณจะลบ: polyph room delete
 status-members = ออนไลน์ { $count } คน
 status-approvals = { $count ->
     [0] ไม่มีคำขออนุมัติที่รออยู่
    *[other] มีคำขออนุมัติรออยู่ { $count } รายการ
 }
+status-approval-line = { $id }  { $who }: { $title }
 
 config-set = บันทึกแล้ว
 config-unknown = ไม่รู้จักการตั้งค่านี้

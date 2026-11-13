@@ -61,12 +61,16 @@ room-opened = { $name } を開きました。
 room-closed = このデバイスで { $name } を閉じました。
 room-deleted = このデバイスから { $name } を削除しました。
 room-ended = { $name } を終了しました。全員のもとから削除されています。
+end-confirm = { $name } を終了し、ボード・チャット・スレッドごと全員から削除しますか？元に戻せません。[y/N]
+end-needs-yes = { $name } を終了すると全員から削除されます。ターミナルで実行して確認するか、--yes を付けてください。
+end-cancelled = ルームはそのままです。
 room-exported = ボードとチャットを { $path } に保存しました。
 rooms-empty = ルームはまだありません。`polyph room create <名前>` で作成するか、`polyph join <コード>` で参加してください。
 room-line = { $name }  { $role }  { $state }  { $online } 人オンライン
 room-state-connected = 接続中
 room-state-connecting = 接続しています
 room-state-closed = 閉じています
+room-state-ended = オーナーが終了
 quick-session-name = クイックセッション
 no-current-room = 開いているルームがありません。`polyph room open <名前>` で開いてください。
 invite-code = 参加コード: { $code }
@@ -87,11 +91,12 @@ knock-line-own-device = { $id }  新しいデバイスがあなた（{ $name }�
 knock-hint = `polyph approve { $id }` で承認、`polyph deny { $id }` で拒否できます。
 settings-approval-on = 参加には承認が必要です。
 settings-approval-off = コードを持っていれば承認なしで参加できます。
-role-changed = ロールを変更しました。
+role-changed = { $name } のロールを{ $role }に変更しました。
 member-removed = メンバーを外し、ルームの鍵を更新しました。
 
 join-connecting = 接続しています…
 join-waiting = ルームのメンバーによる承認を待っています…
+join-retrying = このコードに応答するルームがまだありません。数秒間再試行します…
 joined = { $role }として { $name } に参加しました。
 discover-searching = このネットワーク上のルームを探しています…
 discover-empty = このネットワークにはルームが見つかりませんでした。
@@ -101,8 +106,8 @@ discover-hint = `polyph join <コード> --relay <url>` で参加できます。
 chat-sent = 送信しました。
 approved = 承認しました。
 denied = 拒否しました。
-admitted = 参加を許可しました。
-not-admitted = 参加を断りました。
+admitted = { $name } の参加を{ $role }として許可しました。
+not-admitted = { $name } の参加を断りました。
 nothing-matches = { $id } に一致する待機中の項目はありません。
 claims-empty = 確保されているファイルはありません。
 claim-line = { $target }  { $agent }  { $reason }
@@ -111,11 +116,13 @@ board-empty-column = （なし）
 status-room = ルーム: { $name }
 status-connected = リレーに接続しています。
 status-disconnected = リレーに接続していません。
+status-ended = オーナーがこのルームを終了しました。内容は削除するまでこのデバイスに残ります: polyph room delete。
 status-members = { $count } 人がオンライン
 status-approvals = { $count ->
     [0] 承認待ちはありません。
    *[other] 承認待ちが { $count } 件あります。
 }
+status-approval-line = { $id }  { $who }: { $title }
 
 config-set = 保存しました。
 config-unknown = 不明な設定です。

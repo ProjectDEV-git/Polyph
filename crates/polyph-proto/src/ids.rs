@@ -88,23 +88,28 @@ macro_rules! byte_id {
 
 byte_id!(
     /// A room, derived from the hash of its signed genesis record.
-    RoomId, 16
+    RoomId,
+    16
 );
 byte_id!(
     /// A device: its Ed25519 public signing key.
-    DeviceId, 32
+    DeviceId,
+    32
 );
 byte_id!(
     /// A person. Random for incognito users, stable per account otherwise.
-    MemberId, 16
+    MemberId,
+    16
 );
 byte_id!(
     /// The relay-visible half of a join code, hashed.
-    RendezvousId, 16
+    RendezvousId,
+    16
 );
 byte_id!(
     /// Generic 16-byte id used for tasks, cards, approvals and messages.
-    ObjectId, 16
+    ObjectId,
+    16
 );
 
 /// Ed25519 signature bytes.

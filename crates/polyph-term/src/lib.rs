@@ -157,8 +157,10 @@ mod tests {
         // size; ask again a few times, and still fail if it never changes.
         let mut resized = false;
         for _ in 0..5 {
-            t.write(b"stty size\n").unwrap();
-            let got = read_until(&mut rx, "\n$ ").await;
+            // Wait for a marker, not the prompt: shells print escape codes
+            // (bracketed paste) before "$ ".
+            t.write(b"stty size; echo do''ne\n").unwrap();
+            let got = read_until(&mut rx, "done\r\n").await;
             if got.contains("30 100") {
                 resized = true;
                 break;

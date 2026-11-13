@@ -303,7 +303,9 @@ pub async fn term(ctx: &Ctx, api: &mut Api, cmd: TermCmd) -> anyhow::Result<()> 
             if ctx.json {
                 ctx.print_json(&v);
             } else {
-                print!("{}", v["text"].as_str().unwrap_or_default());
+                // Someone else's terminal output: never let its control
+                // sequences reach this terminal (title, clipboard, modes).
+                print!("{}", plain_text(v["text"].as_str().unwrap_or_default()));
             }
         }
         TermCmd::Send { id, text, no_enter, room } => {
@@ -705,4 +707,66 @@ pub async fn webhook(ctx: &Ctx, api: &mut Api, cmd: WebhookCmd) -> anyhow::Resul
         }
     }
     Ok(())
+}
+
+/// Terminal output as plain text: drops escape sequences (CSI, OSC, DCS and
+/// the rest) and control characters other than newline and tab, and turns
+/// CRLF into LF.
+pub(crate) fn plain_text(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\u{1b}' => match chars.next() {
+                // CSI: parameters, then one final byte in @..~.
+                Some('[') => {
+                    for c in chars.by_ref() {
+                        if ('@'..='~').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+                // OSC, DCS, SOS, PM, APC: until BEL or ESC \.
+                Some(']' | 'P' | 'X' | '^' | '_') => {
+                    while let Some(c) = chars.next() {
+                        if c == '\u{7}' || (c == '\u{1b}' && chars.next_if_eq(&'\\').is_some()) {
+                            break;
+                        }
+                    }
+                }
+                // Two-byte sequences with an intermediate, such as ESC ( B.
+                Some('(' | ')' | '*' | '+' | '#' | '%') => {
+                    chars.next();
+                }
+                _ => {}
+            },
+            '\r' if chars.peek() == Some(&'\n') => {}
+            '\n' | '\t' => out.push(c),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod plain_text_tests {
+    use super::plain_text;
+
+    #[test]
+    fn strips_escape_sequences_and_controls() {
+        let raw = "\u{1b}[?2004hbash$ echo hi\r\n\u{1b}[?2004lhi\r\n\u{1b}[1;32mok\u{1b}[0m\u{7}";
+        assert_eq!(plain_text(raw), "bash$ echo hi\nhi\nok");
+    }
+
+    #[test]
+    fn drops_titles_and_clipboard_writes() {
+        let raw = "a\u{1b}]0;evil title\u{7}b\u{1b}]52;c;aGk=\u{1b}\\c\u{1b}(Bd";
+        assert_eq!(plain_text(raw), "abcd");
+    }
+
+    #[test]
+    fn keeps_text_tabs_and_unicode() {
+        assert_eq!(plain_text("สวัสดี\t👋\n"), "สวัสดี\t👋\n");
+    }
 }

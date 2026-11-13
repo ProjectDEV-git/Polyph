@@ -31,6 +31,11 @@ pub fn confirm_default_yes(question: &str) -> anyhow::Result<bool> {
     Ok(matches!(s.trim().to_lowercase().as_str(), "" | "y" | "yes"))
 }
 
+/// Like [`confirm_default_yes`], but Enter alone means no: for what cannot be undone.
+pub fn confirm_default_no(question: &str) -> anyhow::Result<bool> {
+    Ok(matches!(ask(question)?.to_lowercase().as_str(), "y" | "yes"))
+}
+
 fn ask(question: &str) -> anyhow::Result<String> {
     use std::io::Write;
     eprint!("{question} ");
@@ -384,11 +389,14 @@ pub async fn start(
         }
     };
     let rid = room["id"].as_str().unwrap_or_default().to_string();
-    let wrote = if no_connect { vec![] } else { connect(ctx, &[], false, yes).await? };
-    if wrote.is_empty() {
-        ctx.out(l.t("start-agents-none"));
-    } else {
-        ctx.out(tr!(l, "start-agents-changed", entries = wrote.join(", ")));
+    // --no-connect asked us to leave agents alone; nothing to report.
+    if !no_connect {
+        let wrote = connect(ctx, &[], false, yes).await?;
+        if wrote.is_empty() {
+            ctx.out(l.t("start-agents-none"));
+        } else {
+            ctx.out(tr!(l, "start-agents-changed", entries = wrote.join(", ")));
+        }
     }
     let inv = call(&mut api, "room.invite", json!({ "room": rid, "reusable": true })).await?;
     ctx.out(String::new());
@@ -481,7 +489,20 @@ pub async fn doctor(ctx: &Ctx) -> anyhow::Result<()> {
             let cwd = std::env::current_dir()?;
             let linked = call(api, "folder.find", json!({ "dir": cwd })).await.unwrap_or_default();
             match linked["room"].as_str() {
-                None => checks.push(fail(l.t("doctor-folder-unlinked"), "polyph start")),
+                // Agents started in an unlinked folder join the only open
+                // room (`polyph mcp`, external::room_for): fine with one.
+                None => {
+                    let rooms = call(api, "room.list", json!({})).await.unwrap_or_default();
+                    let open: Vec<&Value> =
+                        rooms.as_array().into_iter().flatten().filter(|r| r["open"] == true).collect();
+                    checks.push(match open.as_slice() {
+                        [only] => {
+                            pass(tr!(l, "doctor-folder-only-room", room = only["name"].as_str().unwrap_or_default()))
+                        }
+                        [] => fail(l.t("doctor-folder-unlinked"), "polyph start"),
+                        _ => fail(l.t("doctor-folder-unlinked"), "polyph mcp --room <room>"),
+                    });
+                }
                 Some(r) => {
                     let name = linked["name"].as_str().unwrap_or(r).to_string();
                     match call(api, "room.get", json!({ "room": r })).await {

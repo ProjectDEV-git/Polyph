@@ -211,3 +211,42 @@ async fn a_waiting_phone_gets_an_answer_given_while_the_host_was_away() {
     ticking.abort();
     assert_eq!(joined["event"]["room"], rid.as_str());
 }
+
+/// A phone joining while its host is away waits a moment for it, as the
+/// daemon does, instead of failing at once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_phone_waits_a_moment_for_a_host_coming_back() {
+    let mut h = Harness::new().await.unwrap();
+    let a = h.add("Ann").await.unwrap();
+    let room = h.nodes[a].call("room.create", json!({ "name": "payments" })).await.unwrap();
+    let rid = room["id"].as_str().unwrap().to_string();
+    connected(&h, &rid, true).await;
+    let inv = h.nodes[a].call("room.invite", json!({ "room": rid, "reusable": true })).await.unwrap();
+    h.nodes[a].call("room.offline", json!({ "room": rid, "offline": true })).await.unwrap();
+    connected(&h, &rid, false).await;
+    h.until("code gone from the relay", || async { h.relay.hub.stats().2 == 0 }).await.unwrap();
+
+    let identity = Arc::new(DeviceIdentity::generate().unwrap());
+    let phone = Phone::new(identity, None, "Pim's phone", &h.relay.url()).unwrap();
+    let mut p = PhoneDriver::connect(phone, &h.relay.url(), h.clock.clone()).await.unwrap();
+    p.start_join(inv["code"].as_str().unwrap(), "Pim").await.unwrap();
+    p.wait_event("join_retrying", |_| true).await.unwrap();
+    h.nodes[a].call("room.offline", json!({ "room": rid, "offline": false })).await.unwrap();
+    connected(&h, &rid, true).await;
+    h.until("code hosted again", || async { h.relay.hub.stats().2 == 1 }).await.unwrap();
+
+    // The phone waits between attempts on its own clock.
+    let clock = h.clock.clone();
+    let ticking = tokio::spawn(async move {
+        loop {
+            clock.advance(1);
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    });
+    let knock = h.nodes[a].wait_event("knock", |e| e.kind() == "knock").await.unwrap();
+    let kid = knock.event["knock"]["id"].as_str().unwrap().to_string();
+    h.nodes[a].call("knock.decide", json!({ "room": rid, "knock": kid, "approve": true })).await.unwrap();
+    let joined = p.wait_event("joined", |_| true).await.unwrap();
+    ticking.abort();
+    assert_eq!(joined["event"]["room"], rid.as_str());
+}

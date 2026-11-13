@@ -142,8 +142,8 @@ fn join_with_approval_and_chat_converges() {
     let b = net.join("Bo", 0, 0, Role::Member);
     let c = net.join("Chai", b, 0, Role::Member);
     assert_eq!(net.nodes[c].core.role(), Role::Member);
-    for i in 0..3 {
-        assert_eq!(net.nodes[i].core.peers.len(), 2, "node {i} sees both others");
+    for (i, n) in net.nodes.iter().enumerate().take(3) {
+        assert_eq!(n.core.peers.len(), 2, "node {i} sees both others");
     }
     let now = net.now;
     let out = net.nodes[c].core.send_chat("สวัสดี, hello", None, None, now).unwrap();
@@ -261,8 +261,8 @@ fn acting_host_is_elected_and_fails_over() {
     let c = net.join("Chai", 0, 0, Role::Member);
     net.advance(10);
     let owner = net.nodes[0].core.me;
-    for i in 0..3 {
-        assert_eq!(net.nodes[i].core.host.device, Some(owner), "node {i}");
+    for (i, n) in net.nodes.iter().enumerate().take(3) {
+        assert_eq!(n.core.host.device, Some(owner), "node {i}");
     }
     // Owner goes offline; the maintainer takes over after the online window.
     net.nodes[0].online = false;
@@ -275,8 +275,8 @@ fn acting_host_is_elected_and_fails_over() {
     net.nodes[0].online = true;
     net.connect(0);
     net.advance(20);
-    for i in 0..3 {
-        assert_eq!(net.nodes[i].core.host.device, Some(owner), "node {i} after return");
+    for (i, n) in net.nodes.iter().enumerate().take(3) {
+        assert_eq!(n.core.host.device, Some(owner), "node {i} after return");
     }
     assert!(net.nodes[c].core.host.term > term);
 }
