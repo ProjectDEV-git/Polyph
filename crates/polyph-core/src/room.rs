@@ -944,6 +944,9 @@ impl RoomCore {
             RoomMessage::ActingHost { term, device, member: _, role: _, joined_at: _ } => {
                 out.extend(self.on_acting_host(from, term, device, now));
             }
+            // A knock naming this device is its own join, already done: the
+            // room's history replays it to the newcomer.
+            RoomMessage::Knock(k) if writer && k.device == self.me => {}
             RoomMessage::Knock(k) if writer => {
                 self.knocks.insert(k.id, k.clone());
                 out.push(Effect::Event(RoomEvent::Knock { knock: k }));
@@ -1096,6 +1099,8 @@ impl RoomCore {
         // member id or encryption key, takes over a device that is not the
         // joiner's (device ids are public). Only the same device re-joining passes.
         if dev == self.me {
+            // This device's own certificate: the knock that led to it is done.
+            self.knocks.retain(|_, k| k.device != self.me);
             return vec![];
         }
         let held = self.peers.get(&dev).and_then(|p| p.verified.clone());

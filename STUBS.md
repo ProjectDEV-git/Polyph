@@ -147,12 +147,20 @@ lists notes and agents write them.
   joiner only when the device that runs their join (usually the host) also
   makes the decision. A denial from another approver arrives as "no reason
   given". Needs a note field on `KnockDecided` (wire change, Kao).
-- **Joining just after a relay restart.** A host's code is unknown to the
-  relay until the host reconnects and hosts it again (3 to 6 seconds after
-  a one-second outage in local tests, longer after longer ones). A join in
-  that window fails at once with "no room is waiting for this code"; the
-  joiner does not retry `CodeUnknown` on a first attempt. Retrying would
-  spend the per-IP join budget (SEC-4), so it needs a decision.
+- **Joining just after a long relay outage.** A host's code is unknown to
+  the relay until the host reconnects and hosts it again. A first join that
+  gets `CodeUnknown` (or cannot reach the relay) tries twice more, 3 and 5
+  seconds later, which covers the 3 to 6 seconds a host took after a short
+  restart. After a longer outage the host's reconnect backoff is longer and
+  a join can still fail; the person tries again. Each retry spends one of
+  the relay's 20 join attempts per address per 10 minutes (SEC-4), which is
+  why there are only two.
+- **Ended rooms stay on members' devices.** When the owner ends a room, a
+  member's device stops connecting to it and shows it as ended, but keeps
+  its board and chat until the person runs `polyph room delete`. A member
+  offline when the room ended learns it only if the relay tells them; the
+  relay keeps no record of ended rooms, so a device offline at the time
+  reconnects to an empty room under that id. Needs a tombstone on the relay.
 - **Device ids in join requests (SEC-3).** A join request carries no proof
   that the joiner holds the device key it names. Clients refuse knocks that
   name a known, removed or the owner's device, and keep the certificate

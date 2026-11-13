@@ -61,12 +61,16 @@ room-opened = 已打开 { $name }。
 room-closed = 已在本设备上关闭 { $name }。
 room-deleted = 已从本设备删除 { $name }。
 room-ended = 已结束 { $name }，所有人都无法再访问。
+end-confirm = 结束 { $name } 并为所有人删除它，包括看板、聊天和讨论串吗？此操作无法撤销。[y/N]
+end-needs-yes = 结束 { $name } 会为所有人删除它；请在终端中运行以确认，或加上 --yes。
+end-cancelled = 已保留房间。
 room-exported = 看板和聊天已保存到 { $path }。
 rooms-empty = 还没有房间。用 `polyph room create <名称>` 创建，或用 `polyph join <加入码>` 加入。
 room-line = { $name }  { $role }  { $state }  { $online } 人在线
 room-state-connected = 已连接
 room-state-connecting = 正在连接
 room-state-closed = 已关闭
+room-state-ended = 已被所有者结束
 quick-session-name = 快速会话
 no-current-room = 没有打开的房间。用 `polyph room open <名称>` 打开。
 invite-code = 加入码：{ $code }
@@ -92,6 +96,7 @@ member-removed = 已移除成员并轮换房间密钥。
 
 join-connecting = 正在连接…
 join-waiting = 正在等待房间成员批准…
+join-retrying = 还没有房间响应这个代码。正在重试几秒钟…
 joined = 已以{ $role }身份加入 { $name }。
 discover-searching = 正在查找此网络中的房间…
 discover-empty = 此网络中没有找到房间。
@@ -111,11 +116,13 @@ board-empty-column = （空）
 status-room = 房间：{ $name }
 status-connected = 已连接到中继。
 status-disconnected = 未连接到中继。
+status-ended = 所有者已结束这个房间。在你删除之前，内容仍保留在此设备上：polyph room delete。
 status-members = { $count } 人在线
 status-approvals = { $count ->
     [0] 没有待批准的请求。
    *[other] 有 { $count } 个请求待批准。
 }
+status-approval-line = { $id }  { $who }：{ $title }
 
 config-set = 已保存。
 config-unknown = 未知的设置项。

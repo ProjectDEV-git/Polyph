@@ -65,12 +65,16 @@ room-opened = Opened { $name }.
 room-closed = Closed { $name } on this device.
 room-deleted = Deleted { $name } from this device.
 room-ended = Ended { $name }. It is gone for everyone.
+end-confirm = End { $name } and delete it for everyone, with its board, chat and threads? This cannot be undone. [y/N]
+end-needs-yes = Ending { $name } deletes it for everyone; run it in a terminal to confirm, or add --yes.
+end-cancelled = Kept the room.
 room-exported = Saved the board and chat to { $path }.
 rooms-empty = No rooms yet. Create one with `polyph room create <name>` or join one with `polyph join <code>`.
 room-line = { $name }  { $role }  { $state }  { $online } online
 room-state-connected = connected
 room-state-connecting = connecting
 room-state-closed = closed
+room-state-ended = ended by its owner
 quick-session-name = quick session
 no-current-room = No room is open. Open one with `polyph room open <name>`.
 invite-code = Join code: { $code }
@@ -97,6 +101,7 @@ member-removed = Removed the member and rotated the room key.
 # Joining
 join-connecting = Connecting…
 join-waiting = Waiting for someone in the room to approve you…
+join-retrying = No room is answering this code yet. Trying again for a few seconds…
 joined = Joined { $name } as { $role }.
 discover-searching = Looking for rooms on this network…
 discover-empty = No rooms found on this network.
@@ -118,6 +123,7 @@ board-empty-column = (empty)
 status-room = Room: { $name }
 status-connected = Connected to the relay.
 status-disconnected = Not connected to the relay.
+status-ended = Its owner ended this room. What it held stays on this device until you delete it: polyph room delete.
 status-members = { $count ->
     [one] 1 person online
    *[other] { $count } people online
@@ -127,6 +133,7 @@ status-approvals = { $count ->
     [one] 1 approval waiting.
    *[other] { $count } approvals waiting.
 }
+status-approval-line = { $id }  { $who }: { $title }
 
 # Config and relay
 config-set = Saved.

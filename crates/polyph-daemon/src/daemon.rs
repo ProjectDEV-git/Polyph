@@ -243,6 +243,8 @@ pub struct RoomInfo {
     pub role: Role,
     pub relay: String,
     pub connected: bool,
+    /// Its owner ended it; it stays offline.
+    pub ended: bool,
     /// Why the relay is unreachable, when it is. Absent while connected.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relay_error: Option<crate::runtime::RelayErrorInfo>,
@@ -406,6 +408,11 @@ impl Daemon {
                             let id = core.id;
                             let rt = RoomRuntime::new(shared.with_clock(core), relay);
                             crate::runtime::load_codes(&mut *rt.ctx.lock().await, &shared, shared.clock.now());
+                            if paths.room_ended_file(&id.to_hex()).exists() {
+                                let mut c = rt.ctx.lock().await;
+                                c.ended = true;
+                                c.offline = true;
+                            }
                             d.rooms.lock().await.insert(id, rt.clone());
                             if open_list.contains(&id.to_hex()) {
                                 rt.start(shared.clone());
@@ -493,17 +500,23 @@ impl Daemon {
             role: ctx.core.role(),
             relay: ctx.relay.url.clone(),
             connected: ctx.connected,
+            ended: ctx.ended,
             relay_error: ctx.relay_error.clone(),
             open,
-            members_online: ctx
-                .core
-                .peers
-                .values()
-                .filter(|p| p.online(now))
-                .filter_map(|p| p.member())
-                .collect::<std::collections::HashSet<_>>()
-                .len()
-                + 1,
+            // Offline, others' presence is only how recently they were
+            // seen: do not count them as online.
+            members_online: if ctx.connected {
+                ctx.core
+                    .peers
+                    .values()
+                    .filter(|p| p.online(now))
+                    .filter_map(|p| p.member())
+                    .collect::<std::collections::HashSet<_>>()
+                    .len()
+                    + 1
+            } else {
+                1
+            },
             members: ctx
                 .core
                 .peers
@@ -710,7 +723,16 @@ impl Daemon {
                 }
                 let p: P = param(&params)?;
                 let rt = self.find(&p.room).await?;
-                rt.ctx.lock().await.offline = p.offline;
+                {
+                    let mut c = rt.ctx.lock().await;
+                    if c.ended && !p.offline {
+                        return Err(ApiError::BadRequest(
+                            "its owner ended this room; it cannot connect again (delete it with `polyph room delete`)"
+                                .into(),
+                        ));
+                    }
+                    c.offline = p.offline;
+                }
                 rt.kick.notify_one();
                 ok(json!({}))
             }
@@ -720,6 +742,7 @@ impl Daemon {
                 self.close_room(&rt).await;
                 self.rooms.lock().await.remove(&rt.id);
                 let _ = std::fs::remove_file(self.shared.paths.room_file(&rt.id.to_hex()));
+                let _ = std::fs::remove_file(self.shared.paths.room_ended_file(&rt.id.to_hex()));
                 let _ = std::fs::remove_file(self.shared.paths.room_codes_file(&rt.id.to_hex()));
                 ok(json!({}))
             }
@@ -752,6 +775,7 @@ impl Daemon {
                 self.close_room(&rt).await;
                 self.rooms.lock().await.remove(&rt.id);
                 let _ = std::fs::remove_file(self.shared.paths.room_file(&rt.id.to_hex()));
+                let _ = std::fs::remove_file(self.shared.paths.room_ended_file(&rt.id.to_hex()));
                 let _ = std::fs::remove_file(self.shared.paths.room_codes_file(&rt.id.to_hex()));
                 ok(json!({ "exported": exported }))
             }
@@ -2252,6 +2276,8 @@ impl Daemon {
         // closes, a lost connection is retried, not reported.
         let mut dropped_at: Option<tokio::time::Instant> = None;
         let mut backoff = JOIN_RETRY_FIRST;
+        let mut first_retries = JOIN_FIRST_RETRIES.into_iter();
+        let mut retrying_shown = false;
         loop {
             match self.join_attempt(code, name, addr, lan, caps, &salt).await {
                 Ok(mut a) => {
@@ -2297,8 +2323,23 @@ impl Daemon {
                     info!("join connection lost while waiting for approval; reconnecting");
                     dropped_at = Some(tokio::time::Instant::now());
                 }
-                Err(Attempt::Retry(e)) if dropped_at.is_some() => {
+                Err(Attempt::Retry(e) | Attempt::NotYet(e)) if dropped_at.is_some() => {
                     debug!(error = ?e, "join reconnect failed; trying again");
+                }
+                // The relay may have just restarted, before the host hosted
+                // its codes again: wait a little rather than fail at once.
+                Err(Attempt::NotYet(e)) => {
+                    let Some(wait) = first_retries.next() else { return Err(e) };
+                    if tokio::time::Instant::now() + wait >= deadline {
+                        return Err(e);
+                    }
+                    debug!(error = ?e, "join: the relay does not know the code yet; trying again");
+                    if !retrying_shown {
+                        retrying_shown = true;
+                        self.shared.emit(ApiEvent::global("join_retrying", json!({ "code": code.first_half() })));
+                    }
+                    tokio::time::sleep(wait).await;
+                    continue;
                 }
                 Err(Attempt::Retry(e) | Attempt::Fail(e)) => return Err(e),
             }
@@ -2327,11 +2368,12 @@ impl Daemon {
         salt: &[u8; 16],
     ) -> Result<JoinSession, Attempt> {
         let retry = |e: String| Attempt::Retry(ApiError::Failed(e));
+        let not_yet = |e: String| Attempt::NotYet(ApiError::Failed(e));
         let seen = Arc::new(std::sync::Mutex::new(None));
         let mode = if lan && addr.pin.is_none() { TlsMode::Record(seen.clone()) } else { addr.tls() };
         let mut client = RelayClient::connect_with(&addr.url, &self.shared.identity, mode)
             .await
-            .map_err(|e| retry(e.to_string()))?;
+            .map_err(|e| not_yet(e.to_string()))?;
         let recorded = seen.lock().ok().and_then(|g| *g).or(addr.pin);
         let binding = if lan { recorded.map(|f| f.to_vec()).unwrap_or_default() } else { vec![] };
         client.send(ClientFrame::JoinCode { rendezvous: code.rendezvous() }).await.map_err(|e| retry(e.to_string()))?;
@@ -2341,7 +2383,7 @@ impl Daemon {
                 Some(RelayFrame::Error { code: c, detail }) => {
                     return Err(match c {
                         // The host may be reconnecting and hosting it again.
-                        ErrorCode::CodeUnknown => Attempt::Retry(ApiError::NotFound(
+                        ErrorCode::CodeUnknown => Attempt::NotYet(ApiError::NotFound(
                             "no room is waiting for this code; it may have expired or been used, or the person who made it is offline".into(),
                         )),
                         ErrorCode::CodeLocked => Attempt::Fail(ApiError::Forbidden(
@@ -2438,6 +2480,11 @@ pub const JOIN_RECONNECT_SECS: u64 = 180;
 /// about 9 of them.
 const JOIN_RETRY_FIRST: Duration = Duration::from_secs(2);
 const JOIN_RETRY_MAX: Duration = Duration::from_secs(30);
+/// Waits before trying a first join again when the relay does not know the
+/// code yet: after a relay restart the host takes a few seconds (3 to 6 in
+/// tests) to host its codes again. Two more attempts, about 8 seconds, so a
+/// mistyped code costs 3 of the relay's 20 attempts per address, not 1.
+const JOIN_FIRST_RETRIES: [Duration; 2] = [Duration::from_secs(3), Duration::from_secs(5)];
 
 /// A join request that reached the room, waiting for the answer.
 struct JoinSession {
@@ -2450,6 +2497,10 @@ struct JoinSession {
 /// Why a join attempt stopped: worth reconnecting for, or final.
 #[derive(Debug)]
 enum Attempt {
+    /// The relay did not know the code, or could not be reached, before any
+    /// session started: nothing counted against the code. Retried briefly
+    /// on a first attempt too (see [`JOIN_FIRST_RETRIES`]).
+    NotYet(ApiError),
     Retry(ApiError),
     Fail(ApiError),
 }

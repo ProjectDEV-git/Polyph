@@ -79,7 +79,13 @@ pub async fn after_join(ctx: &Ctx, api: &mut Api, room: &str, clone: Option<bool
         }
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
-    let Some(url) = info["url"].as_str() else { return Ok(()) };
+    let Some(url) = info["url"].as_str() else {
+        // Asked to clone, but there is nothing to clone: say so.
+        if clone == Some(true) && !ctx.json {
+            ctx.out(l.t("repo-clone-none"));
+        }
+        return Ok(());
+    };
     if clone == Some(false) || !empty_dir(&cwd) {
         if !ctx.json {
             ctx.out(tr!(l, "repo-clone-hint", url = url));

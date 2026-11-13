@@ -91,7 +91,7 @@ need to be working within minutes. Some have no paid agent subscription.
    `polyph host --lan`, and teammates `polyph join A1B2-CDEF --lan`
    (or `polyph discover` to find the room).
 9. At the end, save the board and chat into the repository:
-   `polyph end --export .`
+   `polyph end --export .` (it asks first; add `--yes` in a script)
 
 ## 3. Open source maintainers
 

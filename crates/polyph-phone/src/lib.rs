@@ -139,6 +139,10 @@ const JOIN_RECONNECT_SECS: i64 = 180;
 /// counts against the relay's per-address join limit (20 per 10 minutes).
 const JOIN_RETRY_FIRST: i64 = 2;
 const JOIN_RETRY_MAX: i64 = 30;
+/// Waits before trying a first join again when the relay does not know the
+/// code yet, as the daemon does: a host takes a few seconds to host its codes
+/// again after a relay restart.
+const JOIN_FIRST_RETRIES: [i64; 2] = [3, 5];
 const LOST_WHILE_WAITING: &str = "lost the connection to the room while waiting for approval; join again";
 
 struct Join {
@@ -155,6 +159,8 @@ struct Join {
     retry_at: i64,
     /// The wait before the attempt after next.
     backoff: i64,
+    /// Retries used from [`JOIN_FIRST_RETRIES`].
+    first_retries: usize,
 }
 
 impl Join {
@@ -349,6 +355,7 @@ impl Phone {
             dropped_at: None,
             retry_at: 0,
             backoff: JOIN_RETRY_FIRST,
+            first_retries: 0,
         });
         Ok(out)
     }
@@ -479,6 +486,19 @@ impl Phone {
             // Waiting for its host to come back, which hosts the code again.
             (Some(JoinStage::Started), RelayFrame::Error { code: ErrorCode::CodeUnknown, .. }) if j.sent => {
                 j.retry_later(now);
+                self.join = Some(j);
+            }
+            // A first attempt the relay does not know yet: its host may still
+            // be hosting its codes again after a relay restart.
+            (Some(JoinStage::Started), RelayFrame::Error { code: ErrorCode::CodeUnknown, .. })
+                if j.first_retries < JOIN_FIRST_RETRIES.len() =>
+            {
+                if j.first_retries == 0 {
+                    out.global("join_retrying", json!({ "code": j.code.first_half() }));
+                }
+                j.retry_at = now + JOIN_FIRST_RETRIES[j.first_retries];
+                j.first_retries += 1;
+                j.stage = Some(JoinStage::Retry);
                 self.join = Some(j);
             }
             (_, RelayFrame::Error { code, detail }) => {

@@ -118,6 +118,9 @@ enum Cmd {
         /// Save the board and chat into this repository before ending.
         #[arg(long)]
         export: Option<PathBuf>,
+        /// End a room without asking (quick sessions never ask).
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
     Chat {
         message: String,
@@ -996,9 +999,12 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
             let mut waiting_shown = false;
             let r = api
                 .call_with_events("join", json!({ "code": code, "name": name, "relay": relay, "lan": lan }), |ev| {
-                    if ev["params"]["event"]["type"] == "join_pending" && !waiting_shown && !ctx.json {
+                    let kind = &ev["params"]["event"]["type"];
+                    if kind == "join_pending" && !waiting_shown && !ctx.json {
                         waiting_shown = true;
                         println!("{}", l.t("join-waiting"));
+                    } else if kind == "join_retrying" && !ctx.json {
+                        println!("{}", l.t("join-retrying"));
                     }
                 })
                 .await
@@ -1086,9 +1092,22 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
             call(&mut api, "room.close", json!({ "room": room })).await?;
             ctx.out(tr!(l, "room-closed", name = display_name(ctx, &info)));
         }
-        Cmd::End { room, export } => {
+        Cmd::End { room, export, yes } => {
             let room = ctx.room(&mut api, room).await?;
             let info = call(&mut api, "room.get", json!({ "room": room })).await?;
+            // Ending a room deletes it for everyone: confirm, unless it is a
+            // quick session, which exists to be ended.
+            if info["quick"] != true && !yes {
+                use std::io::IsTerminal;
+                let name = display_name(ctx, &info);
+                if ctx.json || !std::io::stdin().is_terminal() {
+                    anyhow::bail!(tr!(l, "end-needs-yes", name = name.as_str()));
+                }
+                if !setup::confirm_default_no(&tr!(l, "end-confirm", name = name.as_str()))? {
+                    ctx.out(l.t("end-cancelled"));
+                    return Ok(());
+                }
+            }
             let r = call(&mut api, "room.end", json!({ "room": room, "export_dir": export })).await?;
             if let Some(p) = r["exported"].as_str() {
                 ctx.out(tr!(l, "room-exported", path = p));
@@ -1183,8 +1202,19 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                             .map(str::to_string)
                             .unwrap_or_else(|| l.t("quick-session-name"))
                     ));
-                    ctx.out(if s["connected"] == true { l.t("status-connected") } else { l.t("status-disconnected") });
+                    let ended = s["connected"] != true
+                        && call(&mut api, "room.get", json!({ "room": s["room"] }))
+                            .await
+                            .is_ok_and(|i| i["ended"] == true);
+                    ctx.out(if ended {
+                        l.t("status-ended")
+                    } else if s["connected"] == true {
+                        l.t("status-connected")
+                    } else {
+                        l.t("status-disconnected")
+                    });
                     if s["connected"] != true
+                        && !ended
                         && let Ok(info) = call(&mut api, "room.get", json!({ "room": s["room"] })).await
                         && let Some(m) = info["relay_error"]["message"].as_str()
                     {
@@ -1203,6 +1233,18 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                     // "No approvals waiting." above someone waiting reads as a contradiction.
                     if approvals > 0 || !knocking {
                         ctx.out(tr!(l, "status-approvals", count = approvals));
+                    }
+                    // What each one is, and its id for `polyph approve`.
+                    for a in s["approvals"].as_array().into_iter().flatten() {
+                        let id: String = a["id"].as_str().unwrap_or_default().chars().take(6).collect();
+                        ctx.out(tr!(
+                            l,
+                            "status-approval-line",
+                            id = id.clone(),
+                            who = a["agent"].as_str().unwrap_or_default(),
+                            title = a["title"].as_str().unwrap_or_default()
+                        ));
+                        ctx.out(tr!(l, "knock-hint", id = id));
                     }
                     print_knocks(ctx, &knocks);
                 }
@@ -1879,7 +1921,9 @@ async fn room_cmd(ctx: &Ctx, api: &mut Api, cmd: RoomCmd) -> anyhow::Result<()> 
                 ctx.out(l.t("rooms-empty"));
             } else {
                 for r in v.as_array().into_iter().flatten() {
-                    let state = if r["open"] != true {
+                    let state = if r["ended"] == true {
+                        l.t("room-state-ended")
+                    } else if r["open"] != true {
                         l.t("room-state-closed")
                     } else if r["connected"] == true {
                         l.t("room-state-connected")

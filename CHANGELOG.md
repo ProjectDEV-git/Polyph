@@ -30,6 +30,30 @@ GitHub release page.
   but not write in it; an Owner or Maintainer can make you a Member",
   instead of "your role in this room does not allow that". `polyph room
   role` says "Bo's role is now Viewer." instead of "Changed the role."
+- **A join right after a relay restart waits for the host.** It used to
+  fail at once with "no room is waiting for this code" while the host was
+  still hosting its codes again. `polyph join` (and the phone) now says
+  "No room is answering this code yet. Trying again for a few seconds…" and
+  tries twice more over 8 seconds. A mistyped code fails after that wait.
+- **People no longer see their own join request after joining.** Each new
+  member's `polyph status` and `polyph room knocks` listed "<them> wants to
+  join" for as long as the request lived.
+- **Ending a room reaches its members.** Their devices kept a connection to
+  the deleted room, reported it as connected, and after a restart made the
+  relay hold an empty room under its id. They now disconnect, show "ended by
+  its owner", and stay that way across restarts.
+- **`polyph end` asks before deleting a room for everyone** (Enter alone
+  keeps it; scripts pass `--yes`). Quick sessions still end at once.
+- **`polyph status` lists each approval** with who asks, what for and its
+  id, instead of only "1 approval waiting."
+- **`polyph term read` prints plain text.** It printed the terminal's raw
+  escape sequences, which could change the reader's terminal: title,
+  clipboard, modes.
+- **`polyph doctor` stops telling people who joined a room to run `polyph
+  start`** in a folder that is not linked to a room: agents started there
+  join the only open room. `polyph join --clone` says when the room has no
+  repository to clone.
+- **Offline, a room counts only you as online**, not whoever was seen last.
 - **`polyph join` with a mistyped code fails without printing
   "Connecting…" first**, and `polyph start --no-connect` no longer tells
   you to pass `--no-connect`.

@@ -130,6 +130,8 @@ pub struct RoomCtx {
     /// The last failed relay connect, cleared once connected.
     pub relay_error: Option<RelayErrorInfo>,
     pub offline: bool,
+    /// Its owner ended it; see [`Paths::room_ended_file`](crate::paths::Paths::room_ended_file).
+    pub ended: bool,
     pub dirty: bool,
     pub relay: RelayAddr,
     /// Fingerprint bound into join PAKEs on this connection (LAN relays).
@@ -201,6 +203,7 @@ impl RoomRuntime {
                 connected: false,
                 relay_error: None,
                 offline: false,
+                ended: false,
                 dirty: true,
                 relay,
                 binding: vec![],
@@ -325,9 +328,10 @@ pub async fn apply(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, effects
                             log.pop_front();
                         }
                     }
-                    RoomEvent::YouWereRemoved | RoomEvent::RoomEnded => {
+                    RoomEvent::YouWereRemoved => {
                         ctx.offline = true;
                     }
+                    RoomEvent::RoomEnded => mark_ended(rt, ctx, shared),
                     _ => {}
                 }
                 let mut api = ApiEvent::room(&rt.id, &ev);
@@ -395,6 +399,19 @@ async fn finish_knocked_join(ctx: &mut RoomCtx, knock: ObjectId, reply: &JoinRep
             let _ = s.send(ClientFrame::Pake { session, data: ct }).await;
         }
     }
+}
+
+/// The owner ended the room: drop the connection now and never reconnect,
+/// across restarts too. Otherwise the connection stays up to a room the relay
+/// deleted, and a later reconnect brings it back there as an empty room.
+/// The local copy (board, chat) stays until the person deletes the room.
+pub fn mark_ended(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared) {
+    ctx.offline = true;
+    ctx.ended = true;
+    if let Err(e) = std::fs::write(shared.paths.room_ended_file(&rt.id.to_hex()), b"") {
+        warn!(room = %rt.id.short(), error = %e, "could not record that the room ended");
+    }
+    rt.kick.notify_one();
 }
 
 /// Failed relay connects are logged at most this often.
@@ -599,7 +616,7 @@ async fn handle_frame(rt: &RoomRuntime, shared: &Shared, f: RelayFrame) {
             }
         }
         RelayFrame::RoomEnded { .. } => {
-            ctx.offline = true;
+            mark_ended(rt, &mut *ctx, shared);
             shared.emit(ApiEvent::room(&rt.id, &RoomEvent::RoomEnded));
         }
         RelayFrame::CodeHosted { rendezvous } => {

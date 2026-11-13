@@ -34,6 +34,11 @@ impl Paths {
     pub fn room_file(&self, room_hex: &str) -> PathBuf {
         self.rooms().join(format!("{room_hex}.room"))
     }
+    /// Present once the room's owner ended it: the room stays offline and is
+    /// never connected again (the relay deleted it).
+    pub fn room_ended_file(&self, room_hex: &str) -> PathBuf {
+        self.rooms().join(format!("{room_hex}.ended"))
+    }
     /// The room's live join codes, sealed with the storage key.
     pub fn room_codes_file(&self, room_hex: &str) -> PathBuf {
         self.rooms().join(format!("{room_hex}.codes"))
