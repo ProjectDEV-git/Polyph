@@ -944,13 +944,15 @@ impl Daemon {
                     .find(|k| k.to_hex().starts_with(&p.knock.to_lowercase()))
                     .copied()
                     .ok_or_else(|| ApiError::NotFound("no such knock".into()))?;
+                let role = p.role.unwrap_or(Role::Member);
                 let fx = if p.approve {
-                    c.core.approve_knock(id, p.role.unwrap_or(Role::Member), now)?
+                    c.core.approve_knock(id, role, now)?
                 } else {
                     c.core.deny_knock_with_note(id, p.note)?
                 };
                 apply(&rt, &mut c, &self.shared, fx).await;
-                ok(json!({}))
+                // The role the new member's certificate carries.
+                ok(if p.approve { json!({ "role": role }) } else { json!({}) })
             }
             "join" => self.join(param(&params)?).await,
             "chat.send" => {

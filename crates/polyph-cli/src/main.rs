@@ -1195,16 +1195,16 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                         ));
                     }
                     ctx.out(tr!(l, "status-members", count = s["members_online"].as_u64().unwrap_or(0)));
-                    ctx.out(tr!(
-                        l,
-                        "status-approvals",
-                        count = s["approvals"].as_array().map(|a| a.len()).unwrap_or(0)
-                    ));
                     // People at the door are not agent approvals, but the
                     // host has to hear about them here or nowhere.
-                    if let Ok(knocks) = call(&mut api, "knock.list", json!({ "room": s["room"] })).await {
-                        print_knocks(ctx, &knocks);
+                    let knocks = call(&mut api, "knock.list", json!({ "room": s["room"] })).await.unwrap_or_default();
+                    let knocking = knocks.as_array().is_some_and(|k| !k.is_empty());
+                    let approvals = s["approvals"].as_array().map(|a| a.len()).unwrap_or(0);
+                    // "No approvals waiting." above someone waiting reads as a contradiction.
+                    if approvals > 0 || !knocking {
+                        ctx.out(tr!(l, "status-approvals", count = approvals));
                     }
+                    print_knocks(ctx, &knocks);
                 }
             }
         }
@@ -1830,11 +1830,12 @@ async fn decide(
         .find(|k| k["id"].as_str().is_some_and(|k| k.starts_with(&id.to_lowercase())));
     if let Some(k) = knock {
         let name = k["display_name"].as_str().filter(|n| !n.trim().is_empty()).unwrap_or(id).to_string();
-        let shown_role = ctx.role(&role.as_deref().unwrap_or("member").to_lowercase());
-        call(api, "knock.decide", json!({ "room": room, "knock": id, "approve": yes, "role": role, "note": note }))
-            .await?;
+        let r =
+            call(api, "knock.decide", json!({ "room": room, "knock": id, "approve": yes, "role": role, "note": note }))
+                .await?;
         ctx.out(if yes {
-            tr!(l, "admitted", name = name, role = shown_role)
+            // The role the daemon granted, not what we asked for.
+            tr!(l, "admitted", name = name, role = ctx.role(r["role"].as_str().unwrap_or("member")))
         } else {
             tr!(l, "not-admitted", name = name)
         });

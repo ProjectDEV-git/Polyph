@@ -143,6 +143,16 @@ lists notes and agents write them.
   member id. A Member (who cannot approve joins) cannot pair a phone or add
   an agent host; both commands say so up front. Needs a device-link
   signature in `JoinRequest` (wire change, Kao).
+- **Deny notes from another device.** `polyph deny --note` reaches the
+  joiner only when the device that runs their join (usually the host) also
+  makes the decision. A denial from another approver arrives as "no reason
+  given". Needs a note field on `KnockDecided` (wire change, Kao).
+- **Joining just after a relay restart.** A host's code is unknown to the
+  relay until the host reconnects and hosts it again (3 to 6 seconds after
+  a one-second outage in local tests, longer after longer ones). A join in
+  that window fails at once with "no room is waiting for this code"; the
+  joiner does not retry `CodeUnknown` on a first attempt. Retrying would
+  spend the per-IP join budget (SEC-4), so it needs a decision.
 - **Device ids in join requests (SEC-3).** A join request carries no proof
   that the joiner holds the device key it names. Clients refuse knocks that
   name a known, removed or the owner's device, and keep the certificate

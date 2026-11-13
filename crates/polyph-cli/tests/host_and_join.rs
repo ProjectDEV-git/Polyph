@@ -107,6 +107,8 @@ fn ann_hosts_bo_joins_and_each_reads_plain_answers() {
     // Bo knocks; Ann's status shows him; she turns him away with a note.
     let joining = bo.spawn(&["join", &code, "--me", "Bo", "--no-clone"]);
     let id = ann.wait_for_knock("Bo");
+    let (_, out) = ann.run(&["status"]);
+    assert!(!out.contains("No approvals waiting"), "status contradicts the knock under it:\n{out}");
     let (ok, out) = ann.run(&["deny", &id, "--note", "wrong room, ask Kim"]);
     assert!(ok, "{out}");
     assert!(out.contains("Turned Bo away."), "{out}");
