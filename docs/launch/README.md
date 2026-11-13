@@ -20,6 +20,7 @@ in this folder.
 | `reddit-rust.md` | Post for r/rust |
 | `reddit-localllama.md` | Post for r/LocalLLaMA (bring your own model) |
 | `positioning.md` | Polyph against Amoeba and Murmell, with sources and dates, plus beta limits |
+| `blurb.md` | The canonical short Polyph description, for listings, posts and press |
 | `website-copy.md` | Proposed changes to `apps/web/src/site` and `locales/en/site.ftl` for the beta |
 
 ## Rules every draft follows

@@ -111,10 +111,17 @@ pub fn status(p: &mut Phone, theme: Theme, now: i64) -> StatusSnapshot {
         let Some(first) = log.front() else { continue };
         let a = &first.agent;
         let member = a.member.to_hex();
-        let task = log.iter().find_map(|e| match &e.kind {
-            AgentEventKind::Started { task, .. } => task.map(|t| t.to_hex()),
-            _ => None,
-        });
+        let mut task = None;
+        let mut model = None;
+        for e in log {
+            match &e.kind {
+                AgentEventKind::Started { task: t, model: m, .. } => {
+                    task = t.map(|t| t.to_hex());
+                    model = m.clone();
+                }
+                _ => {}
+            }
+        }
         let state = agent_state(log).unwrap_or(AgentState::Starting);
         let n = per_member.entry(member.clone()).or_insert(0);
         *n = n.saturating_add(1);
@@ -129,6 +136,7 @@ pub fn status(p: &mut Phone, theme: Theme, now: i64) -> StatusSnapshot {
             color: if hue == NO_HUE { String::new() } else { voice_css(hue, Step::Agent(*n - 1), theme) },
             state,
             task: task.and_then(|t| cards.iter().find(|c| c.id == t).map(|c| c.title.clone())),
+            model,
             mine: false,
             cloud: r.core.is_agent_host(&a.device),
         });

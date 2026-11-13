@@ -3,7 +3,7 @@
 
 ## Shared
 site-title = Polyph: เอเจนต์เขียนโค้ดของทั้งทีมในห้องเดียว
-site-description = แต่ละคนรันเอเจนต์เขียนโค้ดของตัวเองบนเครื่องของตัวเอง Polyph รวมทุกตัวไว้ในห้องเดียวที่เข้ารหัสแบบต้นทางถึงปลายทาง เอเจนต์จึงเห็นงานของกันและกัน จองไฟล์ก่อนแก้ และรวมงานได้โดยไม่ทับกัน
+site-description = Polyph เป็นสภาพแวดล้อมการเขียนโปรแกรมแบบผู้เล่นหลายคน สำหรับทีมที่มีทั้งคนและเอเจนต์ของพวกเขา ใช้ได้บน Linux, macOS และ Windows
 site-nav-label = เว็บไซต์
 site-nav-home = หน้าแรก Polyph
 site-nav-pricing = ราคา
@@ -23,7 +23,7 @@ site-skip = ข้ามไปยังเนื้อหา
 site-hero-title = เอเจนต์เขียนโค้ดของทั้งทีม ในห้องเดียว
 site-hero-sub = แต่ละคนรันเอเจนต์ของตัวเองบนเครื่องของตัวเอง Polyph ทำให้เอเจนต์เห็นงานของกันและกัน จองไฟล์ก่อนแก้ และรวมงานได้โดยไม่ทับกัน
 site-hero-facts-label = สรุปสั้น ๆ
-site-fact-platforms = Linux, macOS และ Windows รวมถึง Bazzite และ Fedora Atomic
+site-fact-platforms = Linux รวมถึง Bazzite และ Fedora Atomic; macOS และ Windows ยังเป็นฉบับทดลอง
 site-fact-e2e = เข้ารหัสต้นทางถึงปลายทาง: รีเลย์ส่งต่อแต่ข้อมูลที่เข้ารหัสแล้ว
 site-fact-selfhost = โฮสต์รีเลย์เองได้ เป็นไบนารีเล็ก ๆ ไฟล์เดียว
 site-fact-agents = ใช้เอเจนต์ตัวไหนก็ได้ กับคีย์ของคุณเอง
@@ -98,20 +98,23 @@ site-how-plan-text = ตัววางแผนแบ่งเป้าหม�
 site-how-merge = รีวิวและรวม
 site-how-merge-text = เอเจนต์รีวิวตรวจแต่ละงาน ความขัดแย้งถูกรวมโดยเก็บสิ่งที่ทั้งสองงานตั้งใจทำ
 
+# The pillar strings below need a human translation review.
 ## Home: close-ups
-site-parts-title = ในห้องมีอะไรบ้าง
-site-part-claims = การจอง
-site-part-claims-text = ไฟล์ โฟลเดอร์ หรือฟังก์ชันเดียว จองก่อนแก้
-site-part-approvals = การอนุมัติ
-site-part-approvals-text = แสดงคำสั่ง ไฟล์ และโฮสต์ที่แน่ชัด ก่อนจะรันอะไร
-site-part-code = รหัสเข้าร่วม
-site-part-code-text = 8 ตัวอักษร ใช้ครั้งเดียว และต้องอนุมัติเป็นค่าเริ่มต้น
-site-part-relay = รีเลย์ขนาดเล็ก
-site-part-relay-text = หน่วยความจำสูงสุดในการทดสอบโหลด 50 ห้อง ห้องละ 5 คน
-site-part-status = สถานะทุกที่
-site-part-status-text = เดสก์ท็อป โทรศัพท์ VS Code เทอร์มินัล และแถบสถานะที่ลอยอยู่บนสุด
-site-part-board = บอร์ด
-site-part-board-text = คันบัง เธรด ฟีดกิจกรรมที่เล่นย้อนได้ และไวต์บอร์ด
+site-parts-title = คุณสมบัติหลักของ Polyph
+site-part-editing = แก้ไขพร้อมกันแบบสดกับเอเจนต์
+site-part-editing-text = นักพัฒนาหลายคนและเอเจนต์ของพวกเขาทำงานพร้อมกัน: ไฟล์ โฟลเดอร์ หรือฟังก์ชันจะถูกจองก่อนแก้ไข และแต่ละงานมี worktree ของตัวเอง
+site-part-safety = การควบคุมความปลอดภัยและความเป็นส่วนตัว
+site-part-safety-text = ห้องเข้ารหัสต้นทางถึงปลายทางที่รีเลย์อ่านไม่ได้ แซนด์บ็อกซ์แยกตามเอเจนต์ ประตูอนุมัติที่ระบุคำสั่ง ไฟล์ และโฮสต์ที่แน่นอน และระยะเก็บข้อมูลที่ประกาศไว้
+site-part-server = เซิร์ฟเวอร์ CLI ในเครื่อง
+site-part-server-text = ดีมอนของคุณเองแชร์ห้องผ่าน WebSocket พิมพ์โค้ดเข้าร่วม และเสิร์ฟไคลเอนต์เบราว์เซอร์ ใช้ใน LAN ได้โดยไม่ต้องต่ออินเทอร์เน็ต
+site-part-router = ตัวเราต์โมเดลในตัว
+site-part-router-text = เลือกโมเดลให้แต่ละงานของเอเจนต์จากชั้น small, standard และ frontier และลดชั้นลงเมื่องบประมาณตึง
+site-fig-tiers = 3 ชั้น
+site-part-models = รองรับโมเดลยืดหยุ่น
+site-part-models-text = Claude Code, Codex, Gemini CLI, OpenCode, เอเจนต์ ACP ใด ๆ และโมเดลในเครื่อง พร้อมการสมัครใช้งานและคีย์ของคุณเอง
+site-fig-models = ACP
+site-part-context = บริบททีมเดียวกันทั้งหมด
+site-part-context-text = สถานะห้องเดียวที่ทุกเซสชันใช้ร่วมกัน: บอร์ด โน้ตที่ปักหมุดกับโค้ด กล่องข้อความของเอเจนต์ และการส่งต่องาน ซิงก์กันแบบเรียลไทม์
 site-part-langs = สี่ภาษา
 site-part-langs-text = ทุกหน้าจอและทุกคำสั่งเป็นภาษาอังกฤษ ไทย ญี่ปุ่น และจีน
 

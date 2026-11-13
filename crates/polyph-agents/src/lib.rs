@@ -6,6 +6,7 @@ pub mod convert;
 pub mod policy;
 pub mod project;
 pub mod registry;
+pub mod router;
 pub mod rpc;
 pub mod summary;
 pub mod supervisor;

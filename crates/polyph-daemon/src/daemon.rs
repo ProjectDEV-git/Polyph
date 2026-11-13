@@ -1877,7 +1877,21 @@ impl Daemon {
                 let (l, budgets) = crate::agents::ledger(&rt, &loaded.config.prices).await;
                 let states: Vec<Value> =
                     budgets.iter().map(|b| json!({ "budget": b, "used": b.used(&l), "state": b.state(&l) })).collect();
-                ok(json!({ "ledger": l, "budgets": states, "untrusted": crate::agents::untrusted_json(&loaded) }))
+                // Models the built-in router set on this device's agents.
+                let mut models = serde_json::Map::new();
+                for h in self.agents.map.lock().await.values() {
+                    if h.room == rt.id
+                        && let Some(m) = h.model.lock().clone()
+                    {
+                        models.insert(h.agent.label.clone(), json!(m));
+                    }
+                }
+                ok(json!({
+                    "ledger": l,
+                    "budgets": states,
+                    "models": models,
+                    "untrusted": crate::agents::untrusted_json(&loaded)
+                }))
             }
             "budget.set" => {
                 #[derive(Deserialize)]

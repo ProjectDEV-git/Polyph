@@ -99,7 +99,8 @@ Stated plainly on the website, against Amoeba and Murmell:
   memory notes pinned to code; agent inboxes; handoff; intent-aware merge;
   reviewer agent.
 - Board: kanban, threads, activity feed with replay, multiple whiteboards.
-- Follow mode, shared terminals, usage and budgets, model router.
+- Follow mode, shared terminals, usage and budgets, a built-in model router
+  (tiers per agent kind, with budget guards).
 - Four locales at launch: English, Thai, Japanese, Simplified Chinese. No
   hard-coded user-facing strings anywhere.
 - Open core: Apache-2.0 engine and apps; proprietary hosted accounts, billing,
