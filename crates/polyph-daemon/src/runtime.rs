@@ -616,7 +616,7 @@ async fn handle_frame(rt: &RoomRuntime, shared: &Shared, f: RelayFrame) {
             }
         }
         RelayFrame::RoomEnded { .. } => {
-            mark_ended(rt, &mut *ctx, shared);
+            mark_ended(rt, &mut ctx, shared);
             shared.emit(ApiEvent::room(&rt.id, &RoomEvent::RoomEnded));
         }
         RelayFrame::CodeHosted { rendezvous } => {
