@@ -237,7 +237,15 @@ async fn an_ended_room_stays_ended_for_its_members() {
     let kid = knock.event["knock"]["id"].as_str().unwrap().to_string();
     h.nodes[a].call("knock.decide", json!({ "room": rid, "knock": kid, "approve": true })).await.unwrap();
     joining.await.unwrap().map_err(|e| e.to_string()).unwrap();
-    connected(&h, b, &rid, true).await;
+    // "connected" is set when the subscribe is sent; the relay tells only
+    // subscribers that a room ended. Ann's message reaching Bo proves he is one.
+    h.nodes[a].call("chat.send", json!({ "room": rid, "text": "last call" })).await.unwrap();
+    h.until("Bo is subscribed", || async {
+        let c = h.nodes[b].call("chat.list", json!({ "room": rid })).await.unwrap_or_default();
+        c.as_array().is_some_and(|m| m.iter().any(|m| m["text"] == "last call"))
+    })
+    .await
+    .unwrap();
 
     h.nodes[a].call("room.end", json!({ "room": rid })).await.unwrap();
     h.until("Bo sees the room ended", || async {
