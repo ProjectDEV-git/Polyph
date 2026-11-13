@@ -68,10 +68,44 @@ pub fn inside_polyph() -> bool {
 /// Runs the server on stdin/stdout for an agent the person runs themselves,
 /// connected to the local daemon.
 pub async fn run_direct(bridge: bridge::LocalBridge) -> anyhow::Result<()> {
+    use server::Backend;
     let bridge = std::sync::Arc::new(bridge);
     // Show up in the room at once; if this fails, the first call says why.
     let _ = bridge.connect().await;
-    server::serve(tokio::io::stdin(), tokio::io::stdout(), bridge).await
+    tokio::select! {
+        r = server::serve(tokio::io::stdin(), tokio::io::stdout(), bridge.clone()) => r,
+        // MCP clients may stop a stdio server with a signal instead of
+        // closing stdin. Leave the room either way, or the agent stays listed
+        // (and its next start gets a "2" label) until the idle timeout.
+        () = shutdown_signal() => {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), bridge.close()).await;
+            // Handling the signal replaced its default action, which was to
+            // exit. Exit here: the runtime would otherwise wait for the
+            // blocking stdin read, which nothing can cancel.
+            std::process::exit(0)
+        }
+    }
+}
+
+/// SIGTERM, SIGHUP or Ctrl-C; on other platforms Ctrl-C (Ctrl-Break, console close).
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let (Ok(mut term), Ok(mut hup)) = (signal(SignalKind::terminate()), signal(SignalKind::hangup())) else {
+            let _ = tokio::signal::ctrl_c().await;
+            return;
+        };
+        tokio::select! {
+            _ = term.recv() => {}
+            _ = hup.recv() => {}
+            _ = tokio::signal::ctrl_c() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 #[cfg(test)]

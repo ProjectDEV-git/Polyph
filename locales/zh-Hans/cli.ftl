@@ -87,7 +87,7 @@ knock-line-own-device = { $id }  一台新设备请求以你的身份（{ $name 
 knock-hint = 用 `polyph approve { $id }` 批准，或用 `polyph deny { $id }` 拒绝。
 settings-approval-on = 加入需要批准。
 settings-approval-off = 持有加入码即可直接加入，无需批准。
-role-changed = 已修改角色。
+role-changed = { $name } 现在是{ $role }。
 member-removed = 已移除成员并轮换房间密钥。
 
 join-connecting = 正在连接…

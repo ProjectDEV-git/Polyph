@@ -91,7 +91,7 @@ knock-line-own-device = { $id }  a new device wants to join as you ({ $name }); 
 knock-hint = Approve with `polyph approve { $id }` or deny with `polyph deny { $id }`.
 settings-approval-on = Joining requires approval.
 settings-approval-off = Anyone with a code joins without approval.
-role-changed = Changed the role.
+role-changed = { $name }'s role is now { $role }.
 member-removed = Removed the member and rotated the room key.
 
 # Joining

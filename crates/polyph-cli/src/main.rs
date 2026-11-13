@@ -1957,7 +1957,7 @@ async fn room_cmd(ctx: &Ctx, api: &mut Api, cmd: RoomCmd) -> anyhow::Result<()> 
         RoomCmd::Role { member, role, room } => {
             let room = ctx.room(api, room).await?;
             call(api, "room.set_role", json!({ "room": room, "member": member, "role": role })).await?;
-            ctx.out(l.t("role-changed"));
+            ctx.out(tr!(l, "role-changed", name = member.as_str(), role = ctx.role(&role.to_lowercase())));
         }
         RoomCmd::Remove { member, room } => {
             let room = ctx.room(api, room).await?;

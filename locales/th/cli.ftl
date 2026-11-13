@@ -87,7 +87,7 @@ knock-line-own-device = { $id }  อุปกรณ์ใหม่ขอเข�
 knock-hint = อนุมัติด้วย `polyph approve { $id }` หรือปฏิเสธด้วย `polyph deny { $id }`
 settings-approval-on = การเข้าห้องต้องได้รับอนุมัติ
 settings-approval-off = ใครมีรหัสก็เข้าห้องได้โดยไม่ต้องอนุมัติ
-role-changed = เปลี่ยนบทบาทแล้ว
+role-changed = { $name } เป็น{ $role }แล้ว
 member-removed = นำสมาชิกออกและเปลี่ยนกุญแจของห้องแล้ว
 
 join-connecting = กำลังเชื่อมต่อ…

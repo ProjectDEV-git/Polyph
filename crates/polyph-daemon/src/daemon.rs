@@ -968,6 +968,12 @@ impl Daemon {
                 }
                 let rt = self.find(&p.room).await?;
                 let mut c = rt.ctx.lock().await;
+                if !c.core.role().can_write() {
+                    return Err(ApiError::Forbidden(
+                        "Viewers can read the room but not write in it; an Owner or Maintainer can make you a Member"
+                            .into(),
+                    ));
+                }
                 let fx = c.core.send_chat(&p.text, p.thread, None, now)?;
                 apply(&rt, &mut c, &self.shared, fx).await;
                 ok(json!({}))

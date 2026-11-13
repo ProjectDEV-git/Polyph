@@ -71,6 +71,56 @@ impl Drop for Person {
     }
 }
 
+/// Starts `polyph mcp` as Claude Code would and returns it with the agent
+/// lines of `team_state`.
+#[cfg(unix)]
+fn agent(p: &Person) -> (Child, Vec<String>) {
+    use std::io::{BufRead, BufReader, Write};
+    let mut child =
+        p.cmd(&["mcp", "--client", "claude-code"]).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut out = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    for msg in [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"claude-code","version":"2"}}}"#,
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"team_state","arguments":{}}}"#,
+    ] {
+        writeln!(stdin, "{msg}").unwrap();
+        if msg.contains("\"id\"") {
+            line.clear();
+            out.read_line(&mut line).unwrap();
+        }
+    }
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    let text = v["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string();
+    let agents = text.lines().filter(|l| l.contains("Bo/")).map(str::to_string).collect();
+    // Keep stdin open: the agent is still running until the caller stops it.
+    std::mem::forget(stdin);
+    (child, agents)
+}
+
+/// MCP clients may stop a stdio server with SIGTERM instead of closing its
+/// stdin. The agent must leave the room then too, or its next start shows up
+/// as a second agent ("Bo/claude-code2") beside a ghost of the first.
+#[cfg(unix)]
+fn an_agent_stopped_with_sigterm_leaves_the_room(bo: &Person) {
+    let (mut first, agents) = agent(bo);
+    assert_eq!(agents.len(), 1, "{agents:?}");
+    let ok = Command::new("kill").args(["-TERM", &first.id().to_string()]).status().unwrap().success();
+    assert!(ok);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while first.try_wait().unwrap().is_none() {
+        assert!(Instant::now() < deadline, "polyph mcp did not exit on SIGTERM");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let (mut second, agents) = agent(bo);
+    assert_eq!(agents.len(), 1, "the stopped agent is still listed: {agents:?}");
+    assert!(agents[0].contains("Bo/claude-code "), "{agents:?}");
+    second.kill().unwrap();
+    let _ = second.wait();
+}
+
 fn finish(child: Child) -> (bool, String) {
     let out = child.wait_with_output().unwrap();
     (out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
@@ -132,6 +182,21 @@ fn ann_hosts_bo_joins_and_each_reads_plain_answers() {
     assert!(ok, "{out}");
     assert!(!out.contains("wants to join"), "{out}");
     assert!(out.contains("2 people online"), "{out}");
+
+    // As a Viewer Bo is told why he cannot write and who can change that.
+    let (ok, out) = ann.run(&["room", "role", "Bo", "viewer"]);
+    assert!(ok, "{out}");
+    assert!(out.contains("Bo's role is now Viewer."), "{out}");
+    let (ok, out) = bo.run(&["chat", "hello?"]);
+    assert!(!ok);
+    assert!(out.contains("Viewers can read the room but not write in it"), "{out}");
+    let (ok, out) = ann.run(&["room", "role", "Bo", "member"]);
+    assert!(ok, "{out}");
+    let (ok, out) = bo.run(&["chat", "back in"]);
+    assert!(ok, "{out}");
+
+    #[cfg(unix)]
+    an_agent_stopped_with_sigterm_leaves_the_room(&bo);
 
     drop((ann, bo));
     rt.block_on(relay.shutdown());

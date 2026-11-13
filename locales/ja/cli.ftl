@@ -87,7 +87,7 @@ knock-line-own-device = { $id }  新しいデバイスがあなた（{ $name }�
 knock-hint = `polyph approve { $id }` で承認、`polyph deny { $id }` で拒否できます。
 settings-approval-on = 参加には承認が必要です。
 settings-approval-off = コードを持っていれば承認なしで参加できます。
-role-changed = ロールを変更しました。
+role-changed = { $name } のロールを{ $role }に変更しました。
 member-removed = メンバーを外し、ルームの鍵を更新しました。
 
 join-connecting = 接続しています…

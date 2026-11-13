@@ -21,6 +21,15 @@ GitHub release page.
   made it may be offline**, the most common reason when the code is right.
 - **`polyph join` with an unreachable relay says what to check**, the same
   hint `polyph doctor` gives, under the connection error.
+- **An agent you connected leaves the room when its editor stops it.**
+  Editors may stop `polyph mcp` with SIGTERM instead of closing its input;
+  it then stayed listed for 30 minutes, and the next start showed up as a
+  second agent (`Bo/claude-code2`). It now leaves on SIGTERM, SIGHUP or
+  Ctrl-C as it does when its input closes.
+- **A Viewer who tries to chat is told why**: "Viewers can read the room
+  but not write in it; an Owner or Maintainer can make you a Member",
+  instead of "your role in this room does not allow that". `polyph room
+  role` says "Bo's role is now Viewer." instead of "Changed the role."
 - **`polyph join` with a mistyped code fails without printing
   "Connecting…" first**, and `polyph start --no-connect` no longer tells
   you to pass `--no-connect`.
