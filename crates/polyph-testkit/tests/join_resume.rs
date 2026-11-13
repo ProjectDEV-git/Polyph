@@ -119,6 +119,34 @@ async fn a_waiting_joiner_keeps_its_knock_across_a_host_reconnect() {
     assert_eq!(joined["id"], rid.as_str());
 }
 
+/// The note Ann writes when she turns Bo away is what Bo reads; without one,
+/// Bo is told no reason was given.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_denied_joiner_reads_the_note_or_hears_no_reason_was_given() {
+    let mut h = Harness::new().await.unwrap();
+    let (a, b, rid) = hosted_room(&mut h).await;
+    let inv = h.nodes[a].call("room.invite", json!({ "room": rid, "reusable": true })).await.unwrap();
+    let code = inv["code"].as_str().unwrap().to_string();
+
+    for (note, expected) in [(Some("  wrong project, ask Kim  "), "wrong project, ask Kim"), (None, "no reason given")]
+    {
+        let bd = h.nodes[b].daemon.clone();
+        let c = code.clone();
+        let joining =
+            tokio::spawn(async move { bd.call("join", json!({ "code": c, "name": "Bo", "timeout_secs": 30 })).await });
+        let knock = h.nodes[a].wait_event("knock", |e| e.kind() == "knock").await.unwrap();
+        let kid = knock.event["knock"]["id"].as_str().unwrap().to_string();
+        h.nodes[a]
+            .call("knock.decide", json!({ "room": rid, "knock": kid, "approve": false, "note": note }))
+            .await
+            .unwrap();
+        let err = joining.await.unwrap().map(|_| ()).map_err(|e| e.to_string()).unwrap_err();
+        assert!(err.ends_with(&format!(": {expected}")), "Bo read {err:?}");
+        // The reusable code stays hosted for the next try.
+        h.until("code hosted again", || async { h.relay.hub.stats().2 == 1 }).await.unwrap();
+    }
+}
+
 /// A join made by hand, so a test chooses every field of the request.
 struct RawJoin {
     client: RelayClient,

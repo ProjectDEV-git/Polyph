@@ -484,7 +484,7 @@ impl Phone {
             (_, RelayFrame::Error { code, detail }) => {
                 let msg = match code {
                     ErrorCode::CodeUnknown => {
-                        "no room is waiting for this code; it may have expired or been used".to_string()
+                        "no room is waiting for this code; it may have expired or been used, or the person who made it is offline".to_string()
                     }
                     ErrorCode::CodeLocked => "this code is locked for 10 minutes after failed attempts".to_string(),
                     ErrorCode::RateLimited => {

@@ -5,6 +5,26 @@ GitHub release page.
 
 ## Unreleased
 
+- **`polyph status` shows who is waiting to join.** Before, it said "No
+  approvals waiting." while someone knocked, so a host who had closed the
+  `polyph start` terminal had no sign of them. Each person waiting is now
+  listed with the `polyph approve` and `polyph deny` commands to answer.
+- **`polyph deny --note` reaches the person you turned away.** The note was
+  dropped and they read "the room declined the request: denied by the room".
+  They now read your note, or "no reason given" without one. The note
+  travels when the device that runs the join also makes the decision (the
+  host, usually); a decision from another device arrives without it.
+- **Approving or denying a join names the person**: "Let Bo in as
+  Member." and "Turned Bo away." instead of "Let them in." and "Turned
+  them away."
+- **A join code no room is waiting for now mentions that the person who
+  made it may be offline**, the most common reason when the code is right.
+- **`polyph join` with an unreachable relay says what to check**, the same
+  hint `polyph doctor` gives, under the connection error.
+- **`polyph join` with a mistyped code fails without printing
+  "Connecting…" first**, and `polyph start --no-connect` no longer tells
+  you to pass `--no-connect`.
+
 ## 0.1.3
 
 - **Join codes survive a restart.** The code `polyph start` and `polyph

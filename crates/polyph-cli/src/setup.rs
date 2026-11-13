@@ -384,11 +384,14 @@ pub async fn start(
         }
     };
     let rid = room["id"].as_str().unwrap_or_default().to_string();
-    let wrote = if no_connect { vec![] } else { connect(ctx, &[], false, yes).await? };
-    if wrote.is_empty() {
-        ctx.out(l.t("start-agents-none"));
-    } else {
-        ctx.out(tr!(l, "start-agents-changed", entries = wrote.join(", ")));
+    // --no-connect asked us to leave agents alone; nothing to report.
+    if !no_connect {
+        let wrote = connect(ctx, &[], false, yes).await?;
+        if wrote.is_empty() {
+            ctx.out(l.t("start-agents-none"));
+        } else {
+            ctx.out(tr!(l, "start-agents-changed", entries = wrote.join(", ")));
+        }
     }
     let inv = call(&mut api, "room.invite", json!({ "room": rid, "reusable": true })).await?;
     ctx.out(String::new());

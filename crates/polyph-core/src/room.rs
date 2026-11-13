@@ -192,6 +192,11 @@ pub enum RoomEvent {
     },
     JoinDenied {
         knock: ObjectId,
+        /// What the person who said no wants the joiner to read. Only set
+        /// when this device both decided and runs the join; a decision from
+        /// another device arrives without it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
     },
     KeysRotated {
         epoch: u64,
@@ -950,7 +955,7 @@ impl RoomCore {
                     && let Some(k) = self.knocks.remove(&id)
                     && k.via == self.me
                 {
-                    out.push(Effect::Event(RoomEvent::JoinDenied { knock: id }));
+                    out.push(Effect::Event(RoomEvent::JoinDenied { knock: id, note: None }));
                 }
             }
             RoomMessage::Claim(c) if writer => out.extend(self.on_claim(from, c, now)),
@@ -1237,6 +1242,12 @@ impl RoomCore {
     }
 
     pub fn deny_knock(&mut self, knock: ObjectId) -> Result<Vec<Effect>> {
+        self.deny_knock_with_note(knock, None)
+    }
+
+    /// Denies a knock. `note` reaches the joiner when this device runs their
+    /// join; the room only learns that the knock was denied.
+    pub fn deny_knock_with_note(&mut self, knock: ObjectId, note: Option<String>) -> Result<Vec<Effect>> {
         if !self.role().can_approve_joins() {
             return Err(RoomError::Forbidden);
         }
@@ -1244,7 +1255,7 @@ impl RoomCore {
         self.own_device_knocks.remove(&knock);
         let mut out = vec![Effect::Send(RoomMessage::KnockDecided { id: knock, approved: false, by: self.my_member })];
         if k.via == self.me {
-            out.push(Effect::Event(RoomEvent::JoinDenied { knock }));
+            out.push(Effect::Event(RoomEvent::JoinDenied { knock, note }));
         }
         Ok(out)
     }

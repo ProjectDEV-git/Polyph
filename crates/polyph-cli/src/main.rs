@@ -989,7 +989,8 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
             }
         }
         Cmd::Join { code, me: name, relay, lan, clone, no_clone } => {
-            if !ctx.json {
+            // A mistyped code fails at once, without first claiming to connect.
+            if !ctx.json && polyph_proto::joincode::JoinCode::parse(&code).is_ok() {
                 ctx.out(l.t("join-connecting"));
             }
             let mut waiting_shown = false;
@@ -1001,7 +1002,15 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                     }
                 })
                 .await
-                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                .map_err(|e| {
+                    let msg = e.to_string();
+                    if msg.contains("could not connect to the relay") {
+                        let kind = polyph_relay::client::ConnectFailure::classify(&msg).code();
+                        anyhow::anyhow!("{msg}\n  {}", setup::relay_fix(l, &kind))
+                    } else {
+                        anyhow::anyhow!(msg)
+                    }
+                })?;
             if ctx.json {
                 ctx.print_json(&r);
             } else {
@@ -1191,6 +1200,11 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                         "status-approvals",
                         count = s["approvals"].as_array().map(|a| a.len()).unwrap_or(0)
                     ));
+                    // People at the door are not agent approvals, but the
+                    // host has to hear about them here or nowhere.
+                    if let Ok(knocks) = call(&mut api, "knock.list", json!({ "room": s["room"] })).await {
+                        print_knocks(ctx, &knocks);
+                    }
                 }
             }
         }
@@ -1784,6 +1798,18 @@ fn print_invite(ctx: &Ctx, inv: &Value) {
     }
 }
 
+/// One line per person waiting to join, each with how to answer.
+fn print_knocks(ctx: &Ctx, knocks: &Value) {
+    let l = &ctx.l;
+    for k in knocks.as_array().into_iter().flatten() {
+        let id: String = k["id"].as_str().unwrap_or_default().chars().take(6).collect();
+        // Another device joining as this person says so plainly.
+        let line = if k["own_device"] == true { "knock-line-own-device" } else { "knock-line" };
+        ctx.out(tr!(l, line, id = id.clone(), name = k["display_name"].as_str().unwrap_or_default()));
+        ctx.out(tr!(l, "knock-hint", id = id));
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn decide(
     ctx: &Ctx,
@@ -1797,14 +1823,21 @@ async fn decide(
 ) -> anyhow::Result<()> {
     let l = &ctx.l;
     let knocks = call(api, "knock.list", json!({ "room": room })).await?;
-    let is_knock = knocks
+    let knock = knocks
         .as_array()
         .into_iter()
         .flatten()
-        .any(|k| k["id"].as_str().is_some_and(|k| k.starts_with(&id.to_lowercase())));
-    if is_knock {
-        call(api, "knock.decide", json!({ "room": room, "knock": id, "approve": yes, "role": role })).await?;
-        ctx.out(if yes { l.t("admitted") } else { l.t("not-admitted") });
+        .find(|k| k["id"].as_str().is_some_and(|k| k.starts_with(&id.to_lowercase())));
+    if let Some(k) = knock {
+        let name = k["display_name"].as_str().filter(|n| !n.trim().is_empty()).unwrap_or(id).to_string();
+        let shown_role = ctx.role(&role.as_deref().unwrap_or("member").to_lowercase());
+        call(api, "knock.decide", json!({ "room": room, "knock": id, "approve": yes, "role": role, "note": note }))
+            .await?;
+        ctx.out(if yes {
+            tr!(l, "admitted", name = name, role = shown_role)
+        } else {
+            tr!(l, "not-admitted", name = name)
+        });
         return Ok(());
     }
     let method = if yes { "approve" } else { "deny" };
@@ -1904,13 +1937,7 @@ async fn room_cmd(ctx: &Ctx, api: &mut Api, cmd: RoomCmd) -> anyhow::Result<()> 
             } else if v.as_array().is_none_or(|a| a.is_empty()) {
                 ctx.out(l.t("knocks-empty"));
             } else {
-                for k in v.as_array().into_iter().flatten() {
-                    let id: String = k["id"].as_str().unwrap_or_default().chars().take(6).collect();
-                    // Another device joining as this person says so plainly.
-                    let line = if k["own_device"] == true { "knock-line-own-device" } else { "knock-line" };
-                    ctx.out(tr!(l, line, id = id.clone(), name = k["display_name"].as_str().unwrap_or_default()));
-                    ctx.out(tr!(l, "knock-hint", id = id));
-                }
+                print_knocks(ctx, &v);
             }
         }
         RoomCmd::Settings { room, require_approval } => {

@@ -28,6 +28,8 @@ const OUTBOX_MAX: usize = 2000;
 /// mirroring the relay's own limit.
 const HOST_MAX_FAILURES: u32 = 5;
 const SNAPSHOT_EVERY: i64 = 300;
+/// Longest note a denied joiner is sent with `polyph deny --note`.
+const MAX_DENY_NOTE_CHARS: usize = 300;
 /// How long a knock waits for its joiner to come back after the connection
 /// dropped mid-wait. The joiner retries for less than this (see
 /// `daemon::JOIN_RECONNECT_SECS`).
@@ -266,8 +268,15 @@ pub async fn apply(rt: &RoomRuntime, ctx: &mut RoomCtx, shared: &Shared, effects
                         let reply = JoinReply::Approved(approved.clone());
                         finish_knocked_join(ctx, *knock, &reply).await;
                     }
-                    RoomEvent::JoinDenied { knock } => {
-                        let reply = JoinReply::Denied { reason: "denied by the room".into() };
+                    RoomEvent::JoinDenied { knock, note } => {
+                        // The joiner shows this after "the room declined the request: ".
+                        let reason = note
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|n| !n.is_empty())
+                            .map(|n| n.chars().take(MAX_DENY_NOTE_CHARS).collect())
+                            .unwrap_or_else(|| "no reason given".to_string());
+                        let reply = JoinReply::Denied { reason };
                         finish_knocked_join(ctx, *knock, &reply).await;
                     }
                     RoomEvent::ClaimDecision { request, granted, denied } => {

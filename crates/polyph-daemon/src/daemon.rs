@@ -931,6 +931,8 @@ impl Daemon {
                     knock: String,
                     approve: bool,
                     role: Option<Role>,
+                    /// Shown to a denied joiner.
+                    note: Option<String>,
                 }
                 let p: P = param(&params)?;
                 let rt = self.find(&p.room).await?;
@@ -945,7 +947,7 @@ impl Daemon {
                 let fx = if p.approve {
                     c.core.approve_knock(id, p.role.unwrap_or(Role::Member), now)?
                 } else {
-                    c.core.deny_knock(id)?
+                    c.core.deny_knock_with_note(id, p.note)?
                 };
                 apply(&rt, &mut c, &self.shared, fx).await;
                 ok(json!({}))
@@ -2332,7 +2334,7 @@ impl Daemon {
                     return Err(match c {
                         // The host may be reconnecting and hosting it again.
                         ErrorCode::CodeUnknown => Attempt::Retry(ApiError::NotFound(
-                            "no room is waiting for this code; it may have expired or been used".into(),
+                            "no room is waiting for this code; it may have expired or been used, or the person who made it is offline".into(),
                         )),
                         ErrorCode::CodeLocked => Attempt::Fail(ApiError::Forbidden(
                             "this code is locked for 10 minutes after failed attempts".into(),
