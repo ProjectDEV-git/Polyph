@@ -10,7 +10,6 @@ import {
   Knock,
   Merge,
   Pill,
-  StatusSet,
   Transcript,
 } from "./fragments";
 import {
@@ -99,13 +98,13 @@ export function Home({ lang }: { lang: Lang }) {
           <div className="zoom z2" style={{ top: 28, left: 28 }}>
             <Claim l={l} who={bo} path="src/pay/webhook.ts" />
           </div>
-          <Caption name={l.t("site-part-claims")} text={l.t("site-part-claims-text")} />
+          <Caption name={l.t("site-part-editing")} text={l.t("site-part-editing-text")} />
         </div>
         <div className="tile w3h4 t3 reveal">
           <div className="zoom z2" style={{ top: 24, left: 24, width: "160%" }}>
             <Approval l={l} who={ann} />
           </div>
-          <Caption name={l.t("site-part-approvals")} text={l.t("site-part-approvals-text")} />
+          <Caption name={l.t("site-part-safety")} text={l.t("site-part-safety-text")} />
         </div>
         <div className="tile w6h2 reveal">
           <div className="zoom" style={{ top: 20, left: 24 }} data-ui>
@@ -113,25 +112,25 @@ export function Home({ lang }: { lang: Lang }) {
               <code>{SAMPLE_CODE}</code>
             </span>
           </div>
-          <Caption name={l.t("site-part-code")} text={l.t("site-part-code-text")} />
+          <Caption name={l.t("site-part-server")} text={l.t("site-part-server-text")} />
         </div>
         <div className="tile w3h2 t2 reveal">
           <div className="zoom" style={{ top: 18, left: 24 }} data-ui>
-            <span className="big-figure">{RELAY_PEAK_MB} MB</span>
+            <span className="big-figure">{l.t("site-fig-tiers")}</span>
           </div>
-          <Caption name={l.t("site-part-relay")} text={l.t("site-part-relay-text")} />
+          <Caption name={l.t("site-part-router")} text={l.t("site-part-router-text")} />
         </div>
         <div className="tile w3h2 t3 reveal">
-          <div className="zoom z2" style={{ top: 16, left: 16, width: "140%" }}>
-            <StatusSet l={l} />
+          <div className="zoom" style={{ top: 18, left: 24 }} data-ui>
+            <span className="big-figure">{l.t("site-fig-models")}</span>
           </div>
-          <Caption name={l.t("site-part-status")} text={l.t("site-part-status-text")} />
+          <Caption name={l.t("site-part-models")} text={l.t("site-part-models-text")} />
         </div>
         <div className="tile w6h4 t2 reveal">
           <div className="zoom z2" style={{ top: 28, left: 28, width: "120%" }}>
             <Board l={l} team={room} />
           </div>
-          <Caption name={l.t("site-part-board")} text={l.t("site-part-board-text")} />
+          <Caption name={l.t("site-part-context")} text={l.t("site-part-context-text")} />
         </div>
         <div className="tile w6h2 reveal">
           <ul className="zoom langs" style={{ top: 20, left: 24 }} data-ui>

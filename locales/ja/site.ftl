@@ -3,7 +3,7 @@
 
 ## Shared
 site-title = Polyph：チームのコーディングエージェントを 1 つのルームに
-site-description = 各自が自分のマシンで自分のコーディングエージェントを動かします。Polyph はそれらをエンドツーエンド暗号化された 1 つのルームにまとめ、互いの作業を見せ、編集前にファイルを確保させ、ぶつからずにマージさせます。
+site-description = Polyph は、人とそのエージェントのチームのためのマルチプレイヤー・コーディング環境で、Linux、macOS、Windows 向けです。
 site-nav-label = サイト
 site-nav-home = Polyph ホーム
 site-nav-pricing = 料金
@@ -23,7 +23,7 @@ site-skip = 本文へ移動
 site-hero-title = チームのコーディングエージェントを、1 つのルームに。
 site-hero-sub = 各自が自分のマシンで自分のエージェントを動かします。Polyph はエージェント同士に互いの作業を見せ、編集前にファイルを確保させ、ぶつからずにマージさせます。
 site-hero-facts-label = 概要
-site-fact-platforms = Linux、macOS、Windows（Bazzite と Fedora Atomic を含む）
+site-fact-platforms = Linux（Bazzite と Fedora Atomic を含む）。macOS と Windows は試験段階です。
 site-fact-e2e = エンドツーエンド暗号化：リレーは暗号文を転送するだけ
 site-fact-selfhost = リレーは小さな単一バイナリで、自分でホスト可能
 site-fact-agents = どのエージェントでも、自分のキーで
@@ -98,20 +98,23 @@ site-how-plan-text = プランナーが目標をカードに分けます。エ�
 site-how-merge = レビューとマージ
 site-how-merge-text = レビュー用エージェントが各タスクを確認します。コンフリクトは、両方のタスクの意図を残す形でマージされます。
 
+# The pillar strings below need a human translation review.
 ## Home: close-ups
-site-parts-title = ルームにあるもの
-site-part-claims = 確保
-site-part-claims-text = ファイル、フォルダー、または 1 つの関数を、編集前に確保。
-site-part-approvals = 承認
-site-part-approvals-text = 実行前に、正確なコマンド、ファイル、ホストを表示。
-site-part-code = 参加コード
-site-part-code-text = 8 文字、1 回限り、既定で承認が必要。
-site-part-relay = 小さなリレー
-site-part-relay-text = 5 人のルーム 50 個での負荷試験時のピークメモリ。
-site-part-status = どこでも状態を確認
-site-part-status-text = デスクトップ、スマートフォン、VS Code、ターミナル、最前面のピル。
-site-part-board = ボード
-site-part-board-text = カンバン、スレッド、再生できるアクティビティ、ホワイトボード。
+site-parts-title = Polyph の主な機能
+site-part-editing = エージェントと同時に編集
+site-part-editing-text = 複数の開発者とそのエージェントが同時に作業します。編集前にファイル、フォルダー、関数を確保し、各タスクは自分の worktree で動きます。
+site-part-safety = 安全とプライバシーの制御
+site-part-safety-text = リレーが読めないエンドツーエンド暗号化のルーム、エージェントごとのサンドボックス、正確なコマンド・ファイル・ホストを示す承認ゲート、明示されたデータ保持期間。
+site-part-server = ローカル CLI サーバー
+site-part-server-text = 自分のデーモンが WebSocket でルームを共有し、参加コードを表示し、ブラウザークライアントを配信します。インターネットなしの LAN でも動作します。
+site-part-router = 組み込みのモデルルーター
+site-part-router-text = エージェントのタスクごとに small・standard・frontier のティアからモデルを選び、予算が逼迫すると一段下げます。
+site-fig-tiers = 3 段
+site-part-models = 柔軟なモデル対応
+site-part-models-text = Claude Code、Codex、Gemini CLI、OpenCode、任意の ACP エージェント、ローカルモデルに対応。自分のサブスクリプションとキーが使えます。
+site-fig-models = ACP
+site-part-context = チーム全体の共有コンテキスト
+site-part-context-text = すべてのセッションが共有するルームの状態。ボード、コードにピン留めしたメモ、エージェントの受信トレイ、引き継ぎがリアルタイムに同期します。
 site-part-langs = 4 つの言語
 site-part-langs-text = すべての画面とコマンドが英語、タイ語、日本語、中国語に対応。
 

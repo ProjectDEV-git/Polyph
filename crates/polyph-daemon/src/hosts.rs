@@ -221,6 +221,7 @@ async fn handle(d: Arc<Daemon>, rt: Arc<RoomRuntime>, h: HostEvent) {
                 prompt,
                 worktree: None,
                 helper: false,
+                role: None,
             };
             let reply = match crate::agents::start(d.shared.clone(), &d.agents, rt.clone(), p).await {
                 Ok(v) => {

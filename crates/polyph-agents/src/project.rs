@@ -39,7 +39,12 @@ pub struct SandboxConfig {
 pub struct RouterConfig {
     /// Tier name ("small", "standard", "frontier") to model id, per agent kind.
     pub tiers: BTreeMap<String, BTreeMap<String, String>>,
-    pub enabled: bool,
+    /// Force the router on or off; unset means on when `tiers` is set.
+    pub enabled: Option<bool>,
+    /// Tier a role starts at when `task_tiers` does not name one.
+    pub default_tier: Option<String>,
+    /// Role ("planner", "review", "resolve", "task", "chat") to tier name.
+    pub task_tiers: BTreeMap<String, String>,
 }
 
 /// `[merge]`: how finished tasks reach their target branch.

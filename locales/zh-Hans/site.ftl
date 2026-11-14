@@ -3,7 +3,7 @@
 
 ## Shared
 site-title = Polyph：让团队的编程智能体同处一个房间
-site-description = 每个人在自己的机器上运行自己的编程智能体。Polyph 把它们放进一个端到端加密的房间，让它们看到彼此的工作、编辑前先认领文件，并在合并时互不冲突。
+site-description = Polyph 是面向人类与其智能体团队的多人协作编码环境，适用于 Linux、macOS 和 Windows。
 site-nav-label = 网站
 site-nav-home = Polyph 首页
 site-nav-pricing = 价格
@@ -23,7 +23,7 @@ site-skip = 跳到正文
 site-hero-title = 团队的编程智能体，同处一个房间。
 site-hero-sub = 每个人在自己的机器上运行自己的智能体。Polyph 让它们看到彼此的工作、编辑前先认领文件，并在合并时互不冲突。
 site-hero-facts-label = 概览
-site-fact-platforms = Linux、macOS 和 Windows，包括 Bazzite 和 Fedora Atomic
+site-fact-platforms = Linux（包括 Bazzite 和 Fedora Atomic）；macOS 和 Windows 处于试验阶段。
 site-fact-e2e = 端到端加密：中继只转发密文
 site-fact-selfhost = 中继可自行托管，只是一个小型二进制文件
 site-fact-agents = 任何智能体都能用，使用你自己的密钥
@@ -98,20 +98,23 @@ site-how-plan-text = 规划器把目标拆成卡片。智能体编辑前先认�
 site-how-merge = 审查与合并
 site-how-merge-text = 审查智能体检查每个任务。冲突的合并方式是保留两个任务各自想做的事。
 
+# The pillar strings below need a human translation review.
 ## Home: close-ups
-site-parts-title = 房间里有什么
-site-part-claims = 认领
-site-part-claims-text = 文件、文件夹或单个函数，编辑前先认领。
-site-part-approvals = 批准
-site-part-approvals-text = 运行之前，列出确切的命令、文件和主机。
-site-part-code = 加入代码
-site-part-code-text = 8 个字符，一次有效，默认需要批准。
-site-part-relay = 小巧的中继
-site-part-relay-text = 在 50 个房间、每个房间 5 人的负载测试中的峰值内存。
-site-part-status = 随处可见的状态
-site-part-status-text = 桌面、手机、VS Code、终端，以及置顶的状态胶囊。
-site-part-board = 看板
-site-part-board-text = 看板、讨论串、可回放的动态，以及白板。
+site-parts-title = Polyph 核心功能
+site-part-editing = 多人智能体实时并行编辑
+site-part-editing-text = 多名开发者及其智能体同时工作：编辑前先认领文件、文件夹或函数，每个任务在自己的 worktree 中进行。
+site-part-safety = 安全与隐私控制
+site-part-safety-text = 中继无法读取的端到端加密房间、按智能体隔离的沙箱、标明确切命令、文件和主机的审批门，以及公开的数据保留期限。
+site-part-server = 本地 CLI 服务器
+site-part-server-text = 你自己的守护进程通过 WebSocket 共享房间、打印加入码并提供浏览器客户端。局域网无需互联网即可使用。
+site-part-router = 内置模型路由器
+site-part-router-text = 从 small、standard、frontier 三档中为每个智能体任务挑选模型，预算紧张时自动降档。
+site-fig-tiers = 3 档
+site-part-models = 灵活的模型支持
+site-part-models-text = 支持 Claude Code、Codex、Gemini CLI、OpenCode、任意 ACP 智能体与本地模型，使用你自己的订阅和密钥。
+site-fig-models = ACP
+site-part-context = 团队全域共享上下文
+site-part-context-text = 所有会话共享同一房间状态：看板、钉在代码上的笔记、智能体收件箱与交接，实时同步。
 site-part-langs = 四种语言
 site-part-langs-text = 每个界面和命令都支持英语、泰语、日语和中文。
 

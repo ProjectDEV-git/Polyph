@@ -189,6 +189,7 @@ sandbox-none = このマシンで使えるサンドボックスがありませ�
 sandbox-warning-no-seccomp = このマシンには seccomp フィルターがないため、Landlock だけではエージェントをホストの IPC から切り離せません。エージェントは Unix ソケット（セッションバス、ssh-agent、docker.sock、systemd、journald）に接続でき、io_uring も使えます。エージェントは起動します。これを塞ぐには bubblewrap をインストールしてください。
 usage-room = ルーム: { $tokens } トークン、推定 ${ $cost }
 usage-line = { $who }: { $tokens } トークン、推定 ${ $cost }
+usage-line-model = { $who }（{ $model }）：{ $tokens } トークン、推定 ${ $cost }
 usage-unknown = 使用量が報告されなかったターンが { $count } 件あります。
 usage-subscription = 一部の使用量はサブスクリプションプランのため、トークン単価は適用されません。
 budget-saved = 予算を保存しました。

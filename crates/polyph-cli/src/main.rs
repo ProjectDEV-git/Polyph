@@ -1524,7 +1524,18 @@ async fn with_api(ctx: &Ctx, cmd: Cmd) -> anyhow::Result<()> {
                 let r = &v["ledger"]["room"];
                 ctx.out(tr!(l, "usage-room", tokens = tot(r), cost = cost(r)));
                 for (who, t) in v["ledger"]["by_agent"].as_object().into_iter().flatten() {
-                    ctx.out(format!("  {}", tr!(l, "usage-line", who = who.as_str(), tokens = tot(t), cost = cost(t))));
+                    let line = match v["models"].get(who).and_then(|m| m.as_str()) {
+                        Some(model) => tr!(
+                            l,
+                            "usage-line-model",
+                            who = who.as_str(),
+                            tokens = tot(t),
+                            cost = cost(t),
+                            model = model
+                        ),
+                        None => tr!(l, "usage-line", who = who.as_str(), tokens = tot(t), cost = cost(t)),
+                    };
+                    ctx.out(format!("  {}", line));
                 }
                 let unknown = r["unknown_turns"].as_u64().unwrap_or(0);
                 if unknown > 0 {
