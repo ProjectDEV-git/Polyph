@@ -135,6 +135,24 @@ async fn summarizes_old_turns_near_the_context_limit() {
     );
 }
 
+/// The built-in model router: `[router.tiers]` in polyph.toml picks the model
+/// before the first turn, through `session/set_model`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn router_switches_the_model_before_the_first_turn() {
+    let model = FakeModel::start(vec![Reply::Text("ok".into()), Reply::Text("ok".into())]).await.unwrap();
+    let (h, rid, dir) = setup(&model, &[]).await;
+    std::fs::write(
+        dir.path().join("polyph.toml"),
+        "[router]\ndefault_tier = \"standard\"\n\n[router.tiers.local]\nstandard = \"routed-model\"\n",
+    )
+    .unwrap();
+    let (p, _) = run(&h, &rid, dir.path(), "say ok").await;
+    assert_eq!(p["stop_reason"], "end_turn");
+    let reqs = model.requests();
+    assert!(!reqs.is_empty(), "no request reached the model");
+    assert_eq!(reqs[0]["model"], "routed-model", "{reqs:?}");
+}
+
 /// Opt-in: a real model through Ollama. Run with POLYPH_SMOKE=1 and Ollama
 /// serving POLYPH_SMOKE_MODEL (default qwen2.5-coder:7b) on localhost:11434.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

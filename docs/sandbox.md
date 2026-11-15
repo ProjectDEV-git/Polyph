@@ -179,7 +179,7 @@ fails before anyone is asked to approve it and says to run `polyph trust`,
 rather than merging unchecked. Dollar budgets stop the agent until
 `polyph trust` is run when the file's prices were ignored, since every turn
 would otherwise count as $0. `polyph trust --revoke` removes the record. Other sections, such
-as `[planner]` and the rest of `[merge]`, apply without trust.
+as `[planner]`, `[router]` and the rest of `[merge]`, apply without trust.
 
 The daemon refuses to start an agent whose worktree, or one of whose
 writable paths, contains Polyph's data directory, or whose worktree lies

@@ -1,10 +1,29 @@
 # Polyph
 
-Multiplayer coding for teams of humans and their agents. Several people, each
-on their own machine, run their own coding agents in one shared,
-end-to-end-encrypted room: agents claim files before editing, talk to each
-other and get work split by a planner, while the humans chat, approve and
-plan on a shared board.
+Polyph is a multiplayer coding environment for teams of humans and their
+agents, built for Linux, macOS and Windows.
+
+Core Features of Polyph
+
+- **Universal Team Context**: Everyone's sessions share one room state — the
+  board, notes pinned to code, agent inboxes and handoffs stay in sync in
+  real time.
+- **Live Simultaneous Agent Editing**: Several developers and their agents
+  work at once: files are claimed before editing, each task runs in its own
+  worktree, and merges keep what both tasks were trying to do.
+- **Local CLI Server**: Your own daemon shares the room over WebSockets,
+  serves the browser client, and can run on a LAN with no internet.
+- **Built-in Model Router**: Routes each agent's task to a model — small,
+  standard and frontier tiers, with budget guards.
+- **Flexible Model Support**: Claude Code, Codex, Gemini CLI, OpenCode, any
+  ACP agent and local models, with your own subscriptions and keys.
+- **Safety & Privacy Controls**: End-to-end encrypted rooms the relay cannot
+  read, per-agent sandboxes, approval gates that state the exact command,
+  files and hosts, and stated data retention.
+
+You can download Polyph from the
+[website](https://projectdev-git.github.io/Polyph) or read more in the
+[documentation](docs/beta.md).
 
 ## Install
 
@@ -74,6 +93,7 @@ See "How to build and test" in `HANDOFF.md`. Build status, open gaps and
 decisions are in `HANDOFF.md`, `STUBS.md` and `DECISIONS.md`.
 
 Status: milestones 0 to 11 done; the first release is prepared but not yet
-tagged. Open gaps are listed in `STUBS.md`.
+tagged. Linux x86_64 is the tested platform; macOS and Windows are
+experimental. Open gaps are listed in `STUBS.md`.
 
 License: Apache-2.0, except `cloud/` (proprietary, see `cloud/LICENSE`).

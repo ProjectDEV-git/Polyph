@@ -3,7 +3,7 @@
 
 ## Shared
 site-title = Polyph: your team's coding agents in one room
-site-description = Each person runs their own coding agents on their own machine. Polyph puts them in one end-to-end encrypted room, so they see each other's work, claim files before editing and merge without stepping on each other.
+site-description = Polyph is a multiplayer coding environment for teams of humans and their agents, built for Linux, macOS and Windows.
 site-nav-label = Site
 site-nav-home = Polyph home
 site-nav-pricing = Pricing
@@ -23,7 +23,7 @@ site-skip = Skip to content
 site-hero-title = Your team's coding agents, in one room.
 site-hero-sub = Each person runs their own agents on their own machine. Polyph lets them see each other's work, claim files before editing, and merge without stepping on each other.
 site-hero-facts-label = At a glance
-site-fact-platforms = Linux, macOS and Windows, including Bazzite and Fedora Atomic
+site-fact-platforms = Linux, including Bazzite and Fedora Atomic; macOS and Windows are experimental
 site-fact-e2e = End-to-end encrypted: the relay forwards ciphertext
 site-fact-selfhost = Self-host the relay as one small binary
 site-fact-agents = Bring any agent and your own keys
@@ -99,19 +99,21 @@ site-how-merge = Review and merge
 site-how-merge-text = A reviewer agent checks each task. Conflicts are merged by keeping what both tasks were trying to do.
 
 ## Home: close-ups
-site-parts-title = What sits in the room
-site-part-claims = Claims
-site-part-claims-text = Files, folders or single functions, claimed before an edit.
-site-part-approvals = Approvals
-site-part-approvals-text = The exact command, files and hosts, before anything runs.
-site-part-code = Join codes
-site-part-code-text = Eight characters, one use, and approval on by default.
-site-part-relay = A small relay
-site-part-relay-text = Peak memory in our load test with 50 rooms of 5 people.
-site-part-status = Status everywhere
-site-part-status-text = Desktop, phone, VS Code, the terminal and a pill on top.
-site-part-board = A board
-site-part-board-text = Kanban, threads, an activity feed with replay, and whiteboards.
+site-parts-title = Core Features of Polyph
+site-part-editing = Live Simultaneous Agent Editing
+site-part-editing-text = Several developers and their agents work at once: files, folders or functions claimed before an edit, each task in its own worktree.
+site-part-safety = Safety & Privacy Controls
+site-part-safety-text = End-to-end encrypted rooms the relay cannot read, per-agent sandboxes, approval gates that name the exact command, files and hosts, and stated data retention.
+site-part-server = Local CLI Server
+site-part-server-text = Your own daemon shares the room over WebSockets, prints the join code and serves the browser client. A LAN works with no internet.
+site-part-router = Built-in Model Router
+site-part-router-text = Picks the model for each agent's task from small, standard and frontier tiers, stepping down as budgets tighten.
+site-fig-tiers = 3 tiers
+site-part-models = Flexible Model Support
+site-part-models-text = Claude Code, Codex, Gemini CLI, OpenCode, any ACP agent and local models, with your own subscriptions and keys.
+site-fig-models = ACP
+site-part-context = Universal Team Context
+site-part-context-text = One room state every session shares: the board, notes pinned to code, agent inboxes and handoffs, in sync in real time.
 site-part-langs = Four languages
 site-part-langs-text = Every screen and command in English, Thai, Japanese and Chinese.
 

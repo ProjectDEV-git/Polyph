@@ -54,9 +54,13 @@ pub fn agents(ctx: &mut RoomCtx, theme: Theme, local: &[polyph_proto::ids::Objec
         let member = a.member.to_hex();
         let mut state = AgentState::Starting;
         let mut task = None;
+        let mut model = None;
         for e in log {
             match &e.kind {
-                AgentEventKind::Started { task: t, .. } => task = t.map(|t| t.to_hex()),
+                AgentEventKind::Started { task: t, model: m, .. } => {
+                    task = t.map(|t| t.to_hex());
+                    model = m.clone();
+                }
                 AgentEventKind::State { state: s, .. } => state = *s,
                 AgentEventKind::Stopped { .. } => state = AgentState::Stopped,
                 _ => {}
@@ -77,6 +81,7 @@ pub fn agents(ctx: &mut RoomCtx, theme: Theme, local: &[polyph_proto::ids::Objec
             color,
             state,
             task: task.and_then(|t| cards.iter().find(|c| c.id == t).map(|c| c.title.clone())),
+            model,
             mine: local.contains(&a.id),
             // Runs on an agent host (a member's own server), not a laptop.
             cloud: ctx.core.is_agent_host(&a.device),
@@ -113,6 +118,16 @@ pub async fn fill(d: &Daemon, rt: &RoomRuntime, s: &mut StatusSnapshot) {
     let local: Vec<_> = d.agents.map.lock().await.keys().copied().collect();
     s.agents = agents(&mut *rt.ctx.lock().await, theme(d), &local);
     s.budgets = budgets(rt, &Default::default()).await;
+    // The router may have switched models since the agent started; for agents
+    // on this device the live handle is the truth.
+    let map = d.agents.map.lock().await;
+    for a in &mut s.agents {
+        if let Some(h) = map.values().find(|h| h.agent.id.to_hex() == a.id)
+            && let Some(m) = h.model.lock().clone()
+        {
+            a.model = Some(m);
+        }
+    }
 }
 
 impl StatusFeed {

@@ -10,6 +10,7 @@ use polyph_agents::convert::Converter;
 use polyph_agents::policy::{self, Action, ClaimState, Preset, Verdict};
 use polyph_agents::project::{Loaded, ProjectConfig, TrustStore};
 use polyph_agents::registry::{self, AgentConfig, AgentDef};
+use polyph_agents::router;
 use polyph_agents::supervisor::{AgentProcess, Answer, CommandWrapper, Output, Request};
 use polyph_agents::usage::{Budget, BudgetState, Ledger, Limit};
 use polyph_agents::wire::{EnvVariable, McpServerStdio};
@@ -49,6 +50,10 @@ pub struct AgentHandle {
     pub busy: Mutex<()>,
     /// Secret the agent's Polyph MCP server presents on every call.
     pub mcp_token: String,
+    /// Role the model router picks a tier for ("task", "planner", "review"…).
+    pub role: String,
+    /// The model the router set on this agent, if it accepted one.
+    pub model: parking_lot::Mutex<Option<String>>,
     /// The task's worktree and branch, when the agent works on a task.
     pub task_wt: Option<crate::tasks::TaskWorktree>,
     pub helper: bool,
@@ -112,6 +117,11 @@ pub struct StartParams {
     /// worktrees and are not subject to room claims.
     #[serde(skip)]
     pub helper: bool,
+    /// Role for the model router ("planner", "review", "resolve", "task",
+    /// "chat"); default: "helper" for helpers, "task" for task agents, else
+    /// "chat".
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 pub(crate) async fn publish(rt: &RoomRuntime, shared: &Shared, agent: &AgentRef, mut kind: AgentEventKind) {
@@ -539,6 +549,19 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
         }
         (ctx.core.my_member, ctx.core.me, ctx.core.my_profile.display_name.clone(), ctx.core.id)
     };
+    // Role and budget pressure decide which model the router asks for.
+    let role = p.role.clone().unwrap_or_else(|| {
+        if p.helper {
+            "helper".into()
+        } else if task.is_some() {
+            "task".into()
+        } else {
+            "chat".into()
+        }
+    });
+    let (bl, budgets) = ledger(&rt, &project.prices).await;
+    let member_id = member.to_hex();
+    let pressure = router::Pressure::of(budgets.iter().filter(|b| b.applies_to(&member_id)).map(|b| b.state(&bl)));
     let id = ObjectId::random().map_err(|e| ApiError::Failed(e.to_string()))?;
     let same_kind = agents.map.lock().await.values().filter(|h| h.room == room && h.agent.kind == p.kind).count();
     let label =
@@ -663,6 +686,14 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
             return Err(ApiError::Failed(format!("{e}. Run `polyph agents doctor` to check the {} agent.", p.kind)));
         }
     };
+    // Built-in model router: ask the agent to switch models. An agent that
+    // does not support switching keeps the model it started with.
+    let mut routed_model = None;
+    if let Some(m) = router::select(&project.router, &p.kind, &role, pressure)
+        && proc.set_model(&m).await
+    {
+        routed_model = Some(m);
+    }
     let handle = Arc::new(AgentHandle {
         agent: agent.clone(),
         room,
@@ -677,6 +708,8 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
         approved: Mutex::new(HashSet::new()),
         busy: Mutex::new(()),
         mcp_token,
+        role,
+        model: parking_lot::Mutex::new(routed_model.clone()),
         task_wt: task_wt.clone(),
         helper: p.helper,
         brief: Mutex::new(task_card.as_ref().and_then(|c| c.handoff.clone())),
@@ -712,7 +745,7 @@ pub async fn start(shared: Arc<Shared>, agents: &Agents, rt: Arc<RoomRuntime>, p
         .await;
     }
     agents.map.lock().await.insert(id, handle.clone());
-    publish(&rt, &shared, &agent, AgentEventKind::Started { task, model: None, cloud: false }).await;
+    publish(&rt, &shared, &agent, AgentEventKind::Started { task, model: routed_model, cloud: false }).await;
     if !p.helper {
         crate::feed::log(&rt, &shared, "agent_started", Some(&agent.label), json!({ "kind": agent.kind, "card": task.map(|t| t.to_hex()), "branch": task_wt.as_ref().map(|w| w.branch.clone()) })).await;
     }
@@ -935,6 +968,16 @@ async fn run_turn(shared: &Shared, rt: &RoomRuntime, h: &AgentHandle, text: Opti
                 "budget_warning",
                 json!({ "budget": b, "percent": percent }),
             ));
+        }
+    }
+    // Built-in model router: as budgets tighten, step the agent down a tier.
+    let pressure = router::Pressure::of(budgets.iter().filter(|b| b.applies_to(&member)).map(|b| b.state(&l)));
+    if pressure > router::Pressure::Ok
+        && let Some(m) = router::select(&h.project.router, &h.agent.kind, &h.role, pressure)
+    {
+        let stale = h.model.lock().as_deref() != Some(m.as_str());
+        if stale && h.proc.set_model(&m).await {
+            *h.model.lock() = Some(m);
         }
     }
     set_state(h, rt, shared, AgentState::Idle, None).await;

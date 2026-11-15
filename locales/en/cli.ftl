@@ -210,6 +210,7 @@ sandbox-none = No sandbox mechanism works on this machine. Agents will not start
 sandbox-warning-no-seccomp = There is no seccomp filter here, so Landlock alone does not keep agents from host IPC: they can connect to Unix sockets (the session bus, ssh-agent, docker.sock, systemd and journald) and use io_uring. Agents still start. Install bubblewrap to close this.
 usage-room = Room: { $tokens } tokens, ${ $cost } estimated
 usage-line = { $who }: { $tokens } tokens, ${ $cost } estimated
+usage-line-model = { $who } ({ $model }): { $tokens } tokens, ${ $cost } estimated
 usage-unknown = { $count ->
     [one] 1 turn reported no usage.
    *[other] { $count } turns reported no usage.

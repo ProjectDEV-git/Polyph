@@ -1,10 +1,15 @@
 # Website copy proposals for the beta
 
-Draft. These are proposed changes; nothing has been applied to
-`apps/web/src/site` or `locales/en/site.ftl`. A developer applies them, adds
-the same keys to the Thai, Japanese and Simplified Chinese locale files
-(every key needs all four; translations need a human reviewer), and runs the
-site's tests.
+Draft. These are proposed changes; nothing here has been applied to
+`apps/web/src/site` or `locales/en/site.ftl`, with two exceptions that landed
+with the core-features rewrite: `site-fact-platforms` now states the beta's
+platforms honestly, and the `site-part-*` close-ups became the six
+core-features pillars (new keys `site-part-{editing,safety,server,router,
+models,context}` and `site-fig-{tiers,models}`; the proposals below that name
+the old keys are superseded for those two areas). A developer applies the
+rest, adds the same keys to the Thai, Japanese and Simplified Chinese locale
+files (every key needs all four; translations need a human reviewer), and
+runs the site's tests.
 
 Links used:
 

@@ -97,7 +97,7 @@ pub async fn create(daemon: Arc<Daemon>, p: PlanParams) -> Result<Value, ApiErro
     let dir = scratch.as_ref().map(|(_, w)| w.clone()).unwrap_or_else(|| cwd.clone());
     let areas = crate::areas::load(&dir);
     let result = async {
-        let helper = Helper::start(&daemon, &rt, &kind, &dir).await?;
+        let helper = Helper::start(&daemon, &rt, &kind, &dir, "planner").await?;
         let mut answer = helper.turn(&daemon, &rt, &prompt(&goal, &team, &areas)).await;
         let mut graph = answer.as_ref().map_err(|e| e.to_string()).and_then(|a| parse(a));
         // One retry, telling the planner what was wrong.

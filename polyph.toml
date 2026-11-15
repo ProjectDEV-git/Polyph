@@ -11,3 +11,17 @@ run_checks = true
 
 [claims]
 granularity = "file"
+
+# Built-in model router: tiers map to model ids per agent kind, and Polyph
+# asks the agent to switch with `session/set_model` (agents that cannot
+# switch keep their own model). Roles in `task_tiers`: planner, review,
+# resolve, task, chat. `default_tier` covers the rest ("standard" when
+# unset). On tight budgets the router steps down a tier. Setting `tiers`
+# turns routing on; `enabled = false` turns it off.
+# [router]
+# default_tier = "standard"
+# task_tiers = { planner = "frontier", review = "standard" }
+# [router.tiers.claude]
+# small = "haiku"
+# standard = "sonnet"
+# frontier = "opus"

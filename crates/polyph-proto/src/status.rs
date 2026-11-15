@@ -17,6 +17,9 @@ pub struct StatusAgent {
     pub color: String,
     pub state: AgentState,
     pub task: Option<String>,
+    /// Model the router set on this agent, when one is known.
+    #[serde(default)]
+    pub model: Option<String>,
     pub mine: bool,
     pub cloud: bool,
 }

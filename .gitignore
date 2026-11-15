@@ -34,3 +34,8 @@ apps/vscode/package.nls*.json
 # Agent worktrees and extra build directories
 .claude/worktrees/
 /target-*/
+
+# Session tooling artifacts
+.mcp.json
+.mimocode/
+CLAUDE.md

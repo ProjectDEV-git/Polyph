@@ -573,6 +573,7 @@ impl Helper {
         rt: &Arc<RoomRuntime>,
         kind: &str,
         cwd: &Path,
+        role: &str,
     ) -> Result<Helper, ApiError> {
         let started = agents::start(
             daemon.shared.clone(),
@@ -587,6 +588,7 @@ impl Helper {
                 prompt: None,
                 worktree: Some(false),
                 helper: true,
+                role: Some(role.into()),
             },
         )
         .await?;
@@ -626,8 +628,9 @@ async fn helper_turn(
     kind: &str,
     cwd: &Path,
     prompt: &str,
+    role: &str,
 ) -> Result<String, ApiError> {
-    let helper = Helper::start(daemon, rt, kind, cwd).await?;
+    let helper = Helper::start(daemon, rt, kind, cwd, role).await?;
     let r = helper.turn(daemon, rt, prompt).await;
     helper.stop(daemon, rt).await;
     r
@@ -698,7 +701,7 @@ and when asking for changes, list them above that line.\n\n```diff\n{diff}```",
         e.into
     );
     let wt = temp_worktree(root, &format!("review-{}", &e.id[..8]), &e.head).await?;
-    let said = helper_turn(daemon, rt, kind, &wt, &prompt).await;
+    let said = helper_turn(daemon, rt, kind, &wt, &prompt, "review").await;
     drop_worktree(root, &wt).await;
     let said = said?;
     let verdict = said.lines().rev().find_map(|l| {
@@ -754,7 +757,7 @@ async fn resolve_with_agent(
     })
     .await??;
     let prompt = polyph_merge::resolver_prompt(files, ours_intent, theirs_intent);
-    let r = helper_turn(daemon, rt, kind, &wt, &prompt).await;
+    let r = helper_turn(daemon, rt, kind, &wt, &prompt, "resolve").await;
     let mut out = HashMap::new();
     let mut bad = vec![];
     for f in files {
@@ -990,6 +993,7 @@ pub async fn handoff(
             prompt: None,
             worktree: None,
             helper: false,
+            role: Some("task".into()),
         },
     )
     .await?;

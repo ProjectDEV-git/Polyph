@@ -189,6 +189,7 @@ sandbox-none = เครื่องนี้ไม่มีแซนด์บ�
 sandbox-warning-no-seccomp = เครื่องนี้ไม่มีตัวกรอง seccomp ดังนั้น Landlock อย่างเดียวกันเอเจนต์ออกจาก IPC ของโฮสต์ไม่ได้ เอเจนต์เชื่อมต่อ Unix socket ได้ (session bus, ssh-agent, docker.sock, systemd และ journald) และใช้ io_uring ได้ เอเจนต์ยังเริ่มทำงานได้ ติดตั้ง bubblewrap เพื่อปิดช่องนี้
 usage-room = ห้อง: { $tokens } โทเคน ประมาณ ${ $cost }
 usage-line = { $who }: { $tokens } โทเคน ประมาณ ${ $cost }
+usage-line-model = { $who } ({ $model }): { $tokens } โทเคน ประมาณ ${ $cost }
 usage-unknown = มี { $count } รอบที่ไม่ได้รายงานการใช้งาน
 usage-subscription = การใช้งานบางส่วนเป็นแบบสมาชิกรายเดือน ราคาต่อโทเคนจึงไม่ใช้กับส่วนนั้น
 budget-saved = บันทึกงบประมาณแล้ว
